@@ -128,7 +128,7 @@ describe('parseAgentEditReport', () => {
 	// JSONSerialization reads a payload after a byte order mark; Foundation's path writes a NUL as `%00`
 	test('a payload after a byte order mark, and a NUL in a path, as editmd reads them', () => {
 		const payload = JSON.stringify({ session_id: 's', tool_input: { file_path: '/p/\u0000a' } })
-		expect(parseAgentEditReport(`﻿${payload}`)?.paths).toEqual(['/p/%00a'])
+		expect(parseAgentEditReport(`\u{FEFF}${payload}`)?.paths).toEqual(['/p/%00a'])
 	})
 
 	test('nothing to report', () => {

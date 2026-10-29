@@ -161,7 +161,7 @@ function syntaxIn(colour: string): NonNullable<GpuixTheme['syntax']> {
  * (Source mode, an open code or front matter field) keep Menlo; the read-only mono lines (front matter, definition
  * and HTML lines, diagram messages) paint through <markdown> as inline code, so they take SF Mono (src/app/monoLines.ts)
  */
-export const MONO_FONT = '.AppleSystemUIFontMonospaced'
+const MONO_FONT = '.AppleSystemUIFontMonospaced'
 
 /** float noise from the em multiplications would make theme values like 20.925000000000001 */
 const round = (value: number) => Math.round(value * 1000) / 1000

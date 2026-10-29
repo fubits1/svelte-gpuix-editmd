@@ -38,7 +38,7 @@ export function selfOf(started: { execPath: string; execArgv: string[]; argv: st
 	}
 }
 
-export const thisProcess = (): Self => selfOf(process)
+const thisProcess = (): Self => selfOf(process)
 
 /** one window per process (ADR-0008): New and Open start another editor, optionally on `path` */
 export function openWindow(

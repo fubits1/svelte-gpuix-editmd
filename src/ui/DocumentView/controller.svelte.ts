@@ -90,7 +90,7 @@ export type RunOptions = {
 }
 
 /** how a followed link reaches outside the editor; tests pass recorders, so nothing is launched */
-export type LinkOptions = {
+type LinkOptions = {
 	/** runs `open` for web, mail and Finder links; `runDetached` by default */
 	run?: Run
 	/**
@@ -111,7 +111,7 @@ export type LinkOptions = {
 }
 
 /** how the File menu reaches outside the Document; tests pass recorders, so no picker opens and no window closes */
-export type WindowOptions = {
+type WindowOptions = {
 	/** Save As's folder; gpuix's `prompt_for_paths({ directories: true })` by default, null when cancelled */
 	chooseFolder?: () => Promise<string | null>
 	/** ends this window; one process per Document (ADR-0008), so by default the process exits */
@@ -2136,6 +2136,7 @@ export class DocumentController {
 	/** the remote images that failed to load (`isRemoteImageFailed`), which the views repaint from */
 	#remoteFailed = new SvelteSet<string>()
 	/** the URLs asked for already, so a repaint never asks again; nothing renders from it */
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders from it
 	#remoteAsked = new Set<string>()
 	#fetchImage: (url: string) => Promise<Uint8Array> = fetchImageHead
 
@@ -2221,6 +2222,7 @@ export class DocumentController {
 		// a fresh cache per Document, as for local images
 		this.#remoteSizes = new SvelteMap()
 		this.#remoteFailed = new SvelteSet()
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders from it
 		this.#remoteAsked = new Set()
 		this.#lastPlace = null
 		this.#probing = false

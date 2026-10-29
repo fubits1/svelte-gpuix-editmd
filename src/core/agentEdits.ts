@@ -87,7 +87,7 @@ export function parseAgentEditReport(
 	let json: Json
 	try {
 		// JSONSerialization reads a payload after a byte order mark too
-		json = JSON.parse(payload.replace(/^﻿/, '')) as Json
+		json = JSON.parse(payload.replace(/^\u{FEFF}/u, '')) as Json
 	} catch {
 		return null
 	}

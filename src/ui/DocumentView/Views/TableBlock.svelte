@@ -7,13 +7,13 @@
   width as `width: max-content` gives it; a click anywhere opens the Block, as any other Block's does.
 -->
 <script module lang="ts">
-	export type CellAlign = 'left' | 'center' | 'right'
+	type CellAlign = 'left' | 'center' | 'right'
 
 	/** a cell's text as Document offsets, trimmed */
-	export type Cell = { start: number; end: number }
+	type Cell = { start: number; end: number }
 
 	/** a table's rows of cells, header first, and each column's alignment */
-	export type Table = { rows: Cell[][]; align: CellAlign[] }
+	type Table = { rows: Cell[][]; align: CellAlign[] }
 
 	/**
 	 * the cells of the row `line`, which starts at Document offset `at`: split on every pipe that is not escaped, one
@@ -54,7 +54,7 @@
 	 * `source`, a table Block's text starting at Document offset `start`, as rows of cells: the header row, then the
 	 * body rows after the delimiter row; a body row's missing cells are empty, its extra ones dropped, as GFM does
 	 */
-	export function tableOf(source: string, start: number): Table {
+	function tableOf(source: string, start: number): Table {
 		const lines: { text: string; at: number }[] = []
 		let at = start
 		for (const text of source.split('\n')) {
@@ -160,6 +160,7 @@
 	 */
 	let rowHeights = $state<readonly number[] | null>(null)
 	/** each painted cell's <markdown>, by `row-column`; nothing renders from it */
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders from it
 	const cellText = new Map<string, ShadowNode>()
 
 	/** keeps cell `key`'s <markdown> while it is painted */
@@ -176,7 +177,7 @@
 	 * GPUI sends no layout event, so the rows are re-measured on a timer, as ImageView measures its column; a cell's
 	 * <markdown> is measured, not the cell, which its row's height stretches
 	 */
-	function measureRows(_grid: ShadowNode) {
+	function measureRows() {
 		const measure = () => {
 			const native = get_native()
 			const heights = table.rows.map((row, rowIndex) =>

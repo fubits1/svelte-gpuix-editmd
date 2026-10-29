@@ -5,7 +5,7 @@
   leaves both out. Render it inside `Portal`, or inside a dialog that already is, so it paints over the Document.
 -->
 <script module lang="ts">
-	export type AlertButton = {
+	type AlertButton = {
 		label: string
 		testid: string
 		onclick: () => void

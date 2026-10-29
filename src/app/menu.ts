@@ -3,7 +3,7 @@ import { chordOf, type Command } from './shortcuts.ts'
 /** editmd's menu items that have no key equivalent, reachable here only through the command palette */
 const MENU_ONLY = ['openRecent', 'revert', 'table', 'horizontalRule', 'loadRemoteImages'] as const
 
-export type MenuOnlyCommand = (typeof MENU_ONLY)[number]
+type MenuOnlyCommand = (typeof MENU_ONLY)[number]
 
 export type MenuCommand = Command | MenuOnlyCommand
 

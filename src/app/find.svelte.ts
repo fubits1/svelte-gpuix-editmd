@@ -9,7 +9,7 @@ import {
 } from './findMatches.ts'
 import type { Palette } from './palette.ts'
 
-export type FindOptions = {
+type FindOptions = {
 	/** the washes the last frame painted; native's `getPaintedHighlights` by default */
 	readWashes?: () => readonly Wash[]
 	/** ms between two reads of the paint while a query is set */
@@ -26,7 +26,7 @@ const paintedWashes = (): readonly Wash[] => get_native()?.getPaintedHighlights(
  * `TextSearch` holds the query and builds the `highlight` spec; the count and the active match are this
  * class's own, because TextSearch counts through `matchCount`, which is 0 for <markdown> (`findMatches.ts`)
  */
-export class FindController {
+class FindController {
 	#search = new TextSearch()
 	#readWashes: () => readonly Wash[]
 	#pollInterval: number

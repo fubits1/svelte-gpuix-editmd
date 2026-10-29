@@ -17,7 +17,7 @@ export type BlockKind =
 	| 'other'
 
 /** `mark` is the offset of the character between the task's brackets */
-export type Task = { mark: number; checked: boolean }
+type Task = { mark: number; checked: boolean }
 
 export type Block = {
 	kind: BlockKind
@@ -48,7 +48,7 @@ export type Block = {
 export type Image = { src: string; alt: string; href?: string }
 
 /** `start`/`end` are offsets into the Document text; a text run is painted from that Slice */
-export type Segment =
+type Segment =
 	| { kind: 'text'; start: number; end: number }
 	| ({ kind: 'image'; start: number; end: number } & Image)
 
@@ -59,7 +59,7 @@ export type Segment =
 export type FootnoteReference = { start: number; end: number; label: string; identifier: string }
 
 /** `start`/`end` bound the whole `[](url)` */
-export type EmptyLink = { start: number; end: number; url: string }
+type EmptyLink = { start: number; end: number; url: string }
 
 /** what mdast gives a footnote reference or definition */
 const footnoteName = (node: { label?: string | null; identifier: string }) => ({

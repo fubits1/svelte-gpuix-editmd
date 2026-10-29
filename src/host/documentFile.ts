@@ -136,7 +136,7 @@ export class DocumentFile {
 			if (existsSync(this.#file.path)) return
 		}
 		this.#moveSeen = false
-		let now: string | null = null
+		let now: string | null
 		try {
 			const listed = execFileSync(
 				'/usr/sbin/lsof',

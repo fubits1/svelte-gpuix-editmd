@@ -18,7 +18,7 @@ export const ENCODINGS: readonly Encoding[] = [
 	'windows1252'
 ]
 
-export const ENCODING_NAMES: Record<Encoding, string> = {
+const ENCODING_NAMES: Record<Encoding, string> = {
 	utf8: 'UTF-8',
 	utf8BOM: 'UTF-8 with a byte order mark',
 	utf16LittleEndian: 'UTF-16 (little endian)',
@@ -26,10 +26,10 @@ export const ENCODING_NAMES: Record<Encoding, string> = {
 	windows1252: 'Windows-1252'
 }
 
-export type LineEnding = '\n' | '\r\n' | '\r'
+type LineEnding = '\n' | '\r\n' | '\r'
 
 /** In tie-break order: ties go to LF, then CRLF. */
-export const LINE_ENDINGS: readonly LineEnding[] = ['\n', '\r\n', '\r']
+const LINE_ENDINGS: readonly LineEnding[] = ['\n', '\r\n', '\r']
 
 export type Format = { encoding: Encoding; lineEnding: LineEnding }
 
@@ -317,13 +317,13 @@ function encode(text: string, encoding: Encoding): Uint8Array | null {
 // MARK: Line endings
 
 /** `text` with every CRLF and lone CR turned into LF. */
-export function normalizingLineEndings(text: string): string {
+function normalizingLineEndings(text: string): string {
 	if (!text.includes('\r')) return text
 	return text.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
 }
 
 /** The most common line ending in `text`, LF if it has none. Ties go to LF, then CRLF. */
-export function dominantLineEnding(text: string): LineEnding {
+function dominantLineEnding(text: string): LineEnding {
 	const counts = new Map<LineEnding, number>()
 	const count = (ending: LineEnding) => counts.set(ending, (counts.get(ending) ?? 0) + 1)
 	let previousCR = false

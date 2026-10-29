@@ -1,5 +1,5 @@
 /** editmd's six Agent colours */
-export const AGENT_SLOTS = 6
+const AGENT_SLOTS = 6
 
 /**
  * editmd's Agents registry: an Agent's colour slot is fixed at first sight for the session, so it

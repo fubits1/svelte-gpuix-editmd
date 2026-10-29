@@ -1,4 +1,3 @@
-/// <reference types="bun" />
 // `bun build.ts` (npm run build): compiles standalone.ts into one executable for the platform it runs on.
 
 import type { BunPlugin } from 'bun'

@@ -577,6 +577,7 @@
 			 * which occurrence of its text in the Block each painted run is: native numbers a spec's matches in paint
 			 * order, and every run's spec washes every occurrence of its text, so each place counts once
 			 */
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local to one measurement
 			const places = new Map<string, string[]>()
 			for (const wash of washes) {
 				if (!holds(node, wash.elementId)) continue

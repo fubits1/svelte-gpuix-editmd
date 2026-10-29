@@ -56,7 +56,9 @@ const sameTarget = (a: Target | undefined, b: Target | undefined) =>
 
 /** a destination as mdast-util-to-markdown writes it: in angle brackets when empty or holding whitespace */
 const destination = (url: string) =>
-	url === '' || /[\s\u0000-\u001f\u007f]/.test(url) ? `<${url}>` : url
+	url === '' || /\s/.test(url) || [...url].some((char) => char <= '\u001f' || char === '\u007f')
+		? `<${url}>`
+		: url
 
 const titled = (title: string | null) => (title ? ` "${title.replaceAll('"', '\\"')}"` : '')
 

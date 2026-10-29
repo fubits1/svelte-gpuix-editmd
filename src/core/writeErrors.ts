@@ -19,7 +19,7 @@ const NO_PERMISSION: WriteError = {
 		`You don’t have permission to save the file “${file}” in the folder “${folder}”.`
 }
 
-export const WRITE_ERRORS: Record<string, WriteError> = {
+const WRITE_ERRORS: Record<string, WriteError> = {
 	EACCES: NO_PERMISSION,
 	EPERM: NO_PERMISSION,
 	// Err642, NSFileWriteVolumeReadOnlyError
