@@ -1,7 +1,8 @@
 <!--
   @component
   The open Document as rendered Blocks, one native <markdown> each; the Active block shows its source in a text field.
-  In Source mode the whole Document shows as one text field instead.
+  In Source mode the whole Document shows as one text field instead. An open field takes the keys when it mounts,
+  unless `autofocus` is false.
 -->
 <script lang="ts">
 	import {
@@ -41,6 +42,16 @@
 	import OpenRecentDialog from './DocumentView/Overlays/OpenRecentDialog.svelte'
 	import SaveAsDialog from './DocumentView/Overlays/SaveAsDialog.svelte'
 	import MermaidPreview from './DocumentView/Views/MermaidPreview.svelte'
+
+	let {
+		autofocus = true
+	}: {
+		/**
+		 * an open field (a Block's, Source mode's) takes the keys when it mounts, so its caret blinks; false leaves it
+		 * unfocused until a command or a click gives it the keys
+		 */
+		autofocus?: boolean
+	} = $props()
 
 	const theme = useTheme()
 
@@ -710,7 +721,7 @@
 		testid="block-editor"
 		style:font-size={font ? `${font.size}px` : null}
 		style:line-height={font ? `${font.lineHeight}px` : null}
-		autofocus
+		{autofocus}
 		value={documentController.activeSource}
 		theme={fieldTheme}
 		minRows={1}
@@ -757,7 +768,7 @@
 				<textarea
 					class="source"
 					testid="source-editor"
-					autofocus
+					{autofocus}
 					value={documentController.activeSource}
 					minRows={sourceMinRows}
 					maxRows={WHOLE_TEXT_ROWS}

@@ -86,7 +86,12 @@ export async function snapshot({ path, out, dark, width }: SnapshotRequest): Pro
 		readAppearance: () => appearance,
 		initialAppearance: () => appearance
 	})
-	mount_headless(HeadlessPage, { width, height: MAX_HEADLESS_HEIGHT, props: { theme } })
+	// editmd never makes its offscreen page first responder (Headless.swift:92-100), so an open field paints no caret
+	mount_headless(HeadlessPage, {
+		width,
+		height: MAX_HEADLESS_HEIGHT,
+		props: { theme, autofocus: false }
+	})
 
 	const page = find_test_id('snapshot-page')
 	const content = find_test_id('snapshot-content')
