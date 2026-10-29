@@ -3,3 +3,8 @@ dist
 .DS_Store
 .dex
 coverage
+.vitest
+test/visual/out
+test/visual/measurements-before.json
+test/visual/window-settings-before.json
+test/browser/visual/__screenshots__

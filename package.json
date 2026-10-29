@@ -10,11 +10,14 @@
 		"start": "gpuix-svelte app.ts",
 		"test": "npm run test:unit -- --run && gpuix-svelte test.ts",
 		"build": "bun build.ts",
-		"typecheck": "tsc --noEmit && svelte-check --diagnostic-sources js,svelte --fail-on-warnings",
+		"typecheck": "tsc --noEmit && tsc --noEmit -p test/browser/tsconfig.json && svelte-check --diagnostic-sources js,svelte --fail-on-warnings",
 		"lint": "prettier --check .",
 		"format": "prettier --write .",
 		"test:unit": "vitest",
-		"test:coverage": "vitest run --coverage"
+		"test:coverage": "vitest run --coverage",
+		"visual:check": "vitest run --config test/visual/vitest.visual.config.ts",
+		"visual:review": "vitest --ui --config test/visual/vitest.visual.config.ts",
+		"visual:measure": "node node_modules/gpuix-svelte/bin/gpuix-svelte.js test/visual/measure.ts test/visual/out/measurements.json"
 	},
 	"dependencies": {
 		"gpuix-svelte": "^0.2.0",
@@ -25,8 +28,11 @@
 	"devDependencies": {
 		"@types/bun": "^1.4.3",
 		"@types/node": "^26.6.5",
+		"@vitest/browser-playwright": "5.0.5",
 		"@vitest/coverage-v8": "5.0.5",
+		"@vitest/ui": "5.0.5",
 		"fast-check": "4.10.2",
+		"playwright": "^1.64.1",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^4.1.0",
 		"svelte-check": "^4.7.6",

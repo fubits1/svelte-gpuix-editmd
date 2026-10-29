@@ -1,5 +1,13 @@
 export default {
-	entry: ['app.ts', 'standalone.ts', 'test.ts', 'e2e/*.e2e.ts', 'svelte.config.js'],
+	entry: [
+		'app.ts',
+		'standalone.ts',
+		'test.ts',
+		'e2e/*.e2e.ts',
+		'svelte.config.js',
+		'test/visual/*.ts',
+		'test/browser/visual/*.ts'
+	],
 	project: ['**/*.{js,ts,svelte}'],
 	ignoreBinaries: ['xattr'],
 	compilers: {

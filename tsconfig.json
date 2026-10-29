@@ -18,5 +18,12 @@
 		}
 	},
 	"svelteOptions": { "namespace": "gpuixHTML" },
-	"include": ["*.ts", "*.svelte", "src/**/*.ts", "src/**/*.svelte", "e2e/**/*.ts"]
+	"include": [
+		"*.ts",
+		"*.svelte",
+		"src/**/*.ts",
+		"src/**/*.svelte",
+		"e2e/**/*.ts",
+		"test/visual/**/*.ts"
+	]
 }
