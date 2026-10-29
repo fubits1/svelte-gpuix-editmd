@@ -1,0 +1,13 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# Miscellaneous
+/static/
+/dist/
+
+# byte-exact test data: kirahowe/editmd's round-trip fixtures and the parity review's inputs
+/test/fixtures/
