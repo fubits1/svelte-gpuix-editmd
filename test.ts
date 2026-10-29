@@ -5670,7 +5670,11 @@ check(
 		find_test_id('legend')?.style?.boxShadow,
 		legendShade.length === 2 && shade(legendShade[0]!) < shade(legendShade[1]!)
 	],
-	[10, { offsetX: 0, offsetY: 4, blurRadius: 16, spreadRadius: 0, color: '#0000001f' }, true]
+	[
+		10,
+		{ offsetX: 0, offsetY: 4, blurRadius: 16, spreadRadius: 0, color: '#0000001f', inset: false },
+		true
+	]
 )
 documentController.load('')
 rmSync(lookDirectory, { recursive: true, force: true })

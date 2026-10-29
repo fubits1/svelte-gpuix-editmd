@@ -20,7 +20,7 @@
 		"visual:measure": "node node_modules/gpuix-svelte/bin/gpuix-svelte.js test/visual/measure.ts test/visual/out/measurements.json"
 	},
 	"dependencies": {
-		"gpuix-svelte": "^0.2.0",
+		"gpuix-svelte": "^0.3.0",
 		"pele": "1.10.0",
 		"satteri": "0.10.5",
 		"yjs": "13.6.33"

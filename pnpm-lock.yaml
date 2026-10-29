@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       gpuix-svelte:
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.0
+        version: 0.3.0
       pele:
         specifier: 1.10.0
         version: 1.10.0
@@ -138,23 +138,28 @@ packages:
   '@emnapi/wasi-threads@1.2.2':
     resolution: {integrity: sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA==}
 
-  '@gpuix/native-darwin-arm64@0.10.0':
-    resolution: {integrity: sha512-Uu1aiZsKBPuk9llFkoaFU95k1t+drG3txv97SgZZZ2x4LKqvy5c0bmklhCG1r7Ypm62qY/NKY0Sl553r/G34Tg==}
+  '@gpuix/native-darwin-arm64@0.11.0':
+    resolution: {integrity: sha512-sOS94t4f3BeB4gcwUQrGbqCnxh9MNbDda9b2g2rcu1ilxT6VxPLx56ziRIz3omhrRgQ1P4rJNJ/OMywtYG9Wow==}
     cpu: [arm64]
     os: [darwin]
 
-  '@gpuix/native-linux-x64-gnu@0.10.0':
-    resolution: {integrity: sha512-HNLL+jp+FA5qvdHq52MDGnj6LmsbkVXojwalGgNYA+iJlffFGfzHkCRmoM21Z+TNKa5cvuRTPgnfP6FGr8KxIw==}
+  '@gpuix/native-linux-x64-gnu@0.11.0':
+    resolution: {integrity: sha512-WlDFnxKaKkw9NBhz2UAn7jXvhCvd/A6hYkxrJbtMLks5TRrjwxPpX2P0JQfppZvcQn13r2sivyQVdB1YX0hHTA==}
     cpu: [x64]
     os: [linux]
 
-  '@gpuix/native-win32-x64-msvc@0.10.0':
-    resolution: {integrity: sha512-4NQ81KBzcItiSJGupmvvSpuELCF139fqjQSSscHKbYCD+mcAyhOxADr3I2BNHXWhQr42jUgXhV2n/n0udN1KMQ==}
+  '@gpuix/native-win32-arm64-msvc@0.11.0':
+    resolution: {integrity: sha512-IxlKViURZP/j9JYgnmZFnhjdkqmodkIxCY/yAZ8xF9N3wO2n+2Uoadc+XZ/gz8hgJT/9pT9NQOFP7Ai2q4cxYw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@gpuix/native-win32-x64-msvc@0.11.0':
+    resolution: {integrity: sha512-VXtDp1o39m0aFk6JADrH1pLaZWBQIC7hpbYsRAWE8Pe4Dgn3a0LEFDHvI0RNehg3GLPXPLoj9Jld0UO3KrGpNQ==}
     cpu: [x64]
     os: [win32]
 
-  '@gpuix/native@0.10.0':
-    resolution: {integrity: sha512-hBvQ0vT1ybOoRDQu6JASgRfdcWFbHTRQ0Fr3oiTxdclvzdR8v9fBUQVYfVtgZnnL4pl1LS02eNrQx8//E6/Xjw==}
+  '@gpuix/native@0.11.0':
+    resolution: {integrity: sha512-xnPBArvvkg6aD7/soznkzio3qrKP6yHzhTJ0uOZoRYnp4OgdO8kkSKidAryvCbyF39/C0/+3P+7FzgsGTOXsXg==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -464,8 +469,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  gpuix-svelte@0.2.0:
-    resolution: {integrity: sha512-RVjBfDWewPU7VGsL8HvgT8nv11erK0tXVg1PrB5+j9JXwUNNaXB5FwaYKCaNnXm8JtbN2z2Tg5I4dJdXnTFN1A==}
+  gpuix-svelte@0.3.0:
+    resolution: {integrity: sha512-imi90pPPL8JEBTtOID8x5fly2eWTlcG3YYKL38w3twzkJI1/IL/vKeSOBhn23PQmTL3S4RoCXqIMPIbV7qtiTg==}
     engines: {bun: '>=1.4.0', node: '>=24.0.0'}
     hasBin: true
     bundledDependencies:
@@ -881,23 +886,27 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@gpuix/native-darwin-arm64@0.10.0':
+  '@gpuix/native-darwin-arm64@0.11.0':
     optional: true
 
-  '@gpuix/native-linux-x64-gnu@0.10.0':
+  '@gpuix/native-linux-x64-gnu@0.11.0':
     optional: true
 
-  '@gpuix/native-win32-x64-msvc@0.10.0':
+  '@gpuix/native-win32-arm64-msvc@0.11.0':
     optional: true
 
-  '@gpuix/native@0.10.0':
+  '@gpuix/native-win32-x64-msvc@0.11.0':
+    optional: true
+
+  '@gpuix/native@0.11.0':
     dependencies:
       eventsource-parser: 4.1.2
       zod: 4.6.7
     optionalDependencies:
-      '@gpuix/native-darwin-arm64': 0.10.0
-      '@gpuix/native-linux-x64-gnu': 0.10.0
-      '@gpuix/native-win32-x64-msvc': 0.10.0
+      '@gpuix/native-darwin-arm64': 0.11.0
+      '@gpuix/native-linux-x64-gnu': 0.11.0
+      '@gpuix/native-win32-arm64-msvc': 0.11.0
+      '@gpuix/native-win32-x64-msvc': 0.11.0
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -1164,9 +1173,9 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  gpuix-svelte@0.2.0:
+  gpuix-svelte@0.3.0:
     dependencies:
-      '@gpuix/native': 0.10.0
+      '@gpuix/native': 0.11.0
       acorn: 8.19.0
 
   is-reference@3.0.3:

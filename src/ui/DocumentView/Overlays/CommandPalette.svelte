@@ -87,10 +87,8 @@
 			const viewport = native.getElementBounds(ancestor.nativeId)
 			if (!offset || !viewport) continue
 			const [x = 0, y = 0] = offset
-			// the column's bounds move with its own offset (measured headlessly), so its visible top is `y` back
-			const top = viewport.y - y
-			const above = top - row.y
-			const below = row.y + row.height - (top + viewport.height)
+			const above = viewport.y - row.y
+			const below = row.y + row.height - (viewport.y + viewport.height)
 			if (above > 0) native.scrollTo(ancestor.nativeId, x, y + above)
 			else if (below > 0) native.scrollTo(ancestor.nativeId, x, y - below)
 			return

@@ -194,9 +194,7 @@
 	/**
 	 * scroll the nearest scrolling ancestor so `node`'s top meets the middle of what it shows, as editmd's `reveal`
 	 * scrolls a change's top to the window's middle (highlights.ts:131-142: `coordsAtPos(at).top` by
-	 * `top - window.innerHeight / 2`). the scrolling box reports the whole
-	 * column's height, not the part on screen, and the page reaches the window's bottom edge, so what it shows runs
-	 * from its top to the window's bottom. a Block near the top stops the page at its top, offsets running negative
+	 * `top - window.innerHeight / 2`). a Block near the top stops the page at its top, offsets running negative
 	 * as the page scrolls down; GPUI clamps one past the end, as for `scrollToTop`. `top`, in window coordinates, puts a
 	 * point inside the node there instead of its top (a changed run's)
 	 */
@@ -205,7 +203,7 @@
 		if (!scrolling) return
 		const { native, id, offset, viewport, target } = scrolling
 		const [x, y] = offset
-		const shownMiddle = (viewport.y + window_size.height) / 2
+		const shownMiddle = viewport.y + viewport.height / 2
 		native.scrollTo(id, x ?? 0, Math.min(0, (y ?? 0) - ((top ?? target.y) - shownMiddle)))
 	}
 
@@ -217,14 +215,8 @@
 		for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
 			if (ancestor.nativeId === null) continue
 			const offset = native.getScrollOffset(ancestor.nativeId)
-			const painted = native.getElementBounds(ancestor.nativeId)
-			if (!offset || !painted) continue
-			/**
-			 * the scrolling element's painted box moves with its own offset (at offset -1092 it reported y -1092,
-			 * measured headlessly), so the viewport it shows starts that much lower; measured from the moving box, a
-			 * second scroll from a scrolled column landed off target (the legend's third Reveal)
-			 */
-			const viewport = { ...painted, y: painted.y - (offset[1] ?? 0) }
+			const viewport = native.getElementBounds(ancestor.nativeId)
+			if (!offset || !viewport) continue
 			return { native, id: ancestor.nativeId, offset, viewport, target }
 		}
 		return null
@@ -483,8 +475,7 @@
 			if (!scrolling) return
 			const { viewport, target } = scrolling
 			const box = wash?.rects[0] ?? target
-			// what the page shows runs from its top to the window's bottom edge (`scrollToMiddle`)
-			const shown = box.y >= viewport.y && box.y + box.height <= window_size.height
+			const shown = box.y >= viewport.y && box.y + box.height <= viewport.y + viewport.height
 			if (!shown) scrollToTop(node, box.y)
 			return
 		}
