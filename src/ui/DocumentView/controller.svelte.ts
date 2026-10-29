@@ -33,6 +33,7 @@ import {
 } from '../../app/menu.ts'
 import { type OpenFailure, openFailure } from '../../app/openFailure.ts'
 import { saveFailure } from '../../app/saveFailure.ts'
+import type { Modifiers } from '../../app/shortcuts.ts'
 import { themeController } from '../../app/theme.svelte.ts'
 import type { AgentProcess } from '../../core/agentEdits.ts'
 import type { ChangedRun } from '../../core/changedText.ts'
@@ -63,6 +64,7 @@ import { linkAtSelection } from '../../core/linkInsert.ts'
 import { linkAction, type LinkTarget } from '../../core/linkPolicy.ts'
 import { labelDetail, labelText, type SaveLabel } from '../../core/persistence.ts'
 import { saveAsPath } from '../../core/saveAsPath.ts'
+import { pressTab } from '../../core/tabKey.ts'
 import type { Block, BlockKind } from '../../engine/blocks.ts'
 import { SOCKETS_DIRECTORY } from '../../app/reportEdit.ts'
 import { focusWindowFor, greetPeers, listenForReports, sendRename } from '../../host/agentIpc.ts'
@@ -1890,13 +1892,26 @@ export class DocumentController {
 	}
 
 	/**
+	 * Tab or Shift-Tab in the open Block field (`pressTab`), which gpuix would take to move focus: true when the key is
+	 * taken here, so the view keeps the field focused. the Block's kind is read as it is now, so a list typed into a
+	 * paragraph's field takes Indent; Indent and Outdent run as Format's do
+	 */
+	tabInField(key: string, modifiers: Modifiers): boolean {
+		return pressTab(key, modifiers, this.blocks[this.activeIndex ?? -1]?.kind, {
+			type: this.#sendKeys,
+			focus: () => this.#refocusField(),
+			format: (command, refused) => this.#format(BLOCK_TRANSFORMS[command], refused)
+		})
+	}
+
+	/**
 	 * a Format command rewrites the Active block's field; with none open it acts at editmd's load caret
 	 * (`#openAtLoadCaret`). in Source mode it does nothing, and so does a command editmd refuses or that changes nothing
 	 * (`transform` gives null): no remount, no change, and a field opened for it closes again. on an open field it is an
 	 * Undo step of its own (`#cutUndoStep`), and where the caret decides what it does (an item or a paragraph of a list
-	 * or quote) the caret is read first (`readSelection`)
+	 * or quote) the caret is read first (`readSelection`). `refused` runs once an open field's command gives null
 	 */
-	#format(transform: BlockTransform): void {
+	#format(transform: BlockTransform, refused?: () => void): void {
 		if (this.sourceMode) return
 		if (this.activeIndex === null) {
 			const caret = this.#openAtLoadCaret()
@@ -1913,6 +1928,7 @@ export class DocumentController {
 		if (outcomes.every((outcome) => outcome === outcomes[0])) {
 			const result = transform(source)
 			if (result !== null) this.#replaceField(result)
+			else refused?.()
 			return
 		}
 		void this.#onField(async () => {
@@ -1920,7 +1936,7 @@ export class DocumentController {
 			if (!range) return
 			const result = transform(this.#field, range.start)
 			if (result !== null) this.#replaceField(result)
-			else await this.#settleProbe(range)
+			else await this.#settleProbe(range).then(refused)
 		})
 	}
 

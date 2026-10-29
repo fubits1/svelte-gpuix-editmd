@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-25
+Accepted, 2026-10-25. Amended by [ADR-0012](0012-gpuix-svelte-0.3.md): the port is on gpuix-svelte 0.3.0 with `@gpuix/native` 0.11.0 (see G11)
 
 ## Context
 

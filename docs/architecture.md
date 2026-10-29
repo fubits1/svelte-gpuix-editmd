@@ -2,7 +2,7 @@
 
 ## Context
 
-editmd-gpuix ports [kirahowe/editmd](https://github.com/kirahowe/editmd) (v0.2.0, MIT) to a native GPUI desktop app written in Svelte 5 on gpuix-svelte 0.2.0.
+editmd-gpuix ports [kirahowe/editmd](https://github.com/kirahowe/editmd) (v0.2.0, MIT) to a native GPUI desktop app written in Svelte 5 on gpuix-svelte 0.3.0 ([ADR-0012](adr/0012-gpuix-svelte-0.3.md)).
 
 editmd is a Swift/AppKit `NSDocument` host around a WKWebView. The web view runs Milkdown 7.22.3 (ProseMirror), Yjs 13.6 with y-prosemirror 1.3.7, and Mermaid 11. gpuix renders Svelte into a native GPUI window. It has no DOM, no contenteditable, no inline styled text runs and no textarea selection API, so editmd's editor layer cannot be ported. The port edits one Block's markdown source at a time in a text field ([ADR-0003](adr/0003-block-click-to-edit.md)). editmd's pure logic (TypeScript and the Swift core) is ported with its property tests.
 

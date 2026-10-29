@@ -35,6 +35,7 @@ pnpm exec gpuix-svelte e2e/coEditing.e2e.ts
 pnpm exec gpuix-svelte e2e/links.e2e.ts
 pnpm exec gpuix-svelte e2e/remoteImages.e2e.ts
 pnpm exec gpuix-svelte e2e/launch.e2e.ts
+pnpm exec gpuix-svelte e2e/tab.e2e.ts
 
 # headless modes, as editmd's (Headless.swift)
 pnpm exec gpuix-svelte standalone.ts --roundtrip FILE    # what Save writes for the untouched file
@@ -56,3 +57,8 @@ their file yet (gap G6 in [ADR-0009](docs/adr/0009-parity-gaps-native-track.md))
 Every script runs through the `gpuix-svelte` bin, which starts Node (or Bun with `--bun`) with the
 `custom-renderer` condition and the `.svelte` loader. Windows and the headless renderer crash under a sandboxed
 shell, so run them unsandboxed.
+
+## Caveats
+
+- Tab writes 2 spaces outside a list, never a tab character, and in a list item a key typed while Tab finds the
+  caret can be lost. Details and TODOs: [ADR-0012](docs/adr/0012-gpuix-svelte-0.3.md).

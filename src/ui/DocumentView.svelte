@@ -720,6 +720,12 @@
 		onchange={changeOfField}
 		onkeydown={(event) => {
 			if (event.key === 'escape') documentController.closeEdit()
+			else if (
+				event.key !== undefined &&
+				event.modifiers !== undefined &&
+				documentController.tabInField(event.key, event.modifiers)
+			)
+				event.preventDefault()
 		}}></textarea>
 {/snippet}
 
