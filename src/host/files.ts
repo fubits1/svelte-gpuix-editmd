@@ -18,6 +18,15 @@ import { randomBytes } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import { TextFile } from '../core/textFile.ts'
 
+/** `path` with its symlinks followed (`/tmp` is `/private/tmp`), or as given when it cannot be resolved */
+export function realPathOf(path: string): string {
+	try {
+		return realpathSync(path)
+	} catch {
+		return path
+	}
+}
+
 /** the file changed on disk since it was last read; merge `reread()` in and save again */
 export class ChangedOnDiskError extends Error {
 	constructor(path: string) {
@@ -161,7 +170,7 @@ function bindTextFile(path: string, initial: TextFile): OpenTextFile {
 		},
 		save(text, { anyway = false } = {}) {
 			// a file another program deleted has nothing to compare and is written again (Document.swift:159-161)
-			if (existsSync(path) && !Buffer.from(file.data).equals(readRegularFile(path))) {
+			if (existsSync(path) && !readRegularFile(path).equals(file.data)) {
 				throw new ChangedOnDiskError(path)
 			}
 			const next = file.replacingText(text)

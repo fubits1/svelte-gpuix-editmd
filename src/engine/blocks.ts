@@ -24,11 +24,20 @@ export type Block = {
 	start: number
 	end: number
 	heading?: { level: number; slug: string }
+	/** for a quote, list or footnote: the anchors of the headings inside it, which a `#fragment` link scrolls to */
+	anchors?: string[]
+	/** for a quote: the Blocks inside it, each painted as a top-level one is */
+	children?: Block[]
+	/**
+	 * for a Block inside a quote or a list item: what its container puts in front of each of its lines after the first
+	 * (`> `, an item's indent), as a regular expression's source, which its painted text leaves out
+	 */
+	prefix?: string
 	/** the fence's info-string language, null for a bare fence */
 	lang?: string | null
 	/** task items in document order, nested ones included */
 	tasks?: Task[]
-	/** for a list holding tasks: every item flat in document order, so each can render with its own checkbox */
+	/** for a list: every item flat in document order, so each renders as its own row, a task with its checkbox */
 	items?: ListItem[]
 	/** for a paragraph of nothing but images: each one, since native <markdown> paints images as link text */
 	images?: Image[]
@@ -38,6 +47,8 @@ export type Block = {
 	footnoteReferences?: FootnoteReference[]
 	/** every link with no text, which native <markdown> paints as nothing and editmd shows as its source */
 	emptyLinks?: EmptyLink[]
+	/** every inline HTML tag, which editmd shows as its source in muted mono */
+	inlineHtml?: Span[]
 	/** the Block paints a link (inline, reference, autolink or bare URL), which ⌘ turns the cursor to a pointer over */
 	links?: true
 	/** for a footnote definition: its label as written, the identifier it is matched by, and where the content after `[^label]:` starts */
@@ -59,7 +70,8 @@ type Segment =
 export type FootnoteReference = { start: number; end: number; label: string; identifier: string }
 
 /** `start`/`end` bound the whole `[](url)` */
-type EmptyLink = { start: number; end: number; url: string }
+type Span = { start: number; end: number }
+type EmptyLink = Span & { url: string }
 
 /** what mdast gives a footnote reference or definition */
 const footnoteName = (node: { label?: string | null; identifier: string }) => ({
@@ -79,6 +91,8 @@ export type ListItem = {
 	contentEnd: number
 	task?: Task
 	continuation?: true
+	/** the item's own Blocks, before any nested list, each painted as a top-level one is */
+	children?: Block[]
 }
 
 const BYTE_ORDER_MARK = String.fromCharCode(0xfeff)
@@ -121,9 +135,13 @@ function itemsIn(
 	node: MdastNode,
 	source: string,
 	offset: (sourceOffset: number) => number,
+	blocksOf: (nodes: MdastNode[], prefix: string) => Block[],
+	prefix = '',
 	depth = -1,
 	found: ListItem[] = []
 ): ListItem[] {
+	// the item's lines after its first carry its content's indent after what its container puts in front of them
+	let indented = prefix
 	if (node.type === 'listItem') {
 		ITEM_MARKER.lastIndex = node.position?.start.offset ?? 0
 		const marker = ITEM_MARKER.exec(source)
@@ -132,12 +150,20 @@ function itemsIn(
 			let contentEnd =
 				nested?.position?.start.offset ?? node.position?.end.offset ?? ITEM_MARKER.lastIndex
 			while (contentEnd > ITEM_MARKER.lastIndex && /\s/.test(source[contentEnd - 1]!)) contentEnd--
+			const lineStart = source.lastIndexOf('\n', marker.index - 1) + 1
+			const outer = new RegExp(`^${prefix}`).exec(source.slice(lineStart))?.[0].length ?? 0
+			indented = `${prefix} {0,${ITEM_MARKER.lastIndex - lineStart - outer}}`
 
+			const own = node.children.slice(
+				0,
+				nested ? node.children.indexOf(nested) : node.children.length
+			) as MdastNode[]
 			const item: ListItem = {
 				depth,
 				marker: marker[1]!,
 				contentStart: offset(ITEM_MARKER.lastIndex),
-				contentEnd: offset(contentEnd)
+				contentEnd: offset(contentEnd),
+				children: blocksOf(own, indented)
 			}
 			if (marker[2] && typeof node.checked === 'boolean') {
 				item.task = {
@@ -149,14 +175,15 @@ function itemsIn(
 		}
 	}
 	if (node.type === 'list') {
-		for (const child of node.children) itemsIn(child as MdastNode, source, offset, depth + 1, found)
-	}
-	if (node.type === 'listItem') {
+		for (const child of node.children) {
+			itemsIn(child as MdastNode, source, offset, blocksOf, prefix, depth + 1, found)
+		}
+	} else if (node.type === 'listItem') {
 		let afterNested = false
 		for (const child of node.children as MdastNode[]) {
 			if (child.type === 'list') {
 				afterNested = true
-				itemsIn(child, source, offset, depth, found)
+				itemsIn(child, source, offset, blocksOf, indented, depth, found)
 			} else if (afterNested) {
 				// the item's own text before its first nested list is the item's row; what comes after a nested
 				// list is painted as a row of its own at the item's depth
@@ -173,22 +200,25 @@ function itemsIn(
 	return found
 }
 
-function footnoteReferencesIn(
-	node: MdastNode,
-	offset: (sourceOffset: number) => number,
-	found: FootnoteReference[] = []
-): FootnoteReference[] {
-	if (node.type === 'footnoteReference') {
-		found.push({
-			start: offset(node.position?.start.offset ?? 0),
-			end: offset(node.position?.end.offset ?? 0),
-			...footnoteName(node)
-		})
+/** visits `node` and every node inside it, in document order */
+export function walk(node: MdastNode, visit: (node: MdastNode) => void): void {
+	visit(node)
+	if ('children' in node) for (const child of node.children) walk(child as MdastNode, visit)
+}
+
+/**
+ * `text` parsed with positions, and `offset`, which maps the parser's offsets to the text's: Sätteri drops a leading
+ * U+FEFF and counts offsets without it, while TextFile keeps one as content
+ */
+export function parsedWithOffsets(text: string): {
+	root: MdastNode
+	offset: (sourceOffset: number) => number
+} {
+	const shift = text.startsWith(BYTE_ORDER_MARK) ? 1 : 0
+	return {
+		root: markdownToMdast(text.slice(shift), { position: true }),
+		offset: (sourceOffset) => sourceOffset + shift
 	}
-	if ('children' in node) {
-		for (const child of node.children) footnoteReferencesIn(child as MdastNode, offset, found)
-	}
-	return found
 }
 
 /** the Document's link reference definitions, by their identifier: what reference-style images and links name */
@@ -202,6 +232,10 @@ function plainImageOf(node: MdastNode, definitions: Definitions): Image | null {
 	return src === undefined ? null : { src, alt: node.alt ?? '' }
 }
 
+/** `children` without the text nodes that hold only whitespace */
+const meaningful = (children: readonly MdastNode[]) =>
+	children.filter((child) => !(child.type === 'text' && child.value.trim() === ''))
+
 /**
  * an image, or a link whose only content is an image (editmd keeps the link, `links.ts:194-232`); either may be
  * written by reference, as editmd paints the image its definition names
@@ -212,30 +246,10 @@ function imageOf(node: MdastNode, definitions: Definitions): Image | null {
 	if (node.type !== 'link' && node.type !== 'linkReference') return null
 	const href = node.type === 'link' ? node.url : definitions.get(node.identifier.toLowerCase())
 	if (href === undefined) return null
-	const parts = node.children.filter(
-		(child) => !(child.type === 'text' && child.value.trim() === '')
-	)
+	const parts = meaningful(node.children as MdastNode[])
 	const [only] = parts
-	const inner = parts.length === 1 && only ? plainImageOf(only as MdastNode, definitions) : null
+	const inner = parts.length === 1 && only ? plainImageOf(only, definitions) : null
 	return inner ? { ...inner, href } : null
-}
-
-function emptyLinksIn(
-	node: MdastNode,
-	offset: (sourceOffset: number) => number,
-	found: EmptyLink[] = []
-): EmptyLink[] {
-	if (node.type === 'link' && node.children.length === 0) {
-		found.push({
-			start: offset(node.position?.start.offset ?? 0),
-			end: offset(node.position?.end.offset ?? 0),
-			url: node.url
-		})
-	}
-	if ('children' in node) {
-		for (const child of node.children) emptyLinksIn(child as MdastNode, offset, found)
-	}
-	return found
 }
 
 /** whether `node` holds a link or a reference to one; a definition line only defines one */
@@ -282,14 +296,19 @@ function headingsIn(nodes: readonly MdastNode[]): MdastNode[] {
 	})
 }
 
+/** the kind of the Block `source` holds, a paragraph when it is empty */
+export const blockKindOf = (source: string): BlockKind =>
+	parseBlocks(source)[0]?.kind ?? 'paragraph'
+
 /** the Document's top-level Blocks, with their UTF-16 offsets into `text` */
 export function parseBlocks(text: string): Block[] {
-	// Sätteri drops a leading U+FEFF and counts offsets without it; TextFile keeps one as content
-	const shift = text.startsWith(BYTE_ORDER_MARK) ? 1 : 0
-	const offset = (sourceOffset: number) => sourceOffset + shift
-	const source = text.slice(shift)
-	const root = markdownToMdast(source, { position: true })
+	const { root, offset } = parsedWithOffsets(text)
+	const source = text.slice(offset(0))
 	const children = 'children' in root ? (root.children as MdastNode[]) : []
+	const span = (node: MdastNode) => ({
+		start: offset(node.position?.start.offset ?? 0),
+		end: offset(node.position?.end.offset ?? 0)
+	})
 	// a repeated anchor counts every heading in document order, those in quotes and lists too, as editmd's
 	// `headingSlugs` over `doc.descendants` does (anchors.ts:66-69); only top-level ones are Blocks to scroll to
 	const headings = headingsIn(children)
@@ -300,6 +319,8 @@ export function parseBlocks(text: string): Block[] {
 	const mayHaveFootnotes = source.includes('[^')
 	// likewise every link with no text is spelled `[](` (a reference one is `[][label]`, which resolves to text)
 	const mayHaveEmptyLinks = source.includes('[](')
+	// and every HTML tag with `<`
+	const mayHaveHtml = source.includes('<')
 	// every link is spelled with `[`, `<`, `://`, `www.` or an email's `@`, so plain prose skips that walk too
 	const mayHaveLinks = /[[<@]|:\/\/|www\./.test(source)
 	// the first definition of a label wins, as CommonMark's
@@ -310,13 +331,26 @@ export function parseBlocks(text: string): Block[] {
 		if (!definitions.has(key)) definitions.set(key, node.url)
 	}
 
-	return children.map((node) => {
-		const block: Block = {
-			kind: kindOf(node),
-			start: offset(node.position?.start.offset ?? 0),
-			end: offset(node.position?.end.offset ?? 0)
+	/**
+	 * the Block `node` is; `prefix` is what its container puts in front of each of its lines after the first, '' at the
+	 * top. a quote's and a list item's own nodes are Blocks of their own too, painted as top-level ones are
+	 */
+	const blockOf = (node: MdastNode, prefix: string): Block => {
+		const block: Block = { kind: kindOf(node), ...span(node) }
+		if (prefix !== '') block.prefix = prefix
+		if (node.type === 'blockquote') {
+			// lazy lines carry no `>`, so the quote's mark is optional on each line; a tab may follow it, as a space may
+			const quoted = `${prefix}(?: {0,3}>[ \\t]?)?`
+			block.children = (node.children as MdastNode[]).map((child) => blockOf(child, quoted))
+			// the tasks of the lists inside it, so their boxes take the click on the page
+			const tasks = block.children.flatMap((child) => child.tasks ?? [])
+			if (tasks.length > 0) block.tasks = tasks
 		}
 		if (node.type === 'heading') block.heading = { level: node.depth, slug: slugs.get(node)! }
+		else if (HOLDS_HEADINGS.has(node.type)) {
+			const anchors = headingsIn([node]).map((heading) => slugs.get(heading)!)
+			if (anchors.length > 0) block.anchors = anchors
+		}
 		if (node.type === 'code') block.lang = node.lang ?? null
 		if (node.type === 'footnoteDefinition') {
 			const contentStart = node.children[0]?.position?.start.offset
@@ -326,9 +360,7 @@ export function parseBlocks(text: string): Block[] {
 			}
 		}
 		if (node.type === 'paragraph') {
-			const parts = node.children.filter(
-				(child) => !(child.type === 'text' && child.value.trim() === '')
-			)
+			const parts = meaningful(node.children as MdastNode[])
 			const images = parts.map((part) => imageOf(part, definitions))
 			if (parts.length > 0 && images.every((image) => image !== null)) {
 				block.images = images
@@ -337,17 +369,37 @@ export function parseBlocks(text: string): Block[] {
 			}
 		}
 		if (node.type === 'list') {
-			const items = itemsIn(node, source, offset)
+			const items = itemsIn(
+				node,
+				source,
+				offset,
+				(nodes, inner) => nodes.map((child) => blockOf(child, inner)),
+				prefix
+			)
 			const tasks = items.flatMap((item) => (item.task ? [item.task] : []))
 			// every list paints its own rows, a task list with its checkboxes
 			if (items.length > 0) block.items = items
 			if (tasks.length > 0) block.tasks = tasks
 		}
-		const footnoteReferences = mayHaveFootnotes ? footnoteReferencesIn(node, offset) : []
+		const footnoteReferences: FootnoteReference[] = []
+		const emptyLinks: EmptyLink[] = []
+		const inlineHtml: Span[] = []
+		if (mayHaveFootnotes || mayHaveEmptyLinks || mayHaveHtml) {
+			walk(node, (inner) => {
+				if (mayHaveFootnotes && inner.type === 'footnoteReference') {
+					footnoteReferences.push({ ...span(inner), ...footnoteName(inner) })
+				} else if (mayHaveEmptyLinks && inner.type === 'link' && inner.children.length === 0) {
+					emptyLinks.push({ ...span(inner), url: inner.url })
+				} else if (inner.type === 'html' && inner !== node) {
+					inlineHtml.push(span(inner))
+				}
+			})
+		}
 		if (footnoteReferences.length > 0) block.footnoteReferences = footnoteReferences
-		const emptyLinks = mayHaveEmptyLinks ? emptyLinksIn(node, offset) : []
 		if (emptyLinks.length > 0) block.emptyLinks = emptyLinks
+		if (inlineHtml.length > 0) block.inlineHtml = inlineHtml
 		if (mayHaveLinks && holdsLink(node)) block.links = true
 		return block
-	})
+	}
+	return children.map((node) => blockOf(node, ''))
 }

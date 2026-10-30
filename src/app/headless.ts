@@ -9,8 +9,7 @@ import type { Launch } from './launch.ts'
 
 /** `editmd --roundtrip FILE`: what Save writes if nothing was changed */
 export function roundtrip(path: string): Uint8Array {
-	const file = TextFile.fromData(readFileSync(path))
-	return file.replacingText(file.text).data
+	return TextFile.fromData(readFileSync(path)).data
 }
 
 /**
@@ -36,8 +35,9 @@ export const HEADLESS_IO: HeadlessIo = {
  * `--snapshot` and `--selftest` render through GPUI's headless renderer, loaded only for them
  */
 export async function runHeadless(launch: Launch, io: HeadlessIo): Promise<number | null> {
-	if (launch.kind === 'open' || launch.kind === 'untitled' || launch.kind === 'report-edit')
+	if (launch.kind === 'open' || launch.kind === 'untitled' || launch.kind === 'report-edit') {
 		return null
+	}
 	try {
 		if (launch.kind === 'roundtrip') io.stdout(roundtrip(launch.path))
 		else if (launch.kind === 'normalize') io.stdout(normalize(launch.path))

@@ -60,9 +60,13 @@
 		width: var(--size-list-indent);
 		padding-right: var(--size-list-number-gap);
 	}
-	/* the number in one row of the body text, so its baseline meets the item's first line */
+	/*
+	 * the number in one row of the body text, so its baseline meets the item's first line; no selectable text, as the
+	 * browser's `li::marker` is not, so a drag over the list selects only the items' text
+	 */
 	.number {
 		flex-shrink: 0;
+		user-select: none;
 		white-space: nowrap;
 		font-size: var(--size-list-marker);
 		line-height: var(--size-list-line-height);

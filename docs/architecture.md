@@ -49,7 +49,7 @@ flowchart TB
 Rendering:
 
 - Native `<markdown source>` is the only gpuix element that paints mixed inline runs, so each top-level Block is painted by its own `<markdown>`. Reference definitions are appended to each slice as context, so reference links resolve; painted per Block, 497 of editmd's 498 corpus cases paint the same text as the whole document in one element ([ADR-0005](adr/0005-rendering-native-markdown-per-block.md)).
-- `<markdown>` paints `[^1]` literally outside table cells, so the port rewrites each footnote reference into a `footnote:` link run, and footnote definitions get their own view.
+- `<markdown>` paints `[^1]` literally outside table cells, so the port rewrites each footnote reference into its label in superscript characters, and footnote definitions get their own view.
 - pele's SVG uses CSS custom properties, which GPUI's `<img>` decoder ignores. `core/mermaid.ts` resolves every variable to a literal colour before the SVG is shown ([ADR-0006](adr/0006-mermaid-via-pele.md)).
 - The engine reparses the whole text after each change. A Sätteri parse of a 100KB document takes 2.509ms (median), of a 1MB document 35.678ms ([ADR-0002](adr/0002-markdown-engine-satteri.md)).
 
@@ -96,9 +96,11 @@ A programmatic value moves a text field's caret to its end and clears its undo. 
 editmd-gpuix/
   app.ts (render_hot)  standalone.ts (render, the binary's entry)  build.ts (Bun compile, .app)  test.ts (headless UI suite)
   docs/            architecture.md  parity.md  adr/
-  src/core/        document model, merge, diff, text files, autosave machine, agent reports, links, images, Format commands
-  src/engine/      blocks.ts (Blocks from Sätteri's mdast, UTF-16 offsets)
-  src/host/        files, watching, agent sockets and attribution, appearance, clipboard, print, recent files, windows
+  src/core/        document model, merge, diff, text files, autosave machine, agent reports, links, images, Format commands,
+                   typing as editmd's editor (Return, input rules, inline marks on a field's selection, code fields, tables)
+  src/engine/      blocks.ts (Blocks from Sätteri's mdast, UTF-16 offsets; a quote's and a list item's children too)
+  src/host/        files, watching, agent sockets and attribution, appearance, clipboard, print, recent files, windows,
+                   untitled window numbers
   src/app/         launch and CLI modes, menus, shortcuts, palette and theme, find, zoom, snapshot and selftest
   src/ui/          DocumentView.svelte, MenuBar, FindBar; DocumentView/{Content, Views/, Overlays/, AgentLegend, controller}
   e2e/             real-window suites (gpuix-svelte/automation)

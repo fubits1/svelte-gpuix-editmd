@@ -174,6 +174,13 @@ describe('firstTextOffset: where a Block’s text starts, past its markers', () 
 		expect(firstTextOffset(source)).toBe(expected)
 	})
 
+	// an empty heading's caret is where its text would start; a fence with no line after it has its text at the end
+	test('an empty heading and a lone opening fence put the caret where their text would start', () => {
+		expect([firstTextOffset('#'), firstTextOffset('# '), firstTextOffset('```js')]).toEqual([
+			1, 2, 5
+		])
+	})
+
 	// a rule, a definition or front matter holds no caret; editmd's caret starts in the next textblock
 	test('a Block with no text to hold a caret has none', () => {
 		expect(
@@ -182,6 +189,16 @@ describe('firstTextOffset: where a Block’s text starts, past its markers', () 
 			)
 		).toEqual([null, null, null])
 	})
+})
+
+// editmd's command on an empty paragraph makes an empty node, which its serializer writes as a bare `#`; the field
+// model (ADR-0003) writes the markers with room to type after them, so the next key lands in the new Block
+test('a command on an empty Block writes its markers with room to type', () => {
+	expect([
+		formatBlock('heading1', ''),
+		formatBlock('codeBlock', ''),
+		formatBlock('bulletList', '')
+	]).toEqual(['# ', '```\n\n```', '- '])
 })
 
 describe('Blocks no Format command changes', () => {

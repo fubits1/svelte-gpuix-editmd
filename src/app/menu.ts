@@ -30,11 +30,6 @@ export type MenuState = {
 	 */
 	hasSelection?: boolean
 	/**
-	 * a Block's field is open, whose selection the inline formats read through its keys; none when left
-	 * out
-	 */
-	blockField?: boolean
-	/**
 	 * a field of the Document (a Block's or Source mode's) has the keys, so Cut, Copy, Paste and Select All can send it
 	 * its own; none when left out
 	 */
@@ -64,6 +59,7 @@ const MENUS: Record<MenuEntry['menu'], Item[]> = {
 		['Undo', 'undo'],
 		['Redo', 'redo'],
 		['Copy', 'copy'],
+		['Paste', 'paste'],
 		['Find…', 'find'],
 		['Find Next', 'findNext'],
 		['Find Previous', 'findPrevious']
@@ -99,13 +95,6 @@ const MENUS: Record<MenuEntry['menu'], Item[]> = {
 	]
 }
 
-/**
- * inline formats act on a Block field's selection, which the field reports only through its keys, so they
- * need a Block's field open. Link… stays enabled: with nothing selected editmd inserts the URL itself
- * (editor.ts:387-396)
- */
-const NEEDS_SELECTION = new Set<MenuCommand>(['bold', 'italic', 'strikethrough', 'code'])
-
 /** a COMMANDS chord ('shift-alt-s', or '-' for the minus key) as macOS draws it, modifiers in the order ⌥⇧⌘ */
 function glyphs(chord: string): string {
 	const modifiers = chord.slice(0, -1)
@@ -122,7 +111,6 @@ export function menuEntries({
 	remoteImagesAllowed,
 	hasFile,
 	hasSelection = false,
-	blockField = false,
 	fieldFocused = false
 }: MenuState): MenuEntry[] {
 	return Object.entries(MENUS).flatMap(([menu, items]) =>
@@ -133,10 +121,10 @@ export function menuEntries({
 				title,
 				command,
 				keys: chord ? glyphs(chord) : '',
-				enabled: !NEEDS_SELECTION.has(command) || blockField
+				// editmd enables Format outside Source mode, a field open or not (EditorWindowController.swift:224-225)
+				enabled: !(menu === 'Format' && sourceMode)
 			}
 			if (command === 'toggleSource' && sourceMode) entry.title = 'Show Rendered Markdown'
-			if (menu === 'Format' && sourceMode) entry.enabled = false
 			if (command === 'loadRemoteImages' && remoteImagesAllowed) entry.enabled = false
 			if (command === 'revert') entry.enabled = hasFile
 			// a focused field copies its own selection; outside one, the painted text's
@@ -204,7 +192,11 @@ export function menuBar(state: MenuState): MenuBarMenu[] {
 		const { title, keys, enabled } = entries.get(command)!
 		return { kind: 'item', title, keys, enabled, command }
 	}
-	const action = (title: string, command: BarCommand, keys = ''): MenuBarItem => ({
+	const action = (
+		title: string,
+		command: BarCommand,
+		keys = ''
+	): Extract<MenuBarItem, { kind: 'item' }> => ({
 		kind: 'item',
 		title,
 		keys,
@@ -213,18 +205,11 @@ export function menuBar(state: MenuState): MenuBarMenu[] {
 	})
 	// enabled while a field of the Document has the keys, which the item sends it
 	const fieldKey = (title: string, command: FieldCommand, keys: string): MenuBarItem => ({
-		kind: 'item',
-		title,
-		keys,
-		enabled: state.fieldFocused ?? false,
-		command
+		...action(title, command, keys),
+		enabled: state.fieldFocused ?? false
 	})
 	const recentFiles: MenuBarItem[] = (state.recent ?? []).map((path) => ({
-		kind: 'item',
-		title: path.split('/').at(-1) ?? path,
-		keys: '',
-		enabled: true,
-		command: 'openRecent',
+		...action(path.split('/').at(-1) ?? path, 'openRecent'),
 		path
 	}))
 	const clearRecent = { ...action('Clear Menu', 'clearRecent'), enabled: recentFiles.length > 0 }
@@ -257,7 +242,7 @@ export function menuBar(state: MenuState): MenuBarMenu[] {
 				SEPARATOR,
 				fieldKey('Cut', 'cut', '⌘X'),
 				entry('copy'),
-				fieldKey('Paste', 'paste', '⌘V'),
+				entry('paste'),
 				fieldKey('Paste and Match Style', 'pasteAndMatchStyle', '⌥⇧⌘V'),
 				fieldOnly('Delete'),
 				fieldKey('Select All', 'selectAll', '⌘A'),

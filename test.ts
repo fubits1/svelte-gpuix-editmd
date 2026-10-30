@@ -28,7 +28,7 @@ import {
 	wait_for,
 	wheel
 } from 'gpuix-svelte/test'
-import { dispatch, get_native } from 'gpuix-svelte'
+import { dispatch, get_native, window_size } from 'gpuix-svelte'
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import {
@@ -54,7 +54,7 @@ import App from './App.svelte'
 import { diagramOf } from './src/app/diagrams.ts'
 import { findController } from './src/app/find.svelte.ts'
 import { type MenuBarItem, type MenuBarMenu, menuBar } from './src/app/menu.ts'
-import { mermaidPaletteFor, paletteFor, textThemeFor } from './src/app/palette.ts'
+import { heldLinkThemeFor, mermaidPaletteFor, paletteFor, textThemeFor } from './src/app/palette.ts'
 import { reportEdit } from './src/app/reportEdit.ts'
 import { ThemeController, themeController } from './src/app/theme.svelte.ts'
 import { zoomOut } from './src/app/zoom.ts'
@@ -62,10 +62,18 @@ import { TABLE } from './src/core/blockCommands.ts'
 import { labelDetail } from './src/core/persistence.ts'
 import { type Appearance, systemAppearance } from './src/host/appearance.ts'
 import { LegendPreference } from './src/host/legendPreference.ts'
-import { type AgentRename, greetPeers, listenForReports, sendRename } from './src/host/agentIpc.ts'
+import {
+	type AgentRename,
+	bringAllToFront,
+	focusWindowFor,
+	greetPeers,
+	listenForReports,
+	sendRename
+} from './src/host/agentIpc.ts'
 import { decodePng, type Pixels } from './src/host/png.ts'
 import { printablePage } from './src/host/print.ts'
 import { RecentFiles } from './src/host/recent.ts'
+import { UntitledNumbers } from './src/host/untitledNumbers.ts'
 import DocumentView from './src/ui/DocumentView.svelte'
 import { diagramImageSrc } from './src/ui/DocumentView/Views/diagramImage.svelte.ts'
 import {
@@ -171,6 +179,171 @@ check(
 	'typing `- `, `> ` or a ``` fence at the start of a paragraph’s field makes a list, a quote or a code block, painted without the syntax',
 	shortcutResults,
 	shortcutCases.map(([, text, kind, line]) => [text, kind, line, false])
+)
+
+/**
+ * editmd's input rules turn the Block into a heading, a list or a code block the moment `# `, `- ` or a fence and a
+ * space is typed at its start, so the open field takes that look at once: `keys` typed into an empty Document's
+ * field, then its look while it is still open: the kind it shows, the text, an open field, a heading's size (h1 32px),
+ * the h1's rule box and the code card
+ */
+function lookAfterTyping(keys: string[]) {
+	documentController.load('')
+	settle()
+	for (const key of keys) type(key)
+	settle()
+	const fontSize = find_test_id('block-editor')?.style?.fontSize
+	const look = [
+		documentController.activeKind,
+		documentController.text,
+		find_test_id('block-editor') !== null,
+		typeof fontSize === 'number' && fontSize > 16,
+		find_test_id('block-editor-rule') !== null,
+		find_test_id('block-editor-card') !== null
+	]
+	press('escape')
+	return look
+}
+check(
+	'typing `# Title`, `- a` or ``` and a space into an empty field shows it at once as a heading at h1 size over its rule, a list, or a code card, the field still open',
+	[
+		lookAfterTyping(['#', 'space', 'T', 'i', 't', 'l', 'e']),
+		lookAfterTyping(['-', 'space', 'a']),
+		lookAfterTyping(['`', '`', '`', 'space'])
+	],
+	// editmd's serializer ends every document with a newline
+	[
+		['heading', '# Title\n', true, true, true, false],
+		['list', '- a\n', true, false, false, false],
+		['code', '``` \n', true, false, false, true]
+	]
+)
+
+/**
+ * the look follows the text back: with `# ` deleted the field's text is a paragraph again, as editmd's heading turns
+ * back into one, so the open field drops the heading's look, still open with its caret where the keys left it
+ */
+documentController.load('')
+settle()
+for (const key of ['#', 'space', 'T', 'i', 't', 'l', 'e']) type(key)
+settle()
+// the caret goes back over `Title` to just after `# `
+for (const key of ['left', 'left', 'left', 'left', 'left', 'backspace']) type(key)
+settle()
+// a field mounted afresh gets its caret back by keys once it has them (`#putCaret`), after this turn of the loop
+await wait(100)
+settle()
+type('backspace')
+settle()
+const lostHeadingFontSize = find_test_id('block-editor')?.style?.fontSize
+check(
+	'deleting the `# ` typed into an empty field shows the paragraph look again, the field still open on `Title`',
+	[
+		documentController.activeKind,
+		documentController.text,
+		find_test_id('block-editor') !== null,
+		typeof lostHeadingFontSize === 'number' && lostHeadingFontSize > 16,
+		find_test_id('block-editor-rule') !== null
+	],
+	['paragraph', 'Title\n', true, false, false]
+)
+press('escape')
+
+/**
+ * Return in a Block's field as editmd's Enter (`returnEdit`): `source` loads, Block 0 opens, `keys` are typed at the
+ * field's end, and Escape closes the field; the Document's text and its Blocks' kinds afterwards
+ */
+function typeReturns(source: string, keys: string[]): [string, string[]] {
+	documentController.load(source)
+	settle()
+	click_test_id('block-0')
+	return typeReturnsInto(keys)
+}
+
+/** `keys` typed into the open field, then Escape: the Document's text and its Blocks' kinds afterwards */
+function typeReturnsInto(keys: string[]): [string, string[]] {
+	for (const key of keys) type(key)
+	press('escape')
+	settle()
+	return [documentController.text, documentController.blocks.map((block) => block.kind)]
+}
+
+check(
+	'Return at a heading’s end opens a new paragraph below it, as editmd’s Enter does',
+	typeReturns('# Title\n', ['enter', 'b', 'o', 'd', 'y']),
+	['# Title\n\nbody\n', ['heading', 'paragraph']]
+)
+check(
+	'Return at a paragraph’s end opens a new paragraph below it',
+	typeReturns('one\n', ['enter', 't', 'w', 'o']),
+	['one\n\ntwo\n', ['paragraph', 'paragraph']]
+)
+check(
+	'Return at a list item’s end adds an item to the same list',
+	typeReturns('- one\n', ['enter', 't', 'w', 'o']),
+	['- one\n- two\n', ['list']]
+)
+documentController.load('- one\n')
+settle()
+click_test_id('block-0')
+type('enter')
+type('enter')
+const leftListField = propOf('block-editor', 'value')
+check(
+	'Return on an empty list item ends the list: an empty field opens after it, and what is typed there is a paragraph',
+	[leftListField, ...typeReturnsInto(['a', 'f', 't', 'e', 'r'])],
+	['', '- one\n\nafter\n', ['list', 'paragraph']]
+)
+check(
+	'Return inside a code block keeps its newline in the code',
+	typeReturns('```\na\n```\n', ['enter', 'b']),
+	['```\na\nb\n```\n', ['code']]
+)
+check(
+	'Shift-Return in a paragraph is a hard break, a backslash before the line break',
+	typeReturns('one\n', ['shift-enter', 't', 'w', 'o']),
+	['one\\\ntwo\n', ['paragraph']]
+)
+documentController.load('one\n\ntwo\n')
+settle()
+click_test_id('block-0')
+type('enter')
+const betweenField = [
+	find_test_id('block-editor') !== null,
+	find_test_id('block-0') !== null && find_test_id('block-1') !== null,
+	painted().includes('one') && painted().includes('two')
+]
+check(
+	'Return at the end of a paragraph with another after it opens the new field between the two, both still painted',
+	[betweenField, ...typeReturnsInto(['x'])],
+	[[true, true, true], 'one\n\nx\n\ntwo\n', ['paragraph', 'paragraph', 'paragraph']]
+)
+check(
+	'Return at a heading’s end, then Escape with nothing typed, leaves the Document as it was',
+	typeReturns('# Title\n', ['enter']),
+	['# Title\n', ['heading']]
+)
+
+/**
+ * Return in the middle of a Block is one Undo step, as editmd's splitBlock is one transaction (Yjs captureTimeout
+ * 500ms): typed into an empty Document's field 600ms after ` two`, the split is a step of its own, so one ⌘Z takes it
+ * back whole and leaves one Block holding `one two`
+ */
+documentController.load('')
+settle()
+for (const key of ['o', 'n', 'e', 'space', 't', 'w', 'o']) type(key)
+await wait(600)
+for (const key of ['left', 'left', 'left', 'left', 'enter']) type(key)
+settle()
+const blocksAfterSplit = documentController.blocks.length
+press('escape')
+settle()
+press('cmd-z')
+settle()
+check(
+	'Return between `one` and ` two` 600ms after typing ` two` splits the Block, and one ⌘Z takes the split back whole',
+	[blocksAfterSplit, documentController.text, documentController.blocks.length],
+	[2, 'one two\n', 1]
 )
 
 const directory = mkdtempSync(join(tmpdir(), 'editmd-gpuix-ui-'))
@@ -524,6 +697,50 @@ check(
 documentController.load('')
 rmSync(greetDirectory, { recursive: true, force: true })
 
+/**
+ * editmd names an Agent at its merge, before it looks for changes (editor.ts:226), so an Agent whose write changes
+ * nothing visible still takes a colour slot: Agent A writes what the Document already holds unsaved, then Agent B's
+ * change shows in slot 1
+ */
+const namingDirectory = mkdtempSync(join(tmpdir(), 'eg-naming-'))
+const namingSockets = join(namingDirectory, 's')
+const namingPath = join(namingDirectory, 'naming.md')
+writeFileSync(namingPath, 'one\n')
+documentController.open(namingPath, {
+	socketsDirectory: namingSockets,
+	listAgentProcesses: () => [],
+	legendPreference: new LegendPreference(join(namingDirectory, 'legend.json'))
+})
+await wait(150)
+/** the hook Report an Agent named `name` sends before it writes the file */
+const reportNaming = (session: string, name: string) =>
+	reportEdit(
+		JSON.stringify({
+			session_id: session,
+			cwd: namingDirectory,
+			hook_event_name: 'PreToolUse',
+			tool_input: { file_path: namingPath }
+		}),
+		{ EDITMD_AGENT_NAME: name },
+		namingSockets
+	)
+click_test_id('block-0')
+type('x')
+press('escape')
+await reportNaming('naming-a', 'Agent A')
+writeFileSync(namingPath, 'onex\n')
+await waitUntil(() => !documentController.edited, 'Agent A’s merge')
+await reportNaming('naming-b', 'Agent B')
+writeFileSync(namingPath, 'onex\n\nby b\n')
+await waitUntil(() => documentController.agents.length > 0, 'Agent B’s change')
+check(
+	'an Agent whose merge changes nothing visible still takes colour slot 0, so the next Agent’s change shows in slot 1',
+	[documentController.text, documentController.agents.map(({ slot }) => slot)],
+	['onex\n\nby b\n', [1]]
+)
+documentController.load('')
+rmSync(namingDirectory, { recursive: true, force: true })
+
 documentController.load(
 	'```mermaid\nflowchart LR\n  A --> B\n```\n\n```mermaid\nflowchart LR\n  A -->\n```\n'
 )
@@ -663,10 +880,11 @@ writeFileSync(
 documentController.open(imagePath, { socketsDirectory: join(imageDirectory, 's') })
 settle()
 check('a local image paints as an image', find_test_id('image-0-0')?.type, 'img')
-// the view measures its column after the first paint, on a 250ms poll
-await wait(300)
-settle()
+// the view takes its column's width from the column's layout event, which the paint reports with no clock advance
+pump()
 const naturalBounds = bounds(find_test_id('image-0-0') ?? 0)
+// the 800px test window holds editmd's whole 736px column, which less its 40px padding either side is 656px wide
+const wideBounds = bounds(find_test_id('image-0-1') ?? 0)
 check(
 	'a local image paints at its natural size',
 	`${naturalBounds?.width}x${naturalBounds?.height}`,
@@ -674,19 +892,25 @@ check(
 )
 // editmd's page zoom grows images with the text: 1.1 times the natural size at Cmd-=
 press('cmd-=')
-await wait(300)
-settle()
+pump()
 const zoomedImageBounds = bounds(find_test_id('image-0-0') ?? 0)
+// the zoomed page's column, the image paragraph's row, and the wide image fitted to it
+const zoomedColumn = bounds(find_test_id('block-0')?.children?.[0] ?? 0)
+const zoomedWide = bounds(find_test_id('image-0-1') ?? 0)
 press('cmd-0')
-await wait(300)
-settle()
+pump()
 check(
 	'Cmd-= grows a local image by 1.1, as editmd’s page zoom does',
 	`${zoomedImageBounds?.width}x${zoomedImageBounds?.height}`,
 	'330x220'
 )
-// the 800px test window holds editmd's whole 736px column, which less its 40px padding either side is 656px wide
-const wideBounds = bounds(find_test_id('image-0-1') ?? 0)
+check(
+	`a wide image follows its column’s width when the zoom changes it, with no clock advance (column ${zoomedColumn?.width}, image ${zoomedWide?.width}x${zoomedWide?.height})`,
+	zoomedColumn && zoomedWide
+		? [zoomedWide.width === zoomedColumn.width, zoomedWide.width / zoomedWide.height]
+		: null,
+	[true, 2]
+)
 check(
 	'a wider image scales down to the column, keeping its aspect ratio',
 	`${wideBounds?.width}x${wideBounds?.height}`,
@@ -726,19 +950,22 @@ check(
 )
 rmSync(imageDirectory, { recursive: true, force: true })
 
-// footnotes: native <markdown> paints `[^1]` literally, so each reference paints as a bracketed link run
+/**
+ * footnotes: native <markdown> paints `[^1]` literally, so each reference paints its label in Unicode superscript
+ * characters with no link, as editmd's bare `sup` (preset-gfm footnote/reference.ts:33-45)
+ */
 documentController.load('Text[^1] here.\n\n- [ ] task[^2]\n\n[^1]: First note.\n[^2]: Second.\n')
 settle()
 const footnoteLines = painted().split('\n')
 check(
-	'a footnote reference paints as its bracketed label',
+	'a footnote reference paints as its label in superscript',
 	footnoteLines.filter((line) => line.startsWith('Text')),
-	['Text[1] here.']
+	['Text¹ here.']
 )
 check(
-	'a footnote reference in a task item paints as its bracketed label',
+	'a footnote reference in a task item paints as its label in superscript',
 	footnoteLines.filter((line) => line.startsWith('task')),
-	['task[2]']
+	['task²']
 )
 check(
 	'no footnote reference paints literally outside the definitions',
@@ -775,10 +1002,11 @@ check(
 const textTheme = textThemeFor(systemAppearance())
 check('the block editor paints in editmd’s text theme', propOf('block-editor', 'theme'), textTheme)
 press('escape')
+// a Block without links strikes in its text colour, which native draws in `textMuted` (`heldLinkThemeFor`)
 check(
-	'a block’s native markdown paints in editmd’s text theme',
+	'a block’s native markdown paints in editmd’s text theme, a Block without links striking in its text colour',
 	find((node) => node.type === 'markdown')?.customProps?.theme,
-	textTheme
+	heldLinkThemeFor(textTheme)
 )
 
 // shortcuts arrive through `on_window_key`, which fires headlessly with GPUI's key name and modifiers
@@ -786,6 +1014,8 @@ documentController.load('# Title\n\nBody\n')
 settle()
 click_test_id('block-0')
 press('cmd-alt-2')
+// the open field's caret is read first, so the command lands once the field answers
+await fieldIdle()
 check(
 	'Cmd-Alt-2 makes the Active block a level-2 heading',
 	documentController.text,
@@ -796,6 +1026,7 @@ press('escape')
 
 click_test_id('block-1')
 press('cmd-shift-8')
+await fieldIdle()
 check(
 	'Cmd-Shift-8 makes the Active paragraph a bullet list',
 	documentController.text,
@@ -842,7 +1073,9 @@ documentController.load('# Title\n')
 settle()
 click_test_id('block-0')
 press('cmd-alt-2')
+await fieldIdle()
 press('cmd-alt-1')
+await fieldIdle()
 type('z')
 check(
 	'a Format command resets the field even to the source it opened with',
@@ -855,7 +1088,7 @@ settle()
 
 /**
  * every other Format key, each on an open Block of its own: the key, how editmd's menu names it, the Block's
- * source before and after (editmd MainMenu.swift; the transforms are `BLOCK_TRANSFORMS`)
+ * source before and after (editmd MainMenu.swift; the transforms are `formatBlock`)
  */
 const formatKeys: [string, string, string, string][] = [
 	['cmd-alt-0', 'Body', '## Title', 'Title'],
@@ -895,6 +1128,7 @@ documentController.load('line one\nline two\n')
 settle()
 click_test_id('block-0')
 press('cmd-alt-4')
+await fieldIdle()
 const coveredWhileOpen = [
 	documentController.text,
 	find_test_id('block-1'),
@@ -933,6 +1167,11 @@ documentController.load(
 )
 settle()
 const blockedImageTip = await tipAfterHover('remote-image-0-0', 'remote-image-tooltip-0-0-tip')
+check(
+	'a blocked remote image’s tip shows at the pointer, below-right of it as a native tip',
+	tipOffsetFrom(centreOf('remote-image-0-0'), 'remote-image-tooltip-0-0-tip'),
+	[0, 0]
+)
 documentController.allowRemoteImages()
 settle()
 check(
@@ -1023,6 +1262,34 @@ check(
 	[1, '# Doc\n\nparaz\nagent\n', 'paraz\nagent']
 )
 press('escape')
+
+/**
+ * a key the open field took just before an outside change mounts it afresh: its report is still on its way from GPUI
+ * when the merge remounts the field, so it comes from the replaced field, and must land on top of the merge
+ */
+const lateKeyPath = join(sourceDirectory, 'late-key.md')
+writeFileSync(lateKeyPath, '# Late\n\nStart.\n')
+documentController.open(lateKeyPath, { socketsDirectory: join(sourceDirectory, 'lk') })
+settle()
+click_test_id('block-1')
+type('a')
+const lateKeyRevision = documentController.fieldRevision
+// the field takes `b`, but with no pump its report waits in GPUI's queue
+get_native()?.simulateKeystrokes('b')
+writeFileSync(lateKeyPath, '# Late\n\nA1 Start.\n')
+// neither pumped nor settled until the merge remounts the field, so the replaced field is still there to report
+for (let tries = 0; documentController.fieldRevision === lateKeyRevision && tries < 200; tries++)
+	await new Promise((resolve) => setTimeout(resolve, 10))
+const lateKeyRemounted = documentController.fieldRevision !== lateKeyRevision
+pump()
+await fieldIdle()
+type('c')
+press('escape')
+check(
+	'a key whose report is still on its way when an outside change remounts the open field lands once, in order, with the outside change',
+	[lateKeyRemounted, documentController.text],
+	[true, '# Late\n\nA1 Start.abc\n']
+)
 
 /**
  * an outside write that removes or adds Blocks above the open one while its field is open: the field
@@ -1257,7 +1524,11 @@ check(
 )
 check('following a link opens no editor', find_test_id('block-editor'), null)
 
-// a footnote reference paints as a `footnote:` link run, so Cmd-click follows it to the definition as editmd's anchors do
+/**
+ * a footnote reference paints as superscript text with no link, as editmd's bare `sup`, and editmd's Cmd-click
+ * follows only an `a` (web/src/editor.ts:406-410): the click follows nothing and scrolls nothing, and like any
+ * Cmd-click on plain text it opens its Block, where editmd's caret lands
+ */
 documentController.load(
 	`[^1] starts here.\n\n${filler.join('\n\n')}\n\n[^1]: The note.\n`,
 	linkOptions
@@ -1267,19 +1538,20 @@ settle()
 wheel({ x: 400, y: 200 }, 0, 10000)
 settle()
 const definitionBefore = bounds(find_test_id('footnote-31') ?? 0)
+linkRuns.length = 0
 clickLinkIn('block-0', 'cmd')
 const definitionAfter = bounds(find_test_id('footnote-31') ?? 0)
 check(
-	'Cmd-clicking a footnote reference scrolls its definition into view and opens no editor',
+	'Cmd-clicking a footnote reference follows nothing, its definition staying below the fold, and opens its Block',
 	[
 		definitionBefore !== null && definitionBefore.y >= 538,
-		definitionAfter !== null &&
-			definitionAfter.y >= 0 &&
-			definitionAfter.y + definitionAfter.height <= 538,
-		find_test_id('block-editor')
+		definitionAfter !== null && definitionAfter.y >= 538,
+		linkRuns,
+		documentController.activeIndex
 	],
-	[true, true, null]
+	[true, true, [], 0]
 )
+press('escape')
 
 /**
  * a link in the middle of a paragraph's text: <markdown> gives no run positions, so Cmd-clicks walk along the
@@ -1407,6 +1679,42 @@ check(
 )
 press('escape')
 
+/**
+ * a relative link in an untitled Document names nothing: editmd resolves it against its own page (main.ts:44),
+ * its LinkPolicy ignores it (LinkPolicy.swift:17-18) and its LinkOpener beeps (LinkOpener.swift:19-20)
+ */
+linkRuns.length = 0
+documentController.load('[x](notes.md)\n', linkOptions)
+settle()
+clickLinkIn('block-0', 'cmd')
+check(
+	'Cmd-clicking a relative link in an untitled Document beeps through `osascript` and opens nothing',
+	[linkRuns, find_test_id('confirm-link'), documentController.activeIndex],
+	[[['osascript', ['-e', 'beep']]], null, null]
+)
+press('escape')
+
+// the same link in a Document with a folder opens the file it names
+const relativeDirectory = mkdtempSync(join(tmpdir(), 'eg-relative-'))
+const relativePath = join(relativeDirectory, 'links.md')
+writeFileSync(relativePath, '[x](notes.md)\n')
+writeFileSync(join(relativeDirectory, 'notes.md'), '# Notes\n')
+linkRuns.length = 0
+documentController.open(relativePath, {
+	...linkOptions,
+	socketsDirectory: join(relativeDirectory, 's'),
+	describeFile: () => ({ isDirectory: false, isText: true })
+})
+settle()
+clickLinkIn('block-0', 'cmd')
+check(
+	'Cmd-clicking a relative link in a Document with a folder opens the file it names, with no beep',
+	linkRuns,
+	[['openInEditor', [join(relativeDirectory, 'notes.md')]]]
+)
+press('escape')
+rmSync(relativeDirectory, { recursive: true, force: true })
+
 // a linked image, as a README badge (parity row r-image-linked): it paints as an image, and Cmd-click follows its link
 const badgeDirectory = mkdtempSync(join(tmpdir(), 'eg-badge-'))
 writeFileSync(join(badgeDirectory, 'badge.png'), png(90, 20))
@@ -1466,9 +1774,9 @@ type('H')
 type('i')
 press('escape')
 check(
-	'clicking the hint and typing `Hi` makes the Document’s text `Hi`, and the hint is gone',
+	'clicking the hint and typing `Hi` makes the Document’s text `Hi` with editmd’s final newline, and the hint is gone',
 	[documentController.text, painted().includes('Start writing…'), find_test_id('empty-hint')],
-	['Hi', false, null]
+	['Hi\n', false, null]
 )
 
 /**
@@ -1507,7 +1815,9 @@ await app.unmount()
 const systemAnswers: Appearance[] = ['light']
 const polledTheme = new ThemeController({
 	readAppearance: () => systemAnswers.at(-1) ?? 'light',
-	pollInterval: 50
+	pollInterval: 50,
+	// a scroller that always shows, so its thumb paints at rest whatever this Mac's setting
+	readScrollerStyle: () => 'legacy'
 })
 app = mount_headless(App, { width: 800, height: 538, props: { theme: polledTheme } })
 documentController.load('Body[^1]\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n[^1]: Note.\n')
@@ -1531,6 +1841,9 @@ function thumbColours() {
 	const style = find_test_id('page-scroller-thumb')?.style
 	return [style?.backgroundColor, style?.hover?.backgroundColor]
 }
+// the scroller style is read as the theme starts and lands a turn later, the thumb painting with it
+await wait(20)
+settle()
 const lightThumb = thumbColours()
 systemAnswers.push('dark')
 await wait(150)
@@ -1841,6 +2154,32 @@ check(
 )
 
 /**
+ * editmd's NSSearchField shows the focus ring while it has the keys (find-bar-source.png: 3pt round the field, measured
+ * at 2x; EditorWindowController.swift:295-298 makes it first responder), and none once the page takes them
+ */
+await wait(100)
+settle()
+const ringOf = () => {
+	const style = find_test_id('find-field-box')?.style
+	return [style?.outlineWidth ?? 0, style?.outlineColor ?? null]
+}
+const focusedFindRing = ringOf()
+click_test_id('block-0')
+const blurredFindRing = ringOf()
+press('escape')
+press('cmd-f')
+await wait(100)
+settle()
+check(
+	'the focused find field shows a 3px accent focus ring round its box, and none once a Block takes the keys',
+	[focusedFindRing, blurredFindRing],
+	[
+		[3, themeController.palette.accent],
+		[0, null]
+	]
+)
+
+/**
  * what Find reports and what native paints: the match count, the active match (0-based, like `activeIndex`)
  * and which painted wash is the active one. the counts come from the paint, a 100ms poll behind it, and a
  * query with no match turns the field red only on the second empty read, so a stale frame does not flash it
@@ -1894,14 +2233,26 @@ check(
 	]
 )
 
-// Cmd-F again focuses the field it already shows
+/**
+ * Cmd-F again focuses the field it already shows, its query selected as editmd's `focus()` selects it
+ * (EditorWindowController.swift:295-298), so a key typed a moment later replaces the query
+ */
 press('cmd-f')
+await wait(100)
+settle()
+const selectedQuery = get_native()?.getSelectedText() ?? null
 type('x')
+check(
+	'Cmd-F with a query selects it, so the next key replaces it',
+	[selectedQuery, findController.query],
+	['be', 'x']
+)
+type('q')
 await findState()
 check(
-	'a query with no match turns the field’s text the danger colour',
+	'a query with no match turns the field’s text AppKit’s systemRed, as editmd’s `setResult(found:)`',
 	[findController.query, findController.total, fieldOf(propOf('find-field', 'theme'), 'text')],
-	['bex', 0, themeController.palette.danger]
+	['xq', 0, themeController.palette['system-red']]
 )
 
 press('escape')
@@ -1909,7 +2260,7 @@ type('y')
 check(
 	'Escape hides the bar and hands the keys back to the document',
 	[find_test_id('find-bar'), findController.query],
-	[null, 'bex']
+	[null, 'xq']
 )
 
 press('cmd-f')
@@ -2219,6 +2570,59 @@ check(
 chmodSync(closePath, 0o644)
 press('escape')
 
+/**
+ * the close question's Save on a locked file: NSDocument shows the one locked-file alert ⌘S shows, as editmd's
+ * `askToClose` hands the question to NSDocument (Document.swift:195-197), and the window stays until Save Anyway
+ * writes the edit, which closes it as the question's Save would have
+ */
+const lockedClosePath = join(fileDirectory, 'close-locked.md')
+writeFileSync(lockedClosePath, 'Draft\n')
+documentController.open(lockedClosePath, windowOptions)
+settle()
+click_test_id('block-0')
+type('f')
+chmodSync(lockedClosePath, 0o444)
+windowRuns.length = 0
+press('cmd-w')
+settle()
+const askedBeforeLockedSave = find_test_id('save-changes') !== null
+clickIfPresent('save-changes-save')
+settle()
+check(
+	'when the close question’s Save meets a locked file, the locked-file alert ⌘S shows asks to save anyway and the window stays',
+	[
+		askedBeforeLockedSave,
+		find_test_id('save-changes'),
+		textOf('save-locked-title'),
+		windowRuns,
+		readFileSync(lockedClosePath, 'utf8')
+	],
+	[
+		true,
+		null,
+		'The document “close-locked.md” could not be saved. The file is locked.',
+		[],
+		'Draft\n'
+	]
+)
+clickIfPresent('save-locked-anyway')
+settle()
+const lockedCloseMode = (statSync(lockedClosePath).mode & 0o777).toString(8)
+chmodSync(lockedClosePath, 0o644)
+check(
+	'Save Anyway after the close question writes the edit, keeps the mode 444 and closes the window',
+	[readFileSync(lockedClosePath, 'utf8'), lockedCloseMode, windowRuns],
+	[
+		'Draftf\n',
+		'444',
+		[
+			['setWindowTitle', ['close-locked.md']],
+			['closeWindow', []]
+		]
+	]
+)
+press('escape')
+
 documentController.load('Note\n', windowOptions)
 settle()
 click_test_id('block-0')
@@ -2280,6 +2684,27 @@ check(
 	'Cmd-W on an untouched Document closes at once',
 	[find_test_id('save-changes'), windowRuns],
 	[null, [['closeWindow', []]]]
+)
+
+/**
+ * NSDocument numbers its untitled windows Untitled, Untitled 2, …, one past the highest still open, which every
+ * window's process shares through `UntitledNumbers`; this test's registry sits in its own support folder
+ */
+const untitledNumbers = new UntitledNumbers(join(fileDirectory, 'support', 'untitled'))
+const untitledOptions = { ...windowOptions, untitledNumbers, onExit: () => {} }
+const firstUntitled = new DocumentController()
+firstUntitled.load('', untitledOptions)
+const secondUntitled = new DocumentController()
+secondUntitled.load('', untitledOptions)
+secondUntitled.run('saveAs')
+check(
+	'a second untitled window is titled Untitled 2, and its Save As starts on Untitled 2.md',
+	[
+		firstUntitled.windowTitle,
+		secondUntitled.windowTitle,
+		secondUntitled.overlay?.kind === 'saveAs' ? secondUntitled.overlay.name : null
+	],
+	['Untitled', 'Untitled 2', 'Untitled 2.md']
 )
 
 // File > Revert to Saved has no key in editmd; the command palette will run it, so the test runs it the same way
@@ -2602,6 +3027,23 @@ check(
 	'Introx\n\nEnd\n'
 )
 
+/**
+ * editmd nests a table inserted at the end of a list under its last item (measured in editmd's own editor), so the
+ * list's text gains the table indented to that item's text, one Undo step
+ */
+documentController.load('- a\n- b\n', menuOptions)
+settle()
+click_test_id('block-0')
+documentController.run('table')
+settle()
+const tableInList = documentController.text
+press('cmd-z')
+check(
+	'Table with the field open at the end of a list nests editmd’s table under its last item, one Undo step',
+	[tableInList, documentController.text],
+	['- a\n- b\n  |   |   |   |\n  | - | - | - |\n  |   |   |   |\n  |   |   |   |\n', '- a\n- b\n']
+)
+
 documentController.load('A\n\nB\n', menuOptions)
 settle()
 documentController.run('horizontalRule')
@@ -2874,7 +3316,7 @@ settle()
 const headingTitles = paletteTitles()
 check('typing `head 2` lists exactly Heading 2', headingTitles, ['Heading 2'])
 press('enter')
-settle()
+await fieldIdle()
 check(
 	'Return runs the selected entry on the Active block and closes the palette',
 	[headingTitles, documentController.text, find_test_id('command-palette')],
@@ -2897,23 +3339,22 @@ check(
 )
 press('cmd-0')
 
-// Bold needs a text selection the gpuix textarea does not expose (gap G1), so it is listed but disabled
+// an untitled Document has no file to revert to, so Revert to Saved is listed but disabled, as NSDocument validates it
 documentController.run('commandPalette')
 settle()
-typeQuery('bold')
+typeQuery('revert')
 settle()
-const textBeforeBold = documentController.text
 press('enter')
 settle()
 check(
-	'Bold is listed but greyed, and Return on it does nothing',
+	'Revert to Saved is listed but greyed for an untitled Document, and Return on it does nothing',
 	[
 		paletteTitles(),
 		find_test_id('palette-row-0')?.style?.color,
-		documentController.text,
+		find_test_id('revert'),
 		find_test_id('command-palette') !== null
 	],
-	[['Bold'], themeController.palette.muted, textBeforeBold, true]
+	[['Revert to Saved'], themeController.palette.muted, null, true]
 )
 const paletteBeforeEscape = find_test_id('command-palette') !== null
 press('escape')
@@ -2956,7 +3397,7 @@ settle()
 typeQuery('quote')
 settle()
 clickIfPresent('palette-row-0')
-settle()
+await fieldIdle()
 check(
 	'clicking an entry runs it and closes the palette',
 	[documentController.text, find_test_id('command-palette')],
@@ -2965,24 +3406,23 @@ check(
 press('escape')
 
 /**
- * twenty Downs from New, past Revert to Saved (greyed for this untitled Document, as NSDocument validates it), Copy
- * (greyed with nothing selected) and Format's four disabled inline entries (Link… is enabled), select Heading 6, far
- * below the first rows
+ * twenty-five Downs from New, past Revert to Saved (greyed for this untitled Document, as NSDocument validates it) and
+ * Copy (greyed with nothing selected), select Heading 6, far below the first rows
  */
 documentController.run('commandPalette')
 settle()
-for (let step = 0; step < 20; step++) {
+for (let step = 0; step < 25; step++) {
 	press('down')
 	settle()
 }
 // the list's own box, below the field: the rows scroll inside it
 const paletteListBox = bounds(find_test_id('command-palette-list') ?? 0)
-const selectedRowBox = bounds(find_test_id('palette-row-26') ?? 0)
+const selectedRowBox = bounds(find_test_id('palette-row-27') ?? 0)
 check(
 	'Down past the visible rows scrolls the selected entry into view',
 	[
-		textOf('palette-title-26'),
-		find_test_id('palette-row-26')?.style?.backgroundColor,
+		textOf('palette-title-27'),
+		find_test_id('palette-row-27')?.style?.backgroundColor,
 		paletteListBox !== null &&
 			selectedRowBox !== null &&
 			selectedRowBox.y >= paletteListBox.y &&
@@ -3042,21 +3482,36 @@ check(
 	[true, null, '']
 )
 
+/**
+ * a recent file deleted on disk leaves Open Recent, as NSDocumentController drops it from `recentDocumentURLs`:
+ * neither the menu bar's submenu nor the Open Recent list shows it, the other recent file still listed
+ */
 documentController.open(launchedPath, menuOptions)
 settle()
 const gonePath = join(menuDirectory, 'gone.md')
+writeFileSync(gonePath, '# Gone\n')
 menuRecent.add(gonePath)
-documentController.run('openRecent')
+rmSync(gonePath)
+// the File menu by its title's test id: `openMenu`'s titles are declared further down
+clickIfPresent('menu-title-0')
 settle()
-clickIfPresent('open-recent-0')
-settle()
-check(
-	'a recent file that is gone alerts that it does not exist and opens no window',
-	[textOf('open-failed-title'), find_test_id('open-failed-message'), menuWindows],
-	['The document “gone.md” could not be opened. The file doesn’t exist.', null, []]
-)
+clickRow('Open Recent')
+const goneMenuRows = panelRows('submenu')
 press('escape')
 settle()
+documentController.run('openRecent')
+settle()
+const goneListNames = [0, 1].map((index) => textOf(`open-recent-name-${index}`))
+press('escape')
+settle()
+check(
+	'a recent file deleted on disk is listed neither in File > Open Recent nor in the Open Recent list, the other one still is',
+	[goneMenuRows, goneListNames],
+	[
+		[['launched.md', ''], 'separator', ['Clear Menu', '']],
+		['launched.md', undefined]
+	]
+)
 
 const lockedPath = join(menuDirectory, 'locked.md')
 writeFileSync(lockedPath, '# Locked\n')
@@ -3082,8 +3537,8 @@ chmodSync(lockedPath, 0o644)
 press('escape')
 
 /**
- * a file named at launch that cannot be read: NSDocumentController alerts and the window opens untitled, where the
- * process used to end. a throw is caught, so it fails the check instead of the run
+ * a file named at launch that cannot be read: NSDocumentController alerts over an empty untitled Document, which
+ * goes with the alert (the next check). a throw is caught, so it fails the check instead of the run
  */
 const missingLaunchPath = join(menuDirectory, 'missing-at-launch.md')
 let launchOpened: boolean | string
@@ -3112,6 +3567,26 @@ check(
 )
 press('escape')
 settle()
+
+/**
+ * f-binary at launch: NSDocumentController refuses a binary file named at launch and editmd opens no window, so the
+ * alert's OK ends the window (a recorder here); the untitled Document behind the alert is only what it is drawn in
+ */
+documentController.openAtLaunch(binaryPath, menuOptions)
+settle()
+const launchRefusal = textOf('open-failed-title')
+menuRuns.length = 0
+click_test_id('open-failed-ok')
+settle()
+check(
+	'a binary file given at launch shows NSDocumentController’s refusal, and its OK closes the window, as editmd opens none',
+	[launchRefusal, find_test_id('open-failed'), menuRuns],
+	[
+		'The document “binary.md” could not be opened. It contains binary data, not text.',
+		null,
+		[['closeWindow', []]]
+	]
+)
 
 // a save that had to leave the file's encoding says so, as editmd's EditorWindowController `showNotice` sheet
 const latinPath = join(menuDirectory, 'latin.md')
@@ -3476,14 +3951,16 @@ function blockInView(index: number): boolean {
 // the first Block's top with the page unscrolled, where a reveal near the top has to stop
 const unscrolledTop = bounds(find_test_id('block-0') ?? 0)?.y ?? Number.NaN
 const claudeBlocksBefore = [blockInView(20), blockInView(34)]
+/** how long a reveal's smooth scroll takes to land, its 300ms and a frame or two */
+const REVEAL_MS = 400
 clickIfPresent('legend-name-0')
-settle()
+await wait(REVEAL_MS)
 const afterFirstReveal = [blockInView(20), blockInView(34)]
 clickIfPresent('legend-name-0')
-settle()
+await wait(REVEAL_MS)
 const afterSecondReveal = blockInView(34)
 clickIfPresent('legend-name-0')
-settle()
+await wait(REVEAL_MS)
 check(
 	'clicking an Agent’s name scrolls to its next changed Block, cycling back to the first, and opens no editor',
 	[
@@ -3508,7 +3985,7 @@ function topFromMiddle(index: number): number {
 // the third click revealed Claude's first Block again; Outside edit's Block sits near the top
 const revealedOffset = topFromMiddle(20)
 clickIfPresent('legend-name-2')
-settle()
+await wait(REVEAL_MS)
 // GPUI snaps both the Block's edges and the scroll offset to the 2x display's half-pixel grid, so within a pixel
 check(
 	'a revealed Block’s top meets the middle of the page, as editmd scrolls a change’s top to the window’s middle (`coordsAtPos(at).top` to `innerHeight / 2`), and a Block near the top stops the page at its top',
@@ -3530,6 +4007,52 @@ async function tipAfterHover(testId: string, tipId: string): Promise<string | nu
 	settle()
 	return textOf(tipId) ?? null
 }
+
+/** the text of the tip `tipId` once the pointer has rested at the window point `point`, null when none shows */
+async function tipAt(point: { x: number; y: number }, tipId: string): Promise<string | null> {
+	mouse_move(point)
+	await wait(400)
+	settle()
+	return textOf(tipId) ?? null
+}
+
+/** the window point at the centre of `testId`, where `mouse_move` puts the pointer; off the window when unpainted */
+function centreOf(testId: string): { x: number; y: number } {
+	const box = bounds(find_test_id(testId) ?? 0)
+	return box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : { x: -1, y: -1 }
+}
+
+/**
+ * how far the tip `tipId` starts from where a native tip starts for the pointer at `point`: below-right of it, past
+ * the arrow cursor's body (NSCursor.arrow paints 9.3pt right of and 15.7pt below its hot spot, measured on this
+ * macOS), moved back inside a 4px margin at the window's edges; [0, 0] when it starts there, within a pixel
+ */
+function tipOffsetFrom(point: { x: number; y: number }, tipId: string): [number, number] | null {
+	const box = bounds(find_test_id(tipId) ?? 0)
+	if (!box) return null
+	const startX = Math.min(point.x + 9, window_size.width - 4 - box.width)
+	const startY = Math.min(point.y + 16, window_size.height - 4 - box.height)
+	const miss = (value: number) => (Math.abs(value) <= 1 ? 0 : Math.round(value))
+	return [miss(box.x - startX), miss(box.y - startY)]
+}
+
+/** the window point at the middle of the first painted box of the washed run `text` inside `testId`, null for none */
+function washPointIn(testId: string, text: string): { x: number; y: number } | null {
+	const block = bounds(find_test_id(testId) ?? 0)
+	if (!block) return null
+	const rect = painted_highlights()
+		.filter((wash) => wash.active && wash.text.slice(wash.start, wash.end) === text)
+		.flatMap((wash) => wash.rects)
+		.find(
+			(each) =>
+				each.x >= block.x &&
+				each.y >= block.y &&
+				each.x + each.width <= block.x + block.width + 1 &&
+				each.y + each.height <= block.y + block.height + 1
+		)
+	return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : null
+}
+
 // editmd titles a highlight "<name>, <time>" (web/src/highlights.ts:184, 214-216); this test's time is en-US in UTC
 const outsideBlock = documentController.blocks[2]
 const outsideHighlight = documentController.highlights.find(
@@ -3570,6 +4093,26 @@ check(
 			`Clear ${claudeName}'s highlights`
 		],
 		0
+	]
+)
+
+// editmd's legend titles are native tips, so each shows at the pointer, not beside the legend
+const legendTipOffsets = []
+for (const [testId, tipId] of [
+	['legend-minimize', 'legend-minimize-tooltip-tip'],
+	['legend-name-0', 'legend-name-tooltip-0-tip'],
+	['legend-clear-0', 'legend-clear-tooltip-0-tip']
+] as const) {
+	await tipAfterHover(testId, tipId)
+	legendTipOffsets.push(tipOffsetFrom(centreOf(testId), tipId))
+}
+check(
+	'the legend’s tips show at the pointer, below-right of it as a native tip, kept inside the window',
+	legendTipOffsets,
+	[
+		[0, 0],
+		[0, 0],
+		[0, 0]
 	]
 )
 
@@ -3680,10 +4223,22 @@ check(
 	[pillTip, dotTips],
 	['Show agents', documentController.agents.map(({ name }) => name)]
 )
+await tipAfterHover('legend-pill-count', 'legend-pill-tooltip-tip')
+const pillTipOffset = tipOffsetFrom(centreOf('legend-pill-count'), 'legend-pill-tooltip-tip')
+await tipAfterHover('legend-pill-dot-0', 'legend-pill-dot-tooltip-0-tip')
+check(
+	'the pill’s tip and a dot’s show at the pointer, below-right of it, kept inside the window',
+	[pillTipOffset, tipOffsetFrom(centreOf('legend-pill-dot-0'), 'legend-pill-dot-tooltip-0-tip')],
+	[
+		[0, 0],
+		[0, 0]
+	]
+)
 /** whether a window opened now, reading the same store as this one, starts with its legend minimized */
 function nextWindowMinimized(): boolean {
 	const nextWindow = new DocumentController()
-	nextWindow.load('', menuOptions)
+	// its sockets apart, since an untitled window listens too and would answer this window's peers
+	nextWindow.load('', { ...menuOptions, socketsDirectory: join(menuDirectory, 'next-s') })
 	return nextWindow.legendMinimized
 }
 const minimizedInNextWindow = nextWindowMinimized()
@@ -3779,12 +4334,17 @@ const deletedTime = deletion
 const deletedSlot = documentController.agents.find(({ id }) => id === deletion?.author.id)?.slot
 // the legend's Reveal brings the line into the window: a Deletion's stop is the Block below it
 clickIfPresent('legend-name-0')
-settle()
+await wait(REVEAL_MS)
 const deletedLine = find_test_id('deleted-0')
 const deletedBox = bounds(deletedLine ?? 0)
 const aboveDeleted = bounds(find_test_id('block-11') ?? 0)
 const belowDeleted = bounds(find_test_id('block-12') ?? 0)
 const deletedTip = await tipAfterHover('deleted-0', 'deleted-tooltip-0-tip')
+check(
+	'a Deletion line’s tip shows at the pointer, below-right of it as a native tip',
+	tipOffsetFrom(centreOf('deleted-0'), 'deleted-tooltip-0-tip'),
+	[0, 0]
+)
 check(
 	'a Block removed on disk leaves a 2px line in its Agent’s colour at 70% between the Blocks around it, titled as editmd titles a deletion, and counted in the legend',
 	[
@@ -3866,6 +4426,46 @@ check(
 	]
 )
 
+/**
+ * an untitled window listens on the agent sockets from launch, as editmd's `AgentEdits.shared` is app-wide
+ * (AgentEdits.swift:39-45): a rename sent while it has no file reaches it, so it answers a newcomer's greeting with
+ * that name, and another window's Bring All to Front brings it forward. a controller of its own, in a folder of its
+ * own, so no other check's window hears it
+ */
+const untitledSockets = join(menuDirectory, 'untitled-s')
+let untitledRaised = 0
+const untitledWindow = new DocumentController()
+untitledWindow.load('', {
+	...menuOptions,
+	socketsDirectory: untitledSockets,
+	activateWindow: () => void untitledRaised++
+})
+await waitUntil(
+	() => existsSync(untitledSockets) && readdirSync(untitledSockets).length > 0,
+	'the untitled window’s socket'
+)
+await sendRename(untitledSockets, { id: 'untitled-agent', name: 'Heard untitled' })
+const namesFromUntitled: AgentRename[] = []
+const untitledNewcomer = await listenForReports(
+	untitledSockets,
+	() => {},
+	(rename) => void namesFromUntitled.push(rename)
+)
+await greetPeers(untitledSockets, untitledNewcomer.socket)
+await bringAllToFront(untitledSockets, untitledNewcomer.socket)
+await waitUntil(() => namesFromUntitled.length > 0, 'the untitled window’s answer to a greeting')
+const untitledClaims = await focusWindowFor(
+	untitledSockets,
+	join(menuDirectory, 'launched.md'),
+	untitledNewcomer.socket
+)
+await untitledNewcomer()
+check(
+	'an untitled window hears the agent sockets from launch: a rename sent before it has a file reaches it, it answers a newcomer’s greeting with that name, Bring All to Front raises it, and it claims no file another window opens',
+	[namesFromUntitled, untitledRaised, untitledClaims],
+	[[{ id: 'untitled-agent', name: 'Heard untitled' }], 1, false]
+)
+
 clickIfPresent('legend-clear-0')
 settle()
 const clearedByCross = [documentController.deletions.length, find_test_id('deleted-0')]
@@ -3928,9 +4528,7 @@ check(
 	[previewBox?.style?.borderColor, themeController.palette.border.length > 0],
 	[themeController.palette.border, true]
 )
-// the caret starts after the closing fence: up to the last diagram line, then a new node on a line of its own
-press('up')
-press('cmd-right')
+// the field holds the diagram's code alone, its caret at the end of the last line: a new node on a line of its own
 for (const key of ['enter', 'space', 'space', 'b', 'space', '-', '-', '-', 'space']) type(key)
 settle()
 // a pause shorter than 300ms, then the last key: the wait for a pause starts again from it
@@ -4084,15 +4682,14 @@ check(
 press('escape')
 settle()
 
-openMenu('Format')
-const textBeforeMenuBold = documentController.text
-const boldIndex = rowIndexOf('Bold')
-const boldColour = find_test_id(`menu-row-${boldIndex}`)?.style?.color
-clickRow('Bold')
+openMenu('File')
+const revertIndex = rowIndexOf('Revert to Saved')
+const revertColour = find_test_id(`menu-row-${revertIndex}`)?.style?.color
+clickRow('Revert to Saved')
 check(
-	'clicking the greyed Bold changes nothing and leaves the menu open',
-	[boldColour, documentController.text, find_test_id('menu-panel') !== null],
-	[themeController.palette.faint, textBeforeMenuBold, true]
+	'clicking the greyed Revert to Saved of an untitled Document opens nothing and leaves the menu open',
+	[revertColour, find_test_id('revert'), find_test_id('menu-panel') !== null],
+	[themeController.palette.faint, null, true]
 )
 press('escape')
 settle()
@@ -4124,6 +4721,37 @@ check(
 		],
 		null
 	]
+)
+
+/**
+ * Bring All to Front raises every editor window, as editmd's `arrangeInFront` raises every window of its one process
+ * (MainMenu.swift:121): with one process per window (ADR-0008) each other window listening beside this one runs its
+ * focus, and this one raises itself once
+ */
+const frontSockets = join(menuDirectory, 'front')
+let frontFocused = 0
+const frontWindow = await listenForReports(
+	frontSockets,
+	() => {},
+	() => {},
+	() => [],
+	{ owns: () => false, focus: () => void frontFocused++ }
+)
+const frontPath = join(menuDirectory, 'front.md')
+writeFileSync(frontPath, 'Front\n')
+documentController.open(frontPath, { ...menuOptions, socketsDirectory: frontSockets })
+settle()
+await wait(150)
+menuRuns.length = 0
+openMenu('Window')
+clickRow('Bring All to Front')
+await waitUntil(() => frontFocused > 0, 'the other window coming forward')
+await wait(100)
+await frontWindow()
+check(
+	'Window > Bring All to Front raises this window once and the other window listening beside it',
+	[menuRuns, frontFocused],
+	[[['activateWindow', []]], 1]
 )
 
 const recentA = join(menuDirectory, 'recent-a.md')
@@ -4161,6 +4789,79 @@ check(
 )
 press('escape')
 settle()
+
+/** highlights the open menu `menu`'s item titled `title` by keys: one Down per enabled item down to it */
+function downTo(menu: number, title: string): void {
+	const items = modelMenus()[menu]?.items ?? []
+	const row = items.findIndex((item) => item.kind === 'item' && item.title === title)
+	const downs = items.slice(0, row + 1).filter((item) => item.kind === 'item' && item.enabled)
+	for (let step = 0; step < downs.length; step++) press('down')
+	settle()
+}
+
+/**
+ * an NSMenu's submenu takes the keys (MainMenu.swift:37-39): Right shows it with its first item highlighted, Up and
+ * Down move in it, Return runs the highlighted item and Left closes it. File > Open Recent lists the newest first, so
+ * Right then Down highlights the file added before it
+ */
+menuRecent.add(recentA)
+menuRecent.add(recentB)
+menuWindows.length = 0
+openMenu('File')
+downTo(0, 'Open Recent')
+for (const key of ['right', 'down', 'enter']) press(key)
+await waitUntil(() => menuWindows.length > 0, 'the recent file’s window')
+check(
+	'File menu: Down to Open Recent, Right, Down and Return open the second listed recent file and close the menu',
+	[menuWindows, find_test_id('menu-panel')],
+	[[recentA], null]
+)
+
+documentController.load('be be be\n', menuOptions)
+settle()
+press('cmd-f')
+settle()
+type('b')
+type('e')
+press('escape')
+const findBeforeMenu = await findState()
+openMenu('Edit')
+downTo(1, 'Find')
+press('right')
+settle()
+const findSubmenuOnRight = find_test_id('submenu-panel') !== null
+press('left')
+settle()
+const findSubmenuOnLeft = find_test_id('submenu-panel')
+for (const key of ['right', 'down', 'enter']) press(key)
+const findAfterMenu = await findState()
+findController.clear()
+check(
+	'Edit menu: Down to Find, Right shows its submenu and Left closes it; Right, Down and Return run Find Next',
+	[
+		findBeforeMenu,
+		findSubmenuOnRight,
+		findSubmenuOnLeft,
+		findAfterMenu,
+		find_test_id('menu-panel')
+	],
+	[[3, 0, 0], true, null, [3, 1, 1], null]
+)
+
+// an opened file again, so the list's file opens through the opener; File > Open Recent's open put recent-a first
+documentController.open(barHostPath, menuOptions)
+settle()
+menuWindows.length = 0
+documentController.run('openRecent')
+settle()
+press('down')
+press('enter')
+await waitUntil(() => menuWindows.length > 0, 'the recent file’s window')
+check(
+	'the Open Recent list: Down and Return open its first file and close the list',
+	[menuWindows, find_test_id('open-recent')],
+	[[recentA], null]
+)
 
 openMenu('File')
 const viewTitle = find_test_id('menu-title-3')
@@ -4233,7 +4934,7 @@ for (let index = 0; find_test_id(`help-result-${index}`); index++) {
 	helpResults.push([textOf(`help-result-title-${index}`), textOf(`help-result-keys-${index}`)])
 }
 press('enter')
-settle()
+await fieldIdle()
 check(
 	'Help’s search lists exactly Format ▸ Heading 2 for `head 2`, and Return applies it to the Active block',
 	[helpPlaceholder, helpResults, documentController.text, find_test_id('menu-panel')],
@@ -4527,6 +5228,40 @@ check(
 rmSync(exitUntitledFolder, { recursive: true, force: true })
 
 /**
+ * Return at a paragraph's end opens an empty Block whose blank line sits in the text until something is typed; editmd
+ * never writes its empty paragraph, so ⌘S, the autosave and the exit save write the text without it, the field open
+ */
+const blankSavePath = join(menuDirectory, 'blank-save.md')
+writeFileSync(blankSavePath, 'Para\n')
+documentController.open(blankSavePath, exitOptions)
+settle()
+/** a key typed at the end of Block 0, so there is an edit to save, then Return there: the new Block's empty field */
+function typeThenReturn(key: string): void {
+	click_test_id('block-0')
+	type(key)
+	type('enter')
+	settle()
+}
+typeThenReturn('a')
+press('cmd-s')
+const blankAfterSave = readFileSync(blankSavePath, 'utf8')
+press('escape')
+typeThenReturn('b')
+await wait(1300)
+const blankAfterAutosave = readFileSync(blankSavePath, 'utf8')
+press('escape')
+typeThenReturn('c')
+exitHandlers.at(-1)?.()
+const blankAfterExit = readFileSync(blankSavePath, 'utf8')
+const blankFieldOpen = [documentController.activeIsNew, find_test_id('block-editor') !== null]
+press('escape')
+check(
+	'with Return’s empty Block open, ⌘S, the autosave and the exit save write no blank line for it, and the field stays open',
+	[blankAfterSave, blankAfterAutosave, blankAfterExit, blankFieldOpen],
+	['Paraa\n', 'Paraab\n', 'Paraabc\n', [true, true]]
+)
+
+/**
  * the title says Edited while the Document has unsaved edits, as NSDocument's does: "<name> — Edited" (AppKit's
  * AutosaveButton.loctable "Edited" after Document.loctable's " — "), and the plain name once an autosave clears it
  */
@@ -4565,9 +5300,8 @@ check(
 )
 
 /**
- * a failed save, as editmd's SaveStatusView (EditorWindowController.swift:331-367): Not Saved in the palette's danger
- * colour (editmd's systemRed) with its reason as the tooltip, in the small system font; an autosave failure shows no
- * alert, as in editmd
+ * a failed save, as editmd's SaveStatusView (EditorWindowController.swift:331-367): Not Saved in AppKit's systemRed
+ * with its reason as the tooltip, in the small system font; an autosave failure shows no alert, as in editmd
  */
 const statusPath = join(menuDirectory, 'status.md')
 writeFileSync(statusPath, 'Status\n')
@@ -4592,8 +5326,14 @@ press('escape')
 await waitUntil(() => documentController.label === 'Not Saved', 'the failed autosave')
 settle()
 const statusTip = await tipAfterHover('save-status', 'save-status-tooltip-tip')
+// editmd's reason is the label's native tooltip (EditorWindowController.swift:360), shown at the pointer
 check(
-	'an autosave that fails paints Not Saved in the danger colour at the small system size, its reason as the tooltip, and no alert',
+	'Not Saved’s tip shows at the pointer, below it and pulled back inside the window’s right edge',
+	tipOffsetFrom(centreOf('save-status'), 'save-status-tooltip-tip'),
+	[0, 0]
+)
+check(
+	'an autosave that fails paints Not Saved in systemRed at the small system size, its reason as the tooltip, and no alert',
 	[
 		textOf('save-status'),
 		find_test_id('save-status')?.style?.color,
@@ -4603,7 +5343,7 @@ check(
 	],
 	[
 		'Not Saved',
-		themeController.palette.danger,
+		themeController.palette['system-red'],
 		11,
 		labelDetail({ kind: 'failed', message: writeRefusal(statusPath) }),
 		null
@@ -4640,6 +5380,42 @@ check(
 		'Do you want to save your changes to it anyway?'
 	]
 )
+/**
+ * editmd's NSAlert (f-save-now-source.png, measured at 2x): a 260pt box with a 26pt radius, a caution icon above the
+ * text, the message in the title's label colour, two equal buttons side by side, and Cancel, the key button, ringed
+ * 3pt in the accent with the same fill as the other button rather than an accent one
+ */
+const lockedBox = bounds(find_test_id('save-locked') ?? 0)
+const lockedStyle = find_test_id('save-locked')?.style
+const lockedCancel = find_test_id('save-locked-cancel')
+const lockedAnyway = find_test_id('save-locked-anyway')
+const cancelBox = bounds(lockedCancel ?? 0)
+const anywayBox = bounds(lockedAnyway ?? 0)
+check(
+	'the locked-file alert is editmd’s NSAlert: 260px wide, radius 26, a caution icon, the message in the title’s colour, Cancel ringed 3px in the accent with the other button’s fill, the buttons equal and side by side',
+	[
+		lockedBox?.width,
+		lockedStyle?.borderTopLeftRadius ?? lockedStyle?.borderRadius,
+		find_test_id('save-locked-icon') !== null,
+		find_test_id('save-locked-message')?.style?.color,
+		lockedCancel?.style?.outlineWidth,
+		lockedCancel?.style?.outlineColor,
+		lockedCancel?.style?.backgroundColor === lockedAnyway?.style?.backgroundColor,
+		cancelBox && anywayBox
+			? [cancelBox.width === anywayBox.width, cancelBox.y === anywayBox.y]
+			: null
+	],
+	[
+		260,
+		26,
+		true,
+		themeController.palette.text,
+		3,
+		themeController.palette.accent,
+		true,
+		[true, true]
+	]
+)
 const saveAlertBeforeReturn = find_test_id('save-locked') !== null
 press('enter')
 settle()
@@ -4650,6 +5426,11 @@ type('o')
 press('escape')
 press('cmd-s')
 settle()
+check(
+	'Saved paints in AppKit’s secondaryLabelColor, as editmd’s SaveStatusView (EditorWindowController.swift:358)',
+	[textOf('save-status'), find_test_id('save-status')?.style?.color],
+	['Saved', themeController.palette['secondary-label']]
+)
 /**
  * polled every 10ms from the moment the label empties, not sampled once: one sample can land past the 0.4s fade
  * under load (it failed 1 run in 7). the first poll that sees the label empty records what still paints
@@ -4890,7 +5671,7 @@ check(
 documentController.load(fixture('r-quote'), parityOptions)
 settle()
 const quoteStyle = find_test_id('quote-0')?.style
-const quoteText = find_test_id('quote-text-0')?.customProps
+const quoteText = find_test_id('markdown-0.0')?.customProps
 check(
 	'a quote paints a 4px rail in the border colour, 16px padding and no fill, its text unquoted in the muted colour',
 	[
@@ -4959,8 +5740,8 @@ check(
 
 /**
  * row r-image-remote: editmd's blocked image (`.remote-image`, style.css:295-314) is a small box: a picture icon
- * and the alt text at 0.9em in the muted colour, a 1px border (dashed, which an svg over the box draws, so the box's
- * own border keeps only its room), radius 4px, padding 0.05em 0.45em and a 0.35em gap, in its 0.9em
+ * and the alt text at 0.9em in the muted colour, a 1px dashed border in the border colour, radius 4px, padding
+ * 0.05em 0.45em and a 0.35em gap, in its 0.9em
  */
 documentController.load(fixture('r-image-remote'), parityOptions)
 settle()
@@ -4968,9 +5749,10 @@ const remoteBox = find_test_id('remote-image-0-0')
 const remoteIcon = remoteBox?.children?.[0]
 const remoteAlt = find_test_id('image-blocked-0-0')
 check(
-	'a blocked image paints editmd’s box: icon, muted 14.4px alt text, 1px border, radius 4, padding 0.72/6.48, gap 5.04',
+	'a blocked image paints editmd’s box: icon, muted 14.4px alt text, 1px dashed border, radius 4, padding 0.72/6.48, gap 5.04',
 	[
 		remoteBox?.style?.borderColor,
+		remoteBox?.style?.borderStyle,
 		remoteBox?.style?.borderWidth ?? remoteBox?.style?.borderTopWidth,
 		remoteBox?.style?.borderRadius ?? remoteBox?.style?.borderTopLeftRadius,
 		remoteBox?.style?.paddingTop,
@@ -4985,7 +5767,8 @@ check(
 		remoteAlt?.style?.fontSize
 	],
 	[
-		'#00000000',
+		themeController.palette.border,
+		'dashed',
 		1,
 		4,
 		0.72,
@@ -5011,9 +5794,7 @@ documentController.open(join(parityDirectory, 'r-image-linked.md'), {
 	...parityOptions,
 	socketsDirectory: join(parityDirectory, 's')
 })
-settle()
-await wait(300)
-settle()
+pump()
 
 /**
  * how the image `imageId` and the text run after it sit: [right of it, on its line, the gap between them], the
@@ -5040,9 +5821,8 @@ const longRun = Array.from({ length: 24 }, () => 'words that run on').join(' ')
 documentController.load(`![remote](https://example.com/p.png) ${longRun}.\n`, parityOptions)
 settle()
 const longBox = bounds(find_test_id('text-run-0-1') ?? 0)
-// a run measured taller than one line (on a 250ms poll) turns the paragraph into a column: the text under the image
-await wait(300)
-settle()
+// a run its layout event reports taller than one line turns the paragraph into a column, with no clock advance
+pump()
 const longStacked = bounds(find_test_id('text-run-0-1') ?? 0)
 const longImage = bounds(find_test_id('image-blocked-0-0') ?? 0)
 check(
@@ -5066,11 +5846,14 @@ check(
  */
 documentController.load(fixture('r-table'), parityOptions)
 settle()
-const cellOf = (row: number, column: number) => find_test_id(`table-cell-${row}-${column}`)
-// a cell holds a box sized to its text, which holds the <markdown> first
-const cellMarkdown = (row: number, column: number) =>
-	cellOf(row, column)?.children?.[0]?.children?.[0]
-const cellSource = (row: number, column: number) => cellMarkdown(row, column)?.customProps?.source
+/** a cell of the table whose Block's test key is `key`, by row and column */
+const cellOf = (row: number, column: number, key = '0') =>
+	find_test_id(`table-cell-${key}-${row}-${column}`)
+// a cell holds a box sized to its text, which holds first the box its <markdown> reports its layout through
+const cellMarkdown = (row: number, column: number, key = '0') =>
+	cellOf(row, column, key)?.children?.[0]?.children?.[0]?.children?.[0]
+const cellSource = (row: number, column: number, key = '0') =>
+	cellMarkdown(row, column, key)?.customProps?.source
 // the grid inside the scroll box, which a scroll box's own bounds do not show
 const tableBox = bounds(find_test_id('table-0')?.children?.[0] ?? 0)
 const headerCell = cellOf(0, 0)?.style
@@ -5137,6 +5920,32 @@ check(
 		fieldOf(mixedTheme, 'codeWash')
 	],
 	['#00000000', themeController.palette.accent, themeController.palette.surface]
+)
+/**
+ * `span[data-type="html"] { font: 0.86em var(--font-mono); color: var(--muted) }` (style.css:346-349): an inline tag
+ * paints its source in muted mono with no fill; native paints it as inline code, so its Block's theme drops the code
+ * wash and colours code muted, unless the Block holds inline code of its own, which keeps editmd's pill
+ */
+documentController.load('a <b>x</b> c\n', parityOptions)
+settle()
+const inlineHtmlTheme = find_test_id('block-0')?.children?.[0]?.customProps?.theme
+documentController.load('a <b>x</b> and `code`\n', parityOptions)
+settle()
+const inlineHtmlCodeTheme = find_test_id('block-0')?.children?.[0]?.customProps?.theme
+check(
+	'a Block with an inline HTML tag paints it in the muted colour with no fill; one with inline code too keeps the code pill',
+	[
+		fieldOf(inlineHtmlTheme, 'codeText'),
+		fieldOf(inlineHtmlTheme, 'codeWash'),
+		fieldOf(inlineHtmlCodeTheme, 'codeText'),
+		fieldOf(inlineHtmlCodeTheme, 'codeWash')
+	],
+	[
+		themeController.palette.muted,
+		'#00000000',
+		themeController.textTheme.codeText,
+		themeController.textTheme.codeWash
+	]
 )
 documentController.load(fixture('r-definitions'), parityOptions)
 settle()
@@ -5231,9 +6040,8 @@ const diagramSvg = Buffer.from(
 const wideSource = `flowchart LR\n  ${Array.from({ length: 12 }, (_value, n) => `node${n}`).join(' --> ')}`
 const wideDiagram = diagramOf(wideSource, themeController.mermaidPalette)
 documentController.load(`\`\`\`mermaid\n${wideSource}\n\`\`\`\n`, parityOptions)
-settle()
-await wait(300)
-settle()
+// the box's layout event gives its width with no clock advance
+pump()
 const wideImage = find_test_id('mermaid-0')?.style
 const wideRatio =
 	wideDiagram.kind === 'diagram' && typeof wideImage?.width === 'number'
@@ -5354,18 +6162,15 @@ function openLook(testId: string) {
 	click_test_id(testId)
 	const card = find_test_id('block-editor-card')?.style
 	const look = [
-		/**
-		 * @gpuix/native 0.10's style has no outline, so the ring is a border inside the box, its width taken off the
-		 * padding: the text sits where editmd's does, 12px and 16px in
-		 */
+		// the ring is an outline outside the box, so the text sits where editmd's does, 12px and 16px in
 		card
 			? [
 					card.backgroundColor,
 					card.borderRadius ?? card.borderTopLeftRadius,
 					lengthOf(card.paddingTop) + lengthOf(card.borderTopWidth ?? card.borderWidth),
 					lengthOf(card.paddingLeft) + lengthOf(card.borderLeftWidth ?? card.borderWidth),
-					card.borderTopWidth ?? card.borderWidth ?? null,
-					card.borderColor ?? null
+					card.outlineWidth ?? null,
+					card.outlineColor ?? null
 				]
 			: null,
 		...fontOf(find_test_id('block-editor')),
@@ -5385,7 +6190,7 @@ documentController.load(fixture('r-mermaid'), parityOptions)
 settle()
 const openMermaidLabel = openLook('block-0').at(-1)
 check(
-	'open front matter keeps its box (surface, 12px 16px, radius 8, a 2px selection ring) and 12.5px/1.55 muted mono; open code and mermaid keep their language label',
+	'open front matter keeps its box (surface, 12px 16px, radius 8, a 2px selection outline) and 12.5px/1.55 muted mono; open code and mermaid keep their language label',
 	[openFrontmatter, openCodeLabel, openMermaidLabel],
 	[
 		[
@@ -5455,17 +6260,22 @@ check(
 
 /**
  * editmd's links show the text cursor, and the pointer only while ⌘ is held (main.ts:48-54, style.css:170-181):
- * here the Block holding a link takes the pointer while ⌘ is held, as the pointer's modifiers or the window's
- * ⌘ key say; a Block with no link keeps the text cursor
+ * here the Block takes the pointer with the pointer on its link while ⌘ is held, as the pointer's modifiers or the
+ * window's ⌘ key say; a Block with no link keeps the text cursor
  */
 documentController.load('A [link](https://x.y) here.\n\nPlain text.\n', parityOptions)
 settle()
 const cursorOf = (testId: string) => find_test_id(testId)?.style?.cursor
+// on `link`, past the `A ` before it
+const cursorLinkBox = bounds(find_test_id('block-0') ?? 0)
+const onCursorLink = cursorLinkBox
+	? { x: cursorLinkBox.x + 24, y: cursorLinkBox.y + cursorLinkBox.height / 2 }
+	: { x: 0, y: 0 }
 const cursors = [cursorOf('block-0')]
-mouse_move(find_test_id('block-0') ?? { x: 0, y: 0 }, { modifiers: 'cmd' })
+mouse_move(onCursorLink, { modifiers: 'cmd' })
 settle()
 cursors.push(cursorOf('block-0'), cursorOf('block-1'))
-mouse_move(find_test_id('block-0') ?? { x: 0, y: 0 })
+mouse_move(onCursorLink)
 settle()
 cursors.push(cursorOf('block-0'))
 press('cmd', { held: true })
@@ -5475,7 +6285,7 @@ key_up('cmd')
 settle()
 cursors.push(cursorOf('block-0'))
 check(
-	'a Block with a link shows the text cursor, and the pointer while ⌘ is held, from a ⌘ move or the ⌘ key; a Block without a link keeps the text cursor',
+	'a link shows the text cursor, and the pointer while ⌘ is held over it, from a ⌘ move or the ⌘ key; a Block without a link keeps the text cursor',
 	cursors,
 	['text', 'pointer', 'text', 'text', 'pointer', 'text']
 )
@@ -5702,10 +6512,12 @@ function mostInARow(snap: { shot: Pixels; scale: number }, box: Box, colour: str
 const strikeFaint = doneText ? mostInARow(snapshot(), doneText, palette().faint ?? '') : 0
 
 /**
- * a link's underline turns to its own colour while ⌘ is held, as editmd's `body.cmd-down a { text-decoration-color:
- * currentColor }` (style.css:178-181); native <markdown> paints a link in the text colour and its underline in the
- * theme's `textMuted`
+ * a link's underline is the accent at 35% and turns to the link's own colour, the accent, while ⌘ is held, as editmd's
+ * `body.cmd-down a { text-decoration-color: currentColor }` (style.css:170-181); native <markdown> paints a link in the
+ * text colour and its underline in the theme's `textMuted`
  */
+/** what editmd's link underline paints over the page: the accent at 35% over the background */
+const linkUnderlineInk = () => mixColour(palette().accent ?? '', palette().background ?? '', 0.35)
 documentController.load('[a linked phrase](https://example.com/x)\n', parityOptions)
 settle()
 const linkText = bounds(find_test_id('block-0')?.children?.[0] ?? 0)
@@ -5723,14 +6535,42 @@ const underlineAfter = linkText
 	? longestRunColour(snapshot(), linkText, [palette().background ?? ''])
 	: null
 check(
-	`a ticked task’s strike line paints faint, and a link’s underline turns from muted to the link’s colour while ⌘ is held (faint pixels in the strike’s row ${strikeFaint}; underline ${underlineBefore}, ${underlineHeld}, ${underlineAfter})`,
+	`a ticked task’s strike line paints faint, and a link’s underline turns from the accent at 35% to the accent while ⌘ is held (faint pixels in the strike’s row ${strikeFaint}; underline ${underlineBefore}, ${underlineHeld}, ${underlineAfter})`,
 	[
 		strikeFaint >= 20,
-		near(underlineBefore ?? '', palette().muted ?? '', 6),
-		near(underlineHeld ?? '', palette().text ?? '', 6),
-		near(underlineAfter ?? '', palette().muted ?? '', 6)
+		near(underlineBefore ?? '', linkUnderlineInk(), 6),
+		near(underlineHeld ?? '', palette().accent ?? '', 6),
+		near(underlineAfter ?? '', linkUnderlineInk(), 6)
 	],
 	[true, true, true, true]
+)
+
+/**
+ * editmd's strike line is its text's own colour (style.css has no `del` rule, so `currentColor`); native <markdown>
+ * draws a strike, as a link's underline, in its theme's `textMuted`, so a Block without links gives `textMuted` its
+ * text colour (a quote's muted text included), and one with a link strikes in its underline's accent at 35%
+ */
+function strikeLineOf(source: string, node: () => TreeNode | null | undefined) {
+	documentController.load(source, parityOptions)
+	settle()
+	const theme = node()?.customProps?.theme
+	return [fieldOf(theme, 'textMuted'), fieldOf(theme, 'text')]
+}
+const firstBlockText = () => find_test_id('block-0')?.children?.[0]
+check(
+	'a strike paints in its text’s colour in a paragraph, a list and a quote without links; a paragraph with a link strikes in its link underline’s colour',
+	[
+		strikeLineOf('a ~~b~~ c\n', firstBlockText),
+		strikeLineOf('a ~~b~~ [l](https://x.example)\n', firstBlockText),
+		strikeLineOf('- a ~~b~~ c\n', () => find_test_id('list-text-2')?.children?.[0]),
+		strikeLineOf('> a ~~b~~ c\n', () => find_test_id('markdown-0.0'))
+	],
+	[
+		[palette().text, palette().text],
+		[`${palette().accent}59`, palette().text],
+		[palette().text, palette().text],
+		[palette().muted, palette().muted]
+	]
 )
 
 /**
@@ -5738,8 +6578,6 @@ check(
  * apart, and its picture icon is a mask in the box's muted colour (`background: currentColor`)
  */
 documentController.load(fixture('r-image-remote'), parityOptions)
-settle()
-await wait(300)
 settle()
 const remoteSnap = snapshot()
 const remoteIconBox = bounds(find_test_id('remote-image-0-0')?.children?.[0] ?? 0)
@@ -5868,6 +6706,16 @@ check(
 	['#00000000', palette().accent]
 )
 
+/** a task list's item paints a link with no text as editmd does, in the accent with no fill, as a paragraph does */
+documentController.load('- [ ] see [](https://x.example)\n', parityOptions)
+settle()
+const taskEmptyTheme = find_test_id('task-text-6')?.children?.[0]?.customProps?.theme
+check(
+	'a task list item paints its empty link’s source in the accent with no fill',
+	[fieldOf(taskEmptyTheme, 'codeWash'), fieldOf(taskEmptyTheme, 'codeText')],
+	['#00000000', palette().accent]
+)
+
 /**
  * open front matter's text paints muted, as editmd's `.frontmatter { color: var(--muted) }` keeps it while it is
  * edited (frontmatter.ts:20-23)
@@ -5959,7 +6807,7 @@ function inkBelowFirstBlock(): number[] {
 /**
  * rows r-html, r-definitions and r-footnotes, measured in editmd's screenshots (device px / 2) below the first
  * Block's top: editmd sets a block of HTML inline in a 16px/1.65 line, so its mono text sits on the body's baseline,
- * 50.5px down; a definition is a block of its own 0.86em mono at line-height 1.65, 44.5px down; a footnote reference
+ * 50.5px down; a definition is a block of its own 0.86em mono in SF Mono's normal line box, 44.5px down; a footnote reference
  * is a `sup`, which makes its line 2px taller, so the definition's rule, label and note come 44, 59 and 82px down
  */
 documentController.load(fixture('r-html'), parityOptions)
@@ -5979,6 +6827,25 @@ check(
 		nearly(footnoteInk.slice(1, 4), [44, 59, 82])
 	],
 	[[50.5], [44.5], [44, 59, 82]]
+)
+
+/**
+ * a definition's `font: 0.86em var(--font-mono)` shorthand resets its line height to `normal` (style.css:353-357),
+ * SF Mono's line box: hhea ascender 1980 and descender 432 of 2048 units, 16.21px of 13.76px text. the definition is
+ * that tall, and the paragraph after it, which a definition leaves no margin above, starts that far below its top
+ */
+documentController.load('[docs]: https://example.com/docs\n\nNext.\n', parityOptions)
+settle()
+const definitionBlock = bounds(find_test_id('block-0') ?? 0)
+const afterDefinition = bounds(find_test_id('block-1') ?? 0)
+const definitionRows =
+	definitionBlock && afterDefinition
+		? [definitionBlock.height, afterDefinition.y - definitionBlock.y]
+		: []
+check(
+	`a definition’s line is SF Mono’s normal line box, 16.2px, and the next Block starts right below it (${definitionRows.join(', ')})`,
+	nearly(definitionRows, [16.2, 16.2]),
+	[16.2, 16.2]
 )
 
 /**
@@ -6157,9 +7024,9 @@ press('cmd-b')
 await fieldIdle()
 press('escape')
 check(
-	'⌘B on “two” selected in a Block’s field writes `one **two** three` once the field closes; Bold, Italic, Strikethrough and Inline Code are enabled with a field open, greyed without',
+	'⌘B on “two” selected in a Block’s field writes `one **two** three` once the field closes; Bold, Italic, Strikethrough and Inline Code are enabled with a field open and without, as editmd’s Format',
 	[documentController.text, inlineOpen, inlineClosed],
-	['one **two** three\n', [true, true, true, true], [false, false, false, false]]
+	['one **two** three\n', [true, true, true, true], [true, true, true, true]]
 )
 click_test_id('block-0')
 type('cmd-left shift-right shift-right shift-right')
@@ -6283,6 +7150,28 @@ check(
 	['one [two](https://example.com/x)! three\n', false, false, linkedText]
 )
 
+// Add with the URL cleared takes the link at the caret off, as editmd's Add with nothing in the field does
+documentController.load('see [docs](https://old.example) here\n', r9Options)
+settle()
+click_test_id('block-0')
+type('cmd-left right right right right right right')
+menuClipboardUrl = 'https://old.example'
+press('cmd-k')
+settle()
+await wait(150)
+type('backspace')
+settle()
+const clearedUrl = propOf('add-link-url', 'value')
+press('enter')
+await fieldIdle()
+press('escape')
+menuClipboardUrl = null
+check(
+	'Add Link with its URL cleared and the caret inside a link takes the link off, its text kept',
+	[clearedUrl, documentController.text],
+	['', 'see docs here\n']
+)
+
 /** Edit's Cut, Copy, Paste, Paste and Match Style, Delete and Select All: whether each is enabled */
 const editEnabled = () =>
 	(documentController.menus[1]?.items ?? [])
@@ -6303,10 +7192,10 @@ const focusedAfterMenu = get_native()?.getFocusedElementId() === editorId()
 type('q')
 press('escape')
 check(
-	'Edit’s field items are enabled with a field open and greyed without, Delete greyed always; Select All from the menu, which leaves the field its keys, selects the field’s text, so typing replaces it',
+	'Edit’s field items are enabled with a field open and greyed without, Paste enabled either way as editmd pastes at its caret, Delete greyed always; Select All from the menu, which leaves the field its keys, selects the field’s text, so typing replaces it',
 	[editClosed, editOpen, focusedWithMenu, focusedAfterMenu, documentController.text],
 	[
-		[false, false, false, false, false, false],
+		[false, false, true, false, false, false],
 		[true, true, true, true, false, true],
 		true,
 		true,
@@ -6376,7 +7265,7 @@ press('escape')
 check(
 	`an empty Document opens its field on load showing “Start writing…” in the faint colour (${emptyHintInk}) until its first character, so a key typed without a click writes it`,
 	[emptyField, near(emptyHintInk ?? '', palette().faint ?? '', 16), typedIntoEmpty],
-	[['textarea', 'Start writing…'], true, ['x', null]]
+	[['textarea', 'Start writing…'], true, ['x\n', null]]
 )
 
 /**
@@ -6602,7 +7491,29 @@ const twoWashes = (() => {
 		.map((spec) => [fieldOf(spec, 'query'), fieldOf(spec, 'activeColor')])
 		.filter(([query]) => query === 'gree' || query === 'lea')
 })()
-const twoTip = await tipAfterHover('block-1', 'block-tooltip-1-tip')
+/**
+ * editmd titles each changed run (highlights.ts:184-186), a native tip: with the pointer inside the Block but off its
+ * runs none shows, on a run it shows at the pointer; a Block marked whole shows its tip anywhere over it
+ */
+const twoRunPoint = washPointIn('block-1', 'gree') ?? { x: -1, y: -1 }
+const twoBlockBox = bounds(find_test_id('block-1') ?? 0)
+const offRunPoint = { x: (twoBlockBox?.x ?? 0) + (twoBlockBox?.width ?? 0) - 4, y: twoRunPoint.y }
+const offRunTip = await tipAt(offRunPoint, 'block-tooltip-1-tip')
+const twoTip = await tipAt(twoRunPoint, 'block-tooltip-1-tip')
+const onRunOffset = tipOffsetFrom(twoRunPoint, 'block-tooltip-1-tip')
+const wholeBox = bounds(find_test_id('block-3') ?? 0)
+const wholeTip = await tipAt(
+	{
+		x: (wholeBox?.x ?? 0) + (wholeBox?.width ?? 0) - 4,
+		y: (wholeBox?.y ?? 0) + (wholeBox?.height ?? 0) / 2
+	},
+	'block-tooltip-3-tip'
+)
+check(
+	'a run highlight’s tip shows only with the pointer on the run, at the pointer; a Block marked whole shows its tip anywhere over it',
+	[offRunTip, twoTip !== null, onRunOffset, wholeTip !== null],
+	[null, true, [0, 0], true]
+)
 check(
 	'every Agent highlight on a Block paints: each changed run washed in its own Agent’s colour, a Block marked whole by two Agents tinted by the latest, the tooltip listing every change',
 	[
@@ -6716,7 +7627,7 @@ await waitUntil(() => documentController.highlights.length === 1, 'Gamma’s cha
 settle()
 const gammaRun = documentController.highlights[0]?.runs?.[0]?.text ?? 'no run'
 clickIfPresent('legend-name-0')
-await wait(200)
+await wait(REVEAL_MS)
 pump()
 const gammaRect = painted_highlights().find(
 	({ active, text, start, end }) => active && text.slice(start, end) === gammaRun
@@ -6881,8 +7792,8 @@ settle()
 const codeFieldHeight = bounds(find_test_id('block-editor') ?? 0)?.height ?? 0
 press('escape')
 check(
-	`a Block’s field holds its whole text: a 60-line code block’s field is at least its 62 lines (fences included) of 21px rows tall (${codeFieldHeight}px)`,
-	codeFieldHeight >= 62 * 21,
+	`a Block’s field holds its whole text: a 60-line code block’s field, its code alone, is at least its 60 lines of 21px rows tall (${codeFieldHeight}px)`,
+	codeFieldHeight >= 60 * 21,
 	true
 )
 
@@ -6918,6 +7829,33 @@ check(
 )
 
 /**
+ * with no Block holding text after a rule or a definition, editmd's load caret sits in the empty paragraph Milkdown's
+ * `trailing` plugin keeps at the end (web/src/editor.ts:482): Heading 1 makes a heading there and Add Link puts its URL
+ * there, each in a new Block's field after the last Block
+ */
+documentController.load('---\n', r9Options)
+settle()
+press('cmd-alt-1')
+settle()
+type('x')
+press('escape')
+const headingAfterRule = documentController.text
+documentController.load('[x]: https://e.example\n', r9Options)
+settle()
+menuClipboardUrl = 'https://a.example'
+press('cmd-k')
+settle()
+press('enter')
+await fieldIdle()
+press('escape')
+menuClipboardUrl = null
+check(
+	'with no Block holding text, Heading 1 after a rule and Add Link after a definition act in a new Block after it',
+	[headingAfterRule, documentController.text],
+	['---\n\n# x\n', '[x]: https://e.example\n\n<https://a.example>\n']
+)
+
+/**
  * editmd's reveal steps through every highlight, one stop each (`AgentLegend.nextStop`): two changes by one Agent in one
  * tall Block are two stops, each putting its own run's top at the middle of the page
  */
@@ -6948,11 +7886,11 @@ function runFromMiddle(text: string): number {
 }
 const stopRuns = documentController.highlights.map(({ runs }) => runs?.[0]?.text ?? '')
 clickIfPresent('legend-name-0')
-await wait(200)
+await wait(REVEAL_MS)
 pump()
 const firstStop = stopRuns.map(runFromMiddle)
 clickIfPresent('legend-name-0')
-await wait(200)
+await wait(REVEAL_MS)
 pump()
 const secondStop = stopRuns.map(runFromMiddle)
 check(
@@ -7118,7 +8056,12 @@ settle()
 const findInOpenField = await findCount('quokka')
 press('escape')
 press('cmd-/')
-settle()
+/**
+ * Source mode's field takes the keys on a poll once it is painted (`#toggleSource`), which would take them from the
+ * find field mid-query, so ⌘F waits until it has them
+ */
+await wait(150)
+pump()
 const findInSource = await findCount('quokka')
 press('cmd-/')
 settle()
@@ -7451,7 +8394,7 @@ documentController.load(
 )
 settle()
 const codeColours = [
-	fieldOf(propOf('quote-text-0', 'theme'), 'codeText'),
+	fieldOf(propOf('markdown-0.0', 'theme'), 'codeText'),
 	fieldOf(
 		find(
 			(node) =>
@@ -7488,9 +8431,7 @@ for (const name of ['a', 'b', 'c']) writeFileSync(join(r9Directory, `${name}.png
 const badgesPath = join(r9Directory, 'badges.md')
 writeFileSync(badgesPath, '![a](a.png) ![b](b.png) ![c](c.png)\n')
 documentController.open(badgesPath, r9Options)
-settle()
-await wait(300)
-settle()
+pump()
 const badgeBoxes = [0, 1, 2].map((n) => bounds(find_test_id(`image-0-${n}`) ?? 0))
 check(
 	`a paragraph of three images paints them side by side on one line (${JSON.stringify(badgeBoxes.map((box) => box && [box.x, box.y]))})`,
@@ -7508,7 +8449,7 @@ documentController.load(`${TABLE}\n`, r9Options)
 settle()
 const tableRowLooks = [0, 1, 2].map((row) =>
 	[0, 1, 2].map((column) => {
-		const box = bounds(find_test_id(`table-cell-${row}-${column}`) ?? 0)
+		const box = bounds(cellOf(row, column) ?? 0)
 		return box ? [box.y, box.height] : null
 	})
 )
@@ -7640,8 +8581,8 @@ check(
 // a tab after `>` is the quote marker's space and then text, not an indented code block
 documentController.load('>\tfoo\n', r9Options)
 settle()
-const tabQuoteSource = propOf('quote-text-0', 'source')
-const tabQuoteBox = bounds(find_test_id('quote-text-0') ?? 0)
+const tabQuoteSource = propOf('markdown-0.0', 'source')
+const tabQuoteBox = bounds(find_test_id('markdown-0.0') ?? 0)
 const tabQuoteWash = tabQuoteBox ? mostInARow(snapshot(), tabQuoteBox, palette().surface ?? '') : -1
 check(
 	`a quote of “>\\tfoo” paints foo as quote text, with no code block’s fill (${JSON.stringify(tabQuoteSource)}, ${tabQuoteWash} surface pixels in a row)`,
@@ -7654,7 +8595,7 @@ documentController.load('| a |  |\n| - | - |\n|  | b |\n', r9Options)
 settle()
 const mixedRowLooks = [0, 1].map((row) =>
 	[0, 1].map((column) => {
-		const box = bounds(find_test_id(`table-cell-${row}-${column}`) ?? 0)
+		const box = bounds(cellOf(row, column) ?? 0)
 		return box ? [box.y, box.height] : null
 	})
 )
@@ -7690,7 +8631,7 @@ check(
 function cellLooks(rows: number, columns: number): (number[] | null)[][] {
 	return Array.from({ length: rows }, (_row, row) =>
 		Array.from({ length: columns }, (_column, column) => {
-			const box = bounds(find_test_id(`table-cell-${row}-${column}`) ?? 0)
+			const box = bounds(cellOf(row, column) ?? 0)
 			return box ? [Math.round(box.y * 2) / 2, Math.round(box.height * 2) / 2] : null
 		})
 	)
@@ -7703,14 +8644,29 @@ documentController.load(
 	'| name | value |\n| - | - |\n| `averyveryverylongidentifier_with_code` | plain |\n| two | `x` |\n',
 	r9Options
 )
-settle()
-await wait(400)
-settle()
+// each cell's layout event gives its row's height with no clock advance
+pump()
 const codeTableLooks = cellLooks(3, 2)
 check(
 	`a table whose cell holds long inline code keeps each row’s cells in line (${JSON.stringify(codeTableLooks)})`,
 	rowsInLine(codeTableLooks),
 	[true, true, true]
+)
+
+/**
+ * a table's rows take their heights from its cells' layout events once painted, with no clock advance: every cell's
+ * box holds at least its row's tallest text, a table drawn afresh too
+ */
+documentController.load('', r9Options)
+settle()
+documentController.load('| a | `b` |\n| - | - |\n| c | d |\n', r9Options)
+pump()
+check(
+	'a table drawn afresh sets every cell’s row height with no clock advance',
+	[0, 1].flatMap((row) =>
+		[0, 1].map((column) => typeof cellOf(row, column)?.children?.[0]?.style?.minHeight)
+	),
+	['number', 'number', 'number', 'number']
 )
 
 // Edit > Undo from the menu with a Block's field open takes back the field's last typing, as editmd's one step
@@ -7877,12 +8833,12 @@ check(
 )
 
 /**
- * r-link-cursor: ⌘ turns a link's underline in a quote to the quote's text colour, as everywhere else; a
- * muted place's underline is the faint colour until then
+ * r-link-cursor: a link in a quote keeps editmd's accent underline, as `.markdown-body a` sets it wherever the link
+ * sits: the accent at 35%, the accent while ⌘ is held
  */
 documentController.load('> [a linked phrase](https://example.com/x)\n', r9Options)
 settle()
-const quoteLinkBox = bounds(find_test_id('quote-text-0') ?? 0)
+const quoteLinkBox = bounds(find_test_id('markdown-0.0') ?? 0)
 const quoteUnderline = () =>
 	quoteLinkBox ? longestRunColour(snapshot(), quoteLinkBox, [palette().background ?? '']) : null
 const quoteUnderlineBefore = quoteUnderline()
@@ -7892,10 +8848,10 @@ const quoteUnderlineHeld = quoteUnderline()
 key_up('cmd')
 settle()
 check(
-	`a link’s underline in a quote turns from faint to the quote’s muted text colour while ⌘ is held (${quoteUnderlineBefore}, ${quoteUnderlineHeld})`,
+	`a link’s underline in a quote turns from the accent at 35% to the accent while ⌘ is held, as outside one (${quoteUnderlineBefore}, ${quoteUnderlineHeld})`,
 	[
-		near(quoteUnderlineBefore ?? '', palette().faint ?? '', 6),
-		near(quoteUnderlineHeld ?? '', palette().muted ?? '', 6)
+		near(quoteUnderlineBefore ?? '', linkUnderlineInk(), 6),
+		near(quoteUnderlineHeld ?? '', palette().accent ?? '', 6)
 	],
 	[true, true]
 )
@@ -7996,7 +8952,7 @@ check(
 	`One.\n\nTwo.x\n\n${TABLE}\n\nThree.\n`
 )
 
-// Edit > Paste and Match Style shows editmd's ⌥⇧⌘V, greyed like Paste with no field open
+// Edit > Paste and Match Style shows editmd's ⌥⇧⌘V, greyed with no field open, where Paste is enabled
 documentController.load('One.\n', r9Options)
 settle()
 openMenu('Edit')
@@ -8012,7 +8968,7 @@ settle()
 press('cmd-alt-shift-v')
 settle()
 check(
-	'Paste and Match Style shows ⌥⇧⌘V and is greyed like Paste with no field open, and ⌥⇧⌘V there changes nothing',
+	'Paste and Match Style shows ⌥⇧⌘V and is greyed with no field open, where Paste is enabled, and ⌥⇧⌘V there changes nothing',
 	[
 		matchStyleKeys,
 		matchStyleItem?.kind === 'item' && matchStyleItem.enabled,
@@ -8020,7 +8976,7 @@ check(
 		documentController.text,
 		documentController.activeIndex
 	],
-	['⌥⇧⌘V', false, false, 'One.\n', null]
+	['⌥⇧⌘V', false, true, 'One.\n', null]
 )
 
 /**
@@ -8028,7 +8984,7 @@ check(
  * editmd shows the outside change in the field at once, merged with the typing, the caret kept; a format or more
  * typing after it then shows at once, in the field and, after Escape, in the painted Block
  */
-const coEditPath = join(r9Directory, 'co-edit.md')
+let coEditRuns = 0
 /** the open field after the outside write, then after `act`, and the Document and painted Block after Escape */
 async function afterOutsideWrite(act: () => Promise<void>): Promise<{
 	merged: unknown
@@ -8038,6 +8994,12 @@ async function afterOutsideWrite(act: () => Promise<void>): Promise<{
 	kind: string | undefined
 	block: unknown
 }> {
+	/**
+	 * a file per call: the Document a call leaves keeps its pending autosave once the window opens the next one, so
+	 * that save must land in a file no later call has open, where it would merge in as an outside write
+	 */
+	coEditRuns++
+	const coEditPath = join(r9Directory, `co-edit-${coEditRuns}.md`)
 	writeFileSync(coEditPath, '# Doc\n\none two three\n')
 	documentController.open(coEditPath, r9Options)
 	settle()
@@ -8111,7 +9073,7 @@ check(
  * the open field shows an agent's change marked, as editmd marks the agent's run live: a <textarea>
  * paints no `highlight` of its own (measured headless), so the field takes the Block's agent tint and bar
  */
-// a file of its own: the co-editing checks above leave an autosave of theirs on the way to co-edit.md
+// a file of its own: the co-editing checks above leave an autosave of theirs on the way to their co-edit files
 const markPath = join(r9Directory, 'co-edit-mark.md')
 writeFileSync(markPath, '# Doc\n\none two three\n')
 documentController.open(markPath, r9Options)
@@ -8378,8 +9340,715 @@ check(
 	[1, 0, 0]
 )
 
+/**
+ * editmd builds its editor anew each time Source mode turns on or off (editor.ts:303-320), its undo history with it: an
+ * edit made before the toggle, or typed in Source mode, is no longer taken back by ⌘Z after it
+ */
+documentController.load('- [ ] task\n\nParagraph\n', r9Options)
+settle()
+click_test_id('task-3')
+press('cmd-/')
+press('cmd-z')
+await fieldIdle()
+const undoneInSource = documentController.text
+press('cmd-/')
+press('cmd-z')
+settle()
+const undoneAfterSource = documentController.text
+press('cmd-/')
+// Source mode's caret goes to the start by keys once its field has them
+await wait(100)
+settle()
+type('x')
+press('cmd-/')
+press('cmd-z')
+settle()
+check(
+	'Source mode starts a fresh undo history both ways: a tick before Source on survives ⌘Z in Source mode and after it, and typing in Source mode survives ⌘Z after Source off',
+	[undoneInSource, undoneAfterSource, documentController.text],
+	['- [x] task\n\nParagraph\n', '- [x] task\n\nParagraph\n', 'x- [x] task\n\nParagraph\n']
+)
+
+/**
+ * editmd's `.frontmatter { padding: 0.75rem 1rem; font: 12.5px/1.55 }` with `.frontmatter:focus { box-shadow: 0 0 0 2px
+ * var(--selection) }` (style.css:73-86): the ring is drawn outside the box and takes no room. GPUI paints a <textarea>'s
+ * rows at whole px (measured headless: 19.375px rows paint 19px), so the four open lines are 1.5px shorter than the
+ * closed box's (24 + 4 × 19.375, painted 102)
+ */
+documentController.load('---\ntitle: A\ntags: [x]\n---\n\nBody\n', r9Options)
+settle()
+const closedFrontmatterHeight = bounds(find_test_id('frontmatter-box-0') ?? 0)?.height
+click_test_id('block-0')
+settle()
+const openFrontmatterHeight = bounds(find_test_id('block-editor-card') ?? 0)?.height
+const openFrontmatterStyle = find_test_id('block-editor-card')?.style
+press('escape')
+check(
+	'open front matter keeps the closed box’s padding, its 4 lines at GPUI’s whole-px 19px rows (100 open, 102 closed), its ring a 2px selection outline outside the box and no border',
+	[
+		[closedFrontmatterHeight, openFrontmatterHeight],
+		openFrontmatterStyle?.outlineWidth,
+		openFrontmatterStyle?.outlineColor,
+		openFrontmatterStyle?.outlineOffset ?? 0,
+		openFrontmatterStyle?.borderWidth ?? openFrontmatterStyle?.borderTopWidth ?? 0,
+		openFrontmatterStyle?.paddingTop,
+		openFrontmatterStyle?.paddingLeft
+	],
+	[[102, 100], 2, themeController.palette.selection, 0, 0, 12, 16]
+)
+
+/**
+ * editmd's `.source { font: 14px/1.6 var(--font-mono); min-height: 70vh }` (style.css:90-103): the field's line height is
+ * 22.4px, which GPUI paints at whole px (measured headless: two more lines make the field 44px taller, not 44.8px), and
+ * the field is at least 70% of the window's height
+ */
+function sourceHeightOf(lines: number): number | undefined {
+	documentController.load(
+		`${Array.from({ length: lines }, (_line, index) => `line ${index}`).join('\n')}\n`,
+		r9Options
+	)
+	settle()
+	press('cmd-/')
+	settle()
+	const height = bounds(find_test_id('source-editor') ?? 0)?.height
+	press('cmd-/')
+	return height
+}
+const sourceTall = sourceHeightOf(40)
+const sourceTaller = sourceHeightOf(42)
+documentController.load('Short.\n', r9Options)
+settle()
+press('cmd-/')
+settle()
+const sourceStyle = find_test_id('source-editor')?.style
+const sourceShort = bounds(find_test_id('source-editor') ?? 0)?.height
+press('cmd-/')
+check(
+	`Source mode’s field: line height 22.4px, painted at GPUI’s whole-px 22px rows (${sourceTall} for 41 lines, ${sourceTaller} for 43), and a minimum height of 70% of the window (${sourceShort} for one line)`,
+	[
+		sourceTall !== undefined && sourceTaller !== undefined
+			? Math.round(((sourceTaller - sourceTall) / 2) * 100) / 100
+			: null,
+		sourceStyle?.lineHeight,
+		sourceStyle?.minHeight,
+		sourceShort !== undefined && Math.abs(sourceShort - window_size.height * 0.7) < 1
+	],
+	[22, 22.4, Math.round(window_size.height * 7) / 10, true]
+)
+
+// a block command keeps the caret where it was in the text, as editmd's ProseMirror maps it through the command
+documentController.load('- a\n- b\n- c\n', r9Options)
+settle()
+click_test_id('block-0')
+type('cmd-up down cmd-right')
+press('cmd-]')
+await fieldIdle()
+type('X')
+press('escape')
+check(
+	'Indent with the caret after “b” keeps the caret there: typing X after it writes `- bX`',
+	documentController.text,
+	'- a\n  - bX\n- c\n'
+)
+
+/**
+ * Bold with no field open acts at editmd's load caret, the start of the first textblock: its empty pair is a stored
+ * mark there, so closing untouched leaves the text as it was, and typing goes between the marks
+ */
+documentController.load('one\n', r9Options)
+settle()
+press('cmd-b')
+await fieldIdle()
+press('escape')
+const boldUntouched = documentController.text
+documentController.load('one\n', r9Options)
+settle()
+press('cmd-b')
+await fieldIdle()
+type('x')
+press('escape')
+check(
+	'Bold with no field open: Escape at once leaves `one`, typing x writes `**x**one` at the load caret',
+	[boldUntouched, documentController.text],
+	['one\n', '**x**one\n']
+)
+
+// Tab in a table goes to the next cell and selects its text, as editmd's table keymap's goToNextCell
+documentController.load('| a | b |\n| - | - |\n| c | d |\n', r9Options)
+settle()
+click_test_id('block-0')
+type('cmd-up right right')
+press('tab')
+await fieldIdle()
+type('X')
+press('escape')
+check(
+	'Tab with the caret in a table’s first cell selects the second cell’s text: X replaces `b`',
+	documentController.text,
+	'| a | X |\n| - | - |\n| c | d |\n'
+)
+
+/**
+ * a block command whose outcome no caret changes still keeps the caret where it was in the text, as editmd's
+ * ProseMirror maps it through the command; syntax put in right at the caret goes before it (assoc 1)
+ */
+documentController.load('one two\n', r9Options)
+settle()
+click_test_id('block-0')
+type('cmd-up right right right')
+press('cmd-alt-2')
+await fieldIdle()
+type('X')
+press('escape')
+const headingAtCaret = documentController.text
+documentController.load('one\n', r9Options)
+settle()
+press('cmd-alt-2')
+await fieldIdle()
+type('X')
+press('escape')
+check(
+	'Heading 2 keeps the caret in the text: after “one” in `one two` typing X writes `## oneX two`; with no field open, at the load caret, `## Xone`',
+	[headingAtCaret, documentController.text],
+	['## oneX two\n', '## Xone\n']
+)
+
+/**
+ * editmd edits a code block or a diagram as its code alone: its node holds the code, and the fences are no text of its
+ * editor. `source`'s Block 0 opens: what its field shows and the preview a diagram paints then; X typed at the field's
+ * end; and, opened afresh, Return then Y. the Document's text after each
+ */
+async function codeFieldEdits(source: string): Promise<[unknown, unknown, string, string]> {
+	documentController.load(source, r9Options)
+	settle()
+	click_test_id('block-0')
+	settle()
+	const value = propOf('block-editor', 'value')
+	const preview = propOf('mermaid-0', 'src') ?? null
+	type('X')
+	await fieldIdle()
+	press('escape')
+	const typed = documentController.text
+	documentController.load(source, r9Options)
+	settle()
+	click_test_id('block-0')
+	settle()
+	type('enter')
+	type('Y')
+	await fieldIdle()
+	press('escape')
+	return [value, preview, typed, documentController.text]
+}
+check(
+	'a ```js code Block’s field holds its code alone: X typed at its end goes before the closing fence, and Return keeps a newline in the code',
+	await codeFieldEdits('```js\nlet a = 1\n```\n'),
+	['let a = 1', null, '```js\nlet a = 1X\n```\n', '```js\nlet a = 1\nY\n```\n']
+)
+check(
+	'a mermaid diagram’s field holds its code alone, its live preview drawn from that code: X typed at its end goes before the closing fence, and Return keeps a newline in the code',
+	await codeFieldEdits('```mermaid\nflowchart LR\n  A --> B\n```\n'),
+	[
+		'flowchart LR\n  A --> B',
+		diagramSrcOf('flowchart LR\n  A --> B'),
+		'```mermaid\nflowchart LR\n  A --> BX\n```\n',
+		'```mermaid\nflowchart LR\n  A --> B\nY\n```\n'
+	]
+)
+
+/**
+ * editmd paints a Block inside a quote or a list item as it paints one at the top level: its style.css applies to every
+ * element of `.markdown-body` (style.css:126-226). a nested Block's test ids carry its place, `<index>.<n>`
+ */
+documentController.load('```js\nlet a = 1\n```\n\n- ```js\n  let a = 1\n  ```\n', r9Options)
+settle()
+const topCodeCard = bounds(find_test_id('code-card-0') ?? 0)
+const itemCodeCard = bounds(find_test_id('code-card-1.0.0') ?? 0)
+check(
+	`a js fence inside a list item paints a code card as tall as a top-level one holding the same code (${topCodeCard?.height}, ${itemCodeCard?.height})`,
+	[
+		propOf('code-1.0.0', 'code'),
+		itemCodeCard !== null && topCodeCard !== null && itemCodeCard.height === topCodeCard.height
+	],
+	['let a = 1', true]
+)
+
+documentController.load('> ## Two\n\n> ###### Six\n', r9Options)
+settle()
+const quotedSixSizes = fieldOf(
+	fieldOf(propOf('markdown-1.0', 'theme'), 'metrics'),
+	'mdHeadingSizes'
+)
+check(
+	'a heading inside a quote paints as a top-level one in the quote’s muted colour: an h2 over its 1px rule, an h6 at 14.4px',
+	[
+		find_test_id('heading-rule-0.0')?.style?.borderBottomWidth,
+		fieldOf(propOf('markdown-0.0', 'theme'), 'text'),
+		fieldOf(propOf('markdown-1.0', 'theme'), 'text'),
+		Array.isArray(quotedSixSizes) ? quotedSixSizes[3] : null
+	],
+	[1, palette().muted, palette().muted, 14.4]
+)
+
+documentController.load('> > q\n', r9Options)
+settle()
+/** a quote's rail: its width and colour, and its fill, null for none */
+function railOf(testId: string) {
+	const style = find_test_id(testId)?.style
+	return [style?.borderLeftWidth, style?.borderColor, style?.backgroundColor ?? null]
+}
+check(
+	'a quote inside a quote paints a second plain rail inside the first, with no wash, its text without `>`',
+	[railOf('quote-0'), railOf('quote-0.0'), propOf('markdown-0.0.0', 'source')],
+	[[4, palette().border, null], [4, palette().border, null], 'q']
+)
+
+documentController.load('> - [ ] x\n', r9Options)
+settle()
+const quotedTaskMark = documentController.blocks[0]?.children?.[0]?.tasks?.[0]?.mark
+check(
+	'a task list inside a quote paints its checkbox, not its brackets as text',
+	[quotedTaskMark, find_test_id(`task-${quotedTaskMark}`) !== null, painted().includes('[ ]')],
+	[5, true, false]
+)
+click_test_id(`task-${quotedTaskMark}`)
+settle()
+check(
+	'a task box inside a quote ticks on click, the quote’s field staying closed',
+	[documentController.text, find_test_id('block-editor')],
+	['> - [x] x\n', null]
+)
+
+/**
+ * a code block inside a quote paints its text in the quote's muted colour: editmd's `pre` sets no colour of its own,
+ * so its code inherits `blockquote { color: var(--muted) }` (style.css:193-209, 222-226). for a js fence's code
+ * and a bare fence's, on the card's surface: its most frequent ink, and the most pixels in one row within 4 of the
+ * body text's colour, which a keyword painted in it would show
+ */
+function quotedCodeInk(source: string): [string | null, number] {
+	documentController.load(source, r9Options)
+	settle()
+	const box = bounds(find_test_id('code-0.0') ?? 0)
+	if (!box) return [null, -1]
+	const snap = snapshot()
+	return [
+		inkColour(snap, box, [palette().surface ?? '']),
+		mostInARow(snap, box, palette().text ?? '')
+	]
+}
+const quotedCodeInks = [
+	quotedCodeInk('> ```js\n> let quoted = function () { return "s" }\n> ```\n'),
+	quotedCodeInk('> ```\n> plain quoted words\n> ```\n')
+]
+check(
+	`a code block inside a quote paints its text in the muted colour, none in the body text’s (${JSON.stringify(quotedCodeInks)})`,
+	quotedCodeInks.map(([ink, textPixels]) => [
+		near(ink ?? '', palette().muted ?? '', 12),
+		textPixels
+	]),
+	[
+		[true, 0],
+		[true, 0]
+	]
+)
+
+/**
+ * a paragraph of images inside a list item or a quote paints its images as one at the top level does, not as link
+ * text: editmd's style.css applies to every `img` of `.markdown-body`
+ */
+writeFileSync(join(r9Directory, 'nested.png'), png(60, 40))
+const nestedImagesPath = join(r9Directory, 'nested-images.md')
+writeFileSync(
+	nestedImagesPath,
+	'- ![a](nested.png)\n- ![b](nested.png) beside text\n\n> ![c](nested.png)\n'
+)
+documentController.open(nestedImagesPath, r9Options)
+settle()
+check(
+	'an image paragraph in a list item, one mixing an image and text in another, and one in a quote paint their images',
+	['image-0.0.0-0', 'image-0.1.0-0', 'image-1.0-0'].map((id) => find_test_id(id)?.type ?? null),
+	['img', 'img', 'img']
+)
+
+// two tables' cells carry their own Block's key, so the second's never take the first's ids
+documentController.load('| a |\n| - |\n| b |\n\n| c |\n| - |\n| d |\n', r9Options)
+settle()
+check(
+	'each table’s cells carry its own key: the first table’s body cell and the second’s',
+	[cellSource(1, 0, '0'), cellSource(1, 0, '1')],
+	['b', 'd']
+)
+
+documentController.load('> ```mermaid\n> flowchart LR\n>   A --> B\n> ```\n', r9Options)
+settle()
+check(
+	'a mermaid diagram inside a quote paints as its diagram',
+	propOf('mermaid-0.0', 'src') ?? null,
+	diagramSrcOf('flowchart LR\n  A --> B')
+)
+
+documentController.load('> | a | b |\n> | - | - |\n> | c | d |\n', r9Options)
+settle()
+check(
+	'a table inside a quote paints its own cells, without the quote’s `>`',
+	[
+		cellSource(0, 0, '0.0'),
+		cellSource(0, 1, '0.0'),
+		cellSource(1, 0, '0.0'),
+		cellSource(1, 1, '0.0')
+	],
+	['**a**', '**b**', 'c', 'd']
+)
+
+/**
+ * Q25: editmd's reveal stops at each change in a Block in turn (`AgentLegend.nextStop`'s `run`, highlights.ts:131-142)
+ * and scrolls smoothly (`scrollIntoView({ block: "center", behavior: "smooth" })`): a list between thirty fillers and
+ * ten more, so the page can centre its last item, whose first and last items one Agent changed in one merge
+ */
+const listStopsPath = join(r9Directory, 'list-stops.md')
+const listFillers = (from: number, count: number) =>
+	Array.from({ length: count }, (_row, index) => `Filler ${from + index}.`).join('\n\n')
+const listStopsText = (first: string, last: string) =>
+	`${listFillers(1, 30)}\n\n${Array.from(
+		{ length: 40 },
+		(_row, index) => `- ${index === 0 ? first : index === 39 ? last : `item ${index + 1}`}`
+	).join('\n')}\n\n${listFillers(31, 10)}\n`
+writeFileSync(listStopsPath, listStopsText('item 1', 'item 40'))
+documentController.open(listStopsPath, r9Options)
+await wait(100)
+await reportR9Edit(listStopsPath, 'epsilon', { EDITMD_AGENT_NAME: 'Epsilon' })
+writeFileSync(listStopsPath, listStopsText('alpha', 'omega'))
+await waitUntil(() => documentController.highlights.length === 1, 'Epsilon’s list change')
+settle()
+/** the list Block's painted top */
+const listTop = () => bounds(find_test_id('block-30') ?? 0)?.y ?? Number.NaN
+const listTopBefore = listTop()
+clickIfPresent('legend-name-0')
+await wait(20)
+pump()
+const listTopOneFrame = listTop()
+await wait(REVEAL_MS)
+pump()
+const listTopRevealed = listTop()
+const alphaFromMiddle = runFromMiddle('alpha')
+clickIfPresent('legend-name-0')
+await wait(REVEAL_MS)
+pump()
+const omegaFromMiddle = runFromMiddle('omega')
+check(
+	`a list whose first and last items one Agent changed is two stops: the first item’s run, then the last item’s, each at the page’s middle (alpha ${alphaFromMiddle}, omega ${omegaFromMiddle})`,
+	[Math.abs(alphaFromMiddle) <= 1, Math.abs(omegaFromMiddle) <= 1],
+	[true, true]
+)
+check(
+	`a reveal scrolls smoothly over about 300ms, as editmd’s \`behavior: "smooth"\`: one frame in, the list lies between where it was and where it goes (${listTopBefore}, ${listTopOneFrame}, ${listTopRevealed})`,
+	[listTopRevealed < listTopOneFrame && listTopOneFrame < listTopBefore],
+	[true]
+)
+
+/**
+ * Q9: Copy writes what editmd's clipboard serializer writes for the window's selection (`copiedText`): a whole
+ * paragraph as its markdown with a final newline; the pasteboard is a recorder here
+ */
+const copiedMarkdown: string[] = []
+documentController.load('One **bold** two.\n', {
+	...r9Options,
+	writeClipboard: (text: string) => {
+		copiedMarkdown.push(text)
+		return true
+	}
+})
+settle()
+const boldParagraph = bounds(find_test_id('block-0') ?? 0)
+const boldSelected = boldParagraph
+	? drag_select(
+			{ x: boldParagraph.x + 1, y: boldParagraph.y + boldParagraph.height / 2 },
+			{
+				x: boldParagraph.x + boldParagraph.width - 1,
+				y: boldParagraph.y + boldParagraph.height / 2
+			}
+		)
+	: null
+settle()
+press('cmd-c')
+settle()
+check(
+	`⌘C over a whole \`One **bold** two.\` paragraph copies its markdown with a final newline, as editmd’s serializer (selected ${JSON.stringify(boldSelected)})`,
+	copiedMarkdown,
+	['One **bold** two.\n']
+)
+
+// editmd's `li::marker` is no selectable text, so a drag over an ordered list reads its items' text alone
+documentController.load('1. one\n2. two\n', r9Options)
+settle()
+const orderedList = bounds(find_test_id('block-0') ?? 0)
+if (orderedList)
+	drag_select(
+		{ x: orderedList.x + 1, y: orderedList.y + 4 },
+		{ x: orderedList.x + orderedList.width - 1, y: orderedList.y + orderedList.height - 4 }
+	)
+settle()
+check(
+	'a drag over an ordered list `1. one`, `2. two` selects `one` and `two` without their numbers',
+	get_native()?.getSelectedText() ?? null,
+	'one\ntwo'
+)
+
+/**
+ * Q9: editmd pastes at its caret, so Paste with no field open, from Edit and by ⌘V, opens the field at the load caret
+ * and sends it ⌘V (`sendKeys`, a recorder here, so no paste reads a pasteboard)
+ */
+const pasteKeys: string[] = []
+const pasteOptions = { ...r9Options, sendKeys: (keys: string) => void pasteKeys.push(keys) }
+/** what `paste` does with no field open: the field it opens, whether one shows, and whether the last keys sent end in ⌘V */
+async function pasteWithNoField(paste: () => void) {
+	// past the 300ms in which the window takes a ⌘V as the echo of one a command sent (`ECHO_MS`); the recorder sends none
+	await wait(350)
+	documentController.load('First\n\nSecond\n', pasteOptions)
+	settle()
+	pasteKeys.length = 0
+	paste()
+	await wait(100)
+	pump()
+	const result = [
+		documentController.activeIndex,
+		find_test_id('block-editor') !== null,
+		pasteKeys.at(-1)?.endsWith('cmd-v') ?? false
+	]
+	press('escape')
+	settle()
+	return result
+}
+const pastedFromMenu = await pasteWithNoField(() => {
+	openMenu('Edit')
+	clickRow('Paste')
+})
+const pastedByKey = await pasteWithNoField(() => press('cmd-v'))
+check(
+	'with no field open, Edit > Paste and ⌘V each open the field at the load caret, which then gets ⌘V',
+	[pastedFromMenu, pastedByKey],
+	[
+		[0, true, true],
+		[0, true, true]
+	]
+)
+
+/**
+ * Q39: inside a list editmd compares item by item (changes.ts:28-56): a new item, or one that became another node (a
+ * ticked task), is a `block` change it tints and bars on its own row, and items taken away a dashed line between the
+ * rows left; the Block itself takes no mark
+ */
+async function mergeByEta(name: string, before: string, after: string): Promise<void> {
+	const path = join(r9Directory, `${name}.md`)
+	writeFileSync(path, before)
+	documentController.open(path, r9Options)
+	await wait(100)
+	await reportR9Edit(path, 'eta', { EDITMD_AGENT_NAME: 'Eta' })
+	writeFileSync(path, after)
+	await waitUntil(() => documentController.highlights.length === 1, `Eta’s ${name}`)
+	settle()
+}
+/** Eta's bar and tint colours */
+function etaColours(): [string | undefined, string | undefined] {
+	const slot = documentController.agents.find(({ name }) => name === 'Eta')?.slot
+	return [themeController.palette[`agent-${slot}`], themeController.palette[`agent-${slot}-tint`]]
+}
+/** every tinted row: its test id, bar colour and tint */
+const tintedRows = () =>
+	find_all((node) => node.testId?.startsWith('agent-row-') ?? false).map((node) => [
+		node.testId,
+		node.style?.borderColor,
+		node.style?.backgroundColor
+	])
+/** the dashed lines between a container's rows */
+const gapLines = () => find_all((node) => /^gap-(end-)?\d+-\d+$/.test(node.testId ?? ''))
+
+await mergeByEta('new-item', '- a\n- b\n', '- a\n- new\n- b\n')
+check(
+	'a list item an Agent added takes its tint and bar on its own row, its text no wash; the rows around it and the Block take none',
+	[
+		tintedRows(),
+		find_test_id('block-0')?.style?.borderColor ?? null,
+		propOf('block-0', 'highlight') ?? null
+	],
+	[[['agent-row-6', ...etaColours()]], null, null]
+)
+
+await mergeByEta('gone-item', '- a\n- b\n- c\n', '- a\n- c\n')
+const goneLines = gapLines()
+const goneBox = bounds(goneLines[0] ?? 0)
+const goneAbove = bounds(find_test_id('list-row-2') ?? 0)
+const goneBelow = bounds(find_test_id('list-row-6') ?? 0)
+const goneId = goneLines[0]?.testId ?? 'no-gap'
+const goneTip = await tipAfterHover(goneId, `${goneId.replace('gap-', 'gap-tooltip-')}-tip`)
+const goneAt = documentController.highlights[0]?.at ?? 0
+check(
+	`an item an Agent took away leaves one dashed line between the rows left, titled as editmd titles a deletion, and the Block takes no tint (${JSON.stringify(goneTip)})`,
+	[
+		goneLines.length,
+		goneBox && goneAbove && goneBelow
+			? goneAbove.y + goneAbove.height <= goneBox.y && goneBox.y + goneBox.height <= goneBelow.y
+			: null,
+		find_test_id('block-0')?.style?.borderColor ?? null,
+		goneTip
+	],
+	[1, true, null, deletionTooltip('Eta', goneAt, 'b', menuOptions.timeFormat)]
+)
+
+await mergeByEta('last-item', '- a\n- b\n', '- a\n')
+const lastLines = gapLines()
+const lastBox = bounds(lastLines[0] ?? 0)
+const lastAbove = bounds(find_test_id('list-row-2') ?? 0)
+check(
+	'the last item taken away leaves its dashed line below the last row left',
+	[lastLines.length, lastBox && lastAbove ? lastAbove.y + lastAbove.height <= lastBox.y : null],
+	[1, true]
+)
+
+await mergeByEta('ticked', '- [ ] a\n- [ ] b\n', '- [ ] a\n- [x] b\n')
+check(
+	'a task an Agent ticked takes its tint and bar on its own row, and the Block none',
+	[tintedRows(), find_test_id('block-0')?.style?.borderColor ?? null],
+	[[['agent-row-14', ...etaColours()]], null]
+)
+
+// a quote's children are its rows too: a paragraph an Agent added inside a quote is tinted on its own
+await mergeByEta('new-quoted', '> a\n>\n> b\n', '> a\n>\n> new\n>\n> b\n')
+check(
+	'a paragraph an Agent added inside a quote takes its tint and bar on its own row, and the Block none',
+	[tintedRows(), find_test_id('block-0')?.style?.borderColor ?? null],
+	[[[`agent-row-${documentController.text.indexOf('new')}`, ...etaColours()]], null]
+)
+
 rmSync(r9Directory, { recursive: true, force: true })
+
+/**
+ * the logical y just below the lowest device row inside `box` (logical px) holding a pixel within 96 of `colour`, null
+ * for none: a capital's ink, which has no descender, ends on its line's baseline
+ */
+function inkBottom(snap: { shot: Pixels; scale: number }, box: Box, colour: string) {
+	const { scale } = snap
+	for (let y = Math.floor((box.y + box.height) * scale) - 1; y >= Math.ceil(box.y * scale); y--)
+		for (let x = Math.ceil(box.x * scale); x < Math.floor((box.x + box.width) * scale); x++)
+			if (near(devicePixel(snap, x, y), colour, 96)) return (y + 1) / scale
+	return null
+}
+
+/**
+ * Q21: WebKit sets an inline `<img>`'s bottom on its line's baseline (editmd's style.css gives it no `vertical-align`),
+ * so a README badge beside text sits with its bottom where the text's capitals end
+ */
+writeFileSync(join(parityDirectory, 'baseline.md'), '![badge](badge.png) HHHH HHHH\n')
+documentController.open(join(parityDirectory, 'baseline.md'), {
+	...parityOptions,
+	socketsDirectory: join(parityDirectory, 's')
+})
+pump()
+settle()
+const badgeBox = bounds(find_test_id('image-0-0') ?? 0)
+const capitalsBox = bounds(find_test_id('text-run-0-1') ?? 0)
+const capitalsBaseline = capitalsBox
+	? inkBottom(snapshot(), capitalsBox, palette().text ?? '')
+	: null
+const badgeBottom = badgeBox ? badgeBox.y + badgeBox.height : null
+check(
+	`a paragraph’s image sits on the text’s baseline: its bottom where the capitals beside it end (image bottom ${badgeBottom}, baseline ${capitalsBaseline}, text top ${capitalsBox?.y})`,
+	badgeBottom !== null &&
+		capitalsBaseline !== null &&
+		Math.abs(badgeBottom - capitalsBaseline) <= 0.5,
+	true
+)
+
+/**
+ * Q20: editmd underlines a link in the accent at 35% (`.markdown-body a`, style.css:170-176), and while ⌘ is held the
+ * pointer turns to a hand over the link alone (`body.cmd-down .markdown-body a { cursor: pointer }`, style.css:178-181)
+ */
+documentController.load(
+	'[a linked phrase](https://example.com/x) then plain words\n',
+	parityOptions
+)
+settle()
+await wait(250)
+settle()
+const accentRun = bounds(find_test_id('block-0')?.children?.[0] ?? 0)
+const accentUnderline = accentRun
+	? longestRunColour(snapshot(), { ...accentRun, width: 80 }, [palette().background ?? ''])
+	: null
+/** the Block's cursor with the pointer `dx` into its text, ⌘ held */
+const handCursorAt = (dx: number) => {
+	if (!accentRun) return null
+	mouse_move({ x: accentRun.x + dx, y: accentRun.y + accentRun.height / 2 }, { modifiers: 'cmd' })
+	settle()
+	return find_test_id('block-0')?.style?.cursor
+}
+const handOverLink = handCursorAt(20)
+const handOverPlain = handCursorAt(170)
+// a move inside the page with no modifiers lets ⌘ go, so no later check paints in the held theme
+mouse_move({ x: 400, y: 400 })
+settle()
+check(
+	`a link’s underline paints in the accent at 35%, and with ⌘ held the pointer is a hand over the link alone (underline ${accentUnderline}; over the link ${handOverLink}, over plain text ${handOverPlain})`,
+	[
+		near(
+			accentUnderline ?? '',
+			mixColour(palette().accent ?? '', palette().background ?? '', 0.35),
+			6
+		),
+		handOverLink,
+		handOverPlain
+	],
+	[true, 'pointer', 'text']
+)
+
+/**
+ * Q18: editmd's page scroller is AppKit's overlay style on a Mac that shows scroll bars automatically: no thumb at
+ * rest, shown while the page scrolls and for about a second after; the legacy style shows it always. per style: what
+ * the middle of the thumb's box paints at rest, just after a wheel scroll, and 1.2s later
+ */
+async function thumbLook(style: 'overlay' | 'legacy') {
+	await app.unmount()
+	const scrollerTheme = new ThemeController({
+		readAppearance: () => 'light',
+		readScrollerStyle: () => style
+	})
+	app = mount_headless(App, { width: 800, height: 538, props: { theme: scrollerTheme } })
+	documentController.load(
+		`${Array.from({ length: 80 }, (_, n) => `Paragraph ${n}.`).join('\n\n')}\n`,
+		parityOptions
+	)
+	settle()
+	// the Scroller measures its thumb every 250ms
+	await wait(400)
+	settle()
+	const look = () => {
+		const thumb = bounds(find_test_id('page-scroller-thumb') ?? 0)
+		const snap = snapshot()
+		if (!thumb || thumb.height === 0) return 'no box'
+		const colour = devicePixel(
+			snap,
+			Math.round((thumb.x + thumb.width / 2) * snap.scale),
+			Math.round((thumb.y + thumb.height / 2) * snap.scale)
+		)
+		return near(colour, paletteFor('light').background, 4) ? 'none' : 'thumb'
+	}
+	const atRest = look()
+	wheel({ x: 400, y: 300 }, 0, -200)
+	settle()
+	await wait(100)
+	settle()
+	const scrolled = look()
+	await wait(1200)
+	settle()
+	return [atRest, scrolled, look()]
+}
+check(
+	'the page’s scrollbar thumb follows the system’s scroller style: overlay shows none at rest, shows while scrolling and is gone 1.2s later; legacy shows it throughout',
+	[await thumbLook('overlay'), await thumbLook('legacy')],
+	[
+		['none', 'thumb', 'none'],
+		['thumb', 'thumb', 'thumb']
+	]
+)
 
 rmSync(parityDirectory, { recursive: true, force: true })
 
-finish('document', 411)
+finish('document', 478)

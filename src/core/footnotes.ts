@@ -1,33 +1,26 @@
 import type { FootnoteReference } from '../engine/blocks.ts'
 
-/** links a footnote reference paints as; `footnoteIdentifierOf` reads them back when one is clicked */
-const FOOTNOTE_SCHEME = 'footnote:'
-
 /** a markdown escape on every ASCII punctuation character, so a label paints as written */
 const escapeMarkdown = (text: string) => text.replace(/[!-/:-@[-`{-~]/g, '\\$&')
 
-/**
- * the link run one footnote reference paints as: native <markdown> paints `[^label]` literally, while
- * editmd shows the label small in the accent colour. a link run sets the label apart and makes it clickable, but
- * paints in the text colour, not the accent (gap G9, ADR-0005)
- */
-export function footnoteLink(reference: FootnoteReference): string {
-	const label = `\\[${escapeMarkdown(reference.label)}\\]`
-	return `[${label}](${FOOTNOTE_SCHEME}${encodeURIComponent(reference.identifier)})`
-}
+/** Unicode's superscript form of each character that has one */
+const SUPERSCRIPTS = new Map(
+	[...'0123456789abcdefghijklmnoprstuvwxyz+-=()'].map((character, index) => [
+		character,
+		[...'⁰¹²³⁴⁵⁶⁷⁸⁹ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ⁺⁻⁼⁽⁾'][index]!
+	])
+)
 
 /**
- * the identifier of the footnote a clicked link points at, or null for any other link; a broken percent-escape is
- * taken as written, as editmd's `findHeading` takes a fragment (anchors.ts:49-55)
+ * what one footnote reference paints as: native <markdown> paints `[^label]` literally, while editmd paints the
+ * label alone in a `sup`, small and raised in the accent colour (preset-gfm footnote/reference.ts:33-45,
+ * style.css:370-374), and links it nowhere. a run takes no size or colour of its own (gap G9), so the label is raised
+ * with Unicode's superscript characters, and a character with none stays as written
  */
-export function footnoteIdentifierOf(href: string): string | null {
-	if (!href.startsWith(FOOTNOTE_SCHEME)) return null
-	const written = href.slice(FOOTNOTE_SCHEME.length)
-	try {
-		return decodeURIComponent(written)
-	} catch {
-		return written
-	}
+export function footnoteMark(reference: FootnoteReference): string {
+	return [...reference.label]
+		.map((character) => SUPERSCRIPTS.get(character) ?? escapeMarkdown(character))
+		.join('')
 }
 
 /** a definition's content as markdown of its own: continuation lines are indented four spaces under `[^label]:` */

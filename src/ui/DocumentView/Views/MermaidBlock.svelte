@@ -1,7 +1,8 @@
 <!--
   @component
   A Mermaid Block drawn as its diagram, or the reason it could not be drawn. As editmd's diagrams.ts, the first drawing
-  shows at once and a changed source (an outside write, an undo) redraws once it has stayed the same for 300ms.
+  shows at once and a changed source (an outside write, an undo) redraws once it has stayed the same for 300ms. With
+  `editing`, it is the live preview under the Active Block's field, redrawn once typing pauses for 300ms.
 -->
 <script lang="ts">
 	import { untrack } from 'svelte'
@@ -11,12 +12,23 @@
 	import type { BlockViewProps } from '../DocumentView.model.ts'
 	import DiagramView from './DiagramView.svelte'
 
-	let { block, index }: BlockViewProps = $props()
+	let {
+		block,
+		index,
+		testKey,
+		editing = false
+	}: BlockViewProps & {
+		/** drawn under the Active Block's field as its live preview */
+		editing?: boolean
+	} = $props()
 
 	const theme = useTheme()
 
-	/** the Block's diagram source now */
-	const source = $derived(diagramSource(documentController.sliceOf(block)))
+	/**
+	 * the Block's diagram source now; inside a quote or a list item without what its container puts in front of each
+	 * line (`paintedSliceOf`)
+	 */
+	const source = $derived(diagramSource(documentController.paintedSliceOf(block)))
 
 	/**
 	 * the source the diagram is drawn from: the Block's at first, then as of 300ms after its last change
@@ -43,4 +55,4 @@
 	const diagram = $derived(diagramOf(shown, theme().mermaidPalette))
 </script>
 
-<DiagramView {diagram} {index} />
+<DiagramView {diagram} {index} {testKey} {editing} />

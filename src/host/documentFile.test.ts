@@ -447,8 +447,8 @@ describe('DocumentFile', () => {
 		]).toEqual([path, 'one USER\n\ntwo AGENT\n', 'one\n\ntwo\n', []])
 	})
 
-	// the held descriptor stayed on the inode an outside atomic write replaced, so a later rename was not
-	// followed and the next save wrote the old path anew: two files
+	// after an outside atomic write the held descriptor must move to the new inode, or a later rename goes unfollowed
+	// and the next save writes the old path anew: two files
 	test('a rename after another program’s atomic write is followed', async () => {
 		const path = fileWith('atomic-then-rename.md', 'one\n')
 		const renamed = join(directory, 'atomic-then-renamed.md')
@@ -506,8 +506,9 @@ describe('DocumentFile', () => {
 			documentFile.save()
 			expect([existsSync(path), readFileSync(renamed, 'utf8')]).toEqual([false, 'text, edited\n'])
 		} finally {
-			for (const [key, value] of Object.entries(saved))
+			for (const [key, value] of Object.entries(saved)) {
 				if (value !== undefined) process.env[key] = value
+			}
 		}
 	})
 

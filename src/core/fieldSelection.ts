@@ -4,7 +4,7 @@
  * value the field reports, cmd-z puts the text and the selection back, and keys then edit around it
  */
 
-import { type BlockKind, parseBlocks } from '../engine/blocks.ts'
+import { type BlockKind, blockKindOf } from '../engine/blocks.ts'
 
 /** a field's text and selection: `anchor` stays put while shift moves `focus`; equal for a caret */
 export type FieldState = { text: string; anchor: number; focus: number }
@@ -39,7 +39,7 @@ const MARKLESS = new Set<BlockKind>([
 
 /** the Block `source` holds text that Bold, Italic, Strikethrough and Inline Code can mark */
 export function takesMarks(source: string): boolean {
-	return !MARKLESS.has(parseBlocks(source)[0]?.kind ?? 'paragraph')
+	return !MARKLESS.has(blockKindOf(source))
 }
 
 /**
@@ -191,75 +191,155 @@ export function caretKeys(text: string, at: number): string {
 }
 
 /**
+ * the keys that select `range` (UTF-16 offsets) in a field holding `text` whose caret is anywhere: the caret, then
+ * one shift-arrow per character, since the field's arrows step characters and an emoji is one (`steps`)
+ */
+export function selectKeys(text: string, { start, end }: Range): string {
+	return [caretKeys(text, start), ...repeat('shift-right', steps(text, start, end))].join(' ')
+}
+
+/** the offset at the end of each line of `source`, where a caret on that line can sit */
+export function lineEndsOf(source: string): number[] {
+	const ends: number[] = []
+	for (let at = source.indexOf('\n'); at !== -1; at = source.indexOf('\n', at + 1)) ends.push(at)
+	return [...ends, source.length]
+}
+
+/** text a pair of `spelling` marks holds, from `start` (after the opening marks) to `end` (the closing marks) */
+type Span = { spelling: string; start: number; end: number }
+
+/** a change to a field's text: `remove` characters deleted at `at`, then `insert` typed there */
+type Edit = { at: number; remove: number; insert: string }
+
+const WORD_CHARACTER = /[\p{L}\p{N}]/u
+
+/**
+ * the pairs of `format`'s marks in `text`, line by line: a run of exactly the spelling's characters, not escaped,
+ * opens before text and closes after it, and `_` opens and closes only outside a word (CommonMark's flanking rules)
+ */
+function spansOf(text: string, format: InlineFormat): Span[] {
+	const spans: Span[] = []
+	for (const spelling of SPELLINGS[format]) {
+		const mark = spelling[0]!
+		let open: number | null = null
+		for (const { 0: run, index } of text.matchAll(new RegExp(`\\${mark}+|\\n`, 'g'))) {
+			const before = text[index - 1] ?? ' '
+			const after = text[index + run.length] ?? ' '
+			const inWord = mark === '_' && WORD_CHARACTER.test(open === null ? before : after)
+			if (run === '\n') open = null
+			else if (run !== spelling || before === '\\' || inWord) continue
+			else if (open === null && /\S/.test(after)) open = index + run.length
+			else if (open !== null && /\S/.test(before)) {
+				spans.push({ spelling, start: open, end: index })
+				open = null
+			}
+		}
+	}
+	return spans
+}
+
+/**
+ * the edits that take the marks of `spans` off `start`..`end`, as ProseMirror's removeMark: the marked text on either
+ * side keeps its marks, with the spaces at its ends left outside them
+ */
+const unmarked = (text: string, spans: Span[], start: number, end: number): Edit[] =>
+	spans
+		.filter((span) => Math.max(span.start, start) < Math.min(span.end, end))
+		.flatMap(({ spelling, start: from, end: to }) => {
+			const left = text.slice(from, Math.max(from, start)).trimEnd()
+			const right = text.slice(Math.min(to, end), to)
+			return [
+				left
+					? { at: from + left.length, remove: 0, insert: spelling }
+					: { at: from - spelling.length, remove: spelling.length, insert: '' },
+				right.trim()
+					? { at: to - right.trimStart().length, remove: 0, insert: spelling }
+					: { at: to, remove: spelling.length, insert: '' }
+			]
+		})
+
+/**
+ * the keys that make `edits` (offsets in `text`) and then select what `start`..`end` held: from the last edit back,
+ * so each edit's offset still holds, and with no newline typed, which Return would take
+ */
+function editKeys(text: string, edits: Edit[], start: number, end: number): string {
+	const byPlace: Edit[] = []
+	for (const edit of edits.toSorted((a, b) => a.at - b.at)) {
+		const last = byPlace.at(-1)
+		if (last?.at === edit.at) {
+			byPlace[byPlace.length - 1] = {
+				at: edit.at,
+				remove: last.remove + edit.remove,
+				insert: last.insert + edit.insert
+			}
+		} else byPlace.push(edit)
+	}
+	/** where `at` moves: a selection's start goes after text typed at it, its end before */
+	const moved = (at: number, isStart: boolean) =>
+		byPlace.reduce(
+			(to, edit) =>
+				edit.at < at || (edit.at === at && isStart)
+					? to + edit.insert.length - Math.min(edit.remove, at - edit.at)
+					: to,
+			at
+		)
+	const keys: string[] = []
+	let current = text
+	for (const { at, remove, insert } of byPlace.toReversed()) {
+		keys.push(caretKeys(current, at), ...repeat('delete', remove), ...[...insert].map(keyOf))
+		current = current.slice(0, at) + insert + current.slice(at + remove)
+	}
+	keys.push(selectKeys(current, { start: moved(start, true), end: moved(end, false) }))
+	return keys.join(' ')
+}
+
+/**
  * the keys that toggle `format` on the field's selection, as editmd's Format > Bold, Italic, Strikethrough and
- * Inline Code toggle a mark (editor.ts:95-99): a selection inside the format's marks, or holding them, loses them;
- * any other is wrapped in them and stays selected; a caret gets the marks around it, so typing goes between them,
- * or loses an empty pair it sits in
+ * Inline Code toggle a mark (editor.ts:95-99, ProseMirror's toggleMark): a selection that holds the mark anywhere loses
+ * it, the marked text beside it keeps it; any other is wrapped in the marks and stays selected, and Inline Code
+ * first takes the other marks off it (inline-code.ts:76-86); a caret gets the marks around it, so typing goes between
+ * them, or loses an empty pair it sits in; Inline Code at a caret changes nothing ('')
  */
 export function toggleInlineKeys(state: FieldState, format: InlineFormat): string {
 	const marks = MARKS[format]
 	const { text } = state
 	const start = Math.min(state.anchor, state.focus)
 	const end = Math.max(state.anchor, state.focus)
-	const inner = end - start
-	const typed = [...marks].map(keyOf)
-	/** `spelling` at `from`, and not part of a longer run of its character (a `*` of `**` is no italic's) */
-	const isMarks = (from: number, spelling: string) =>
-		from >= 0 &&
-		text.slice(from, from + spelling.length) === spelling &&
-		text[from - 1] !== spelling[0] &&
-		text[from + spelling.length] !== spelling[0]
-	const enclosing = SPELLINGS[format].find(
-		(spelling) => isMarks(start - spelling.length, spelling) && isMarks(end, spelling)
-	)
 
-	if (inner === 0) {
-		if (enclosing) {
-			const size = enclosing.length
-			return [...repeat('delete', size), ...repeat('backspace', size)].join(' ')
-		}
+	if (start === end) {
+		// editmd's toggleInlineCodeCommand refuses an empty selection (inline-code.ts:66)
+		if (format === 'code') return ''
+		/** `spelling` at `from`, and not part of a longer run of its character (a `*` of `**` is no italic's) */
+		const isMarks = (from: number, spelling: string) =>
+			from >= 0 &&
+			text.slice(from, from + spelling.length) === spelling &&
+			text[from - 1] !== spelling[0] &&
+			text[from + spelling.length] !== spelling[0]
+		const enclosing = SPELLINGS[format].find(
+			(spelling) => isMarks(start - spelling.length, spelling) && isMarks(end, spelling)
+		)
+		const size = enclosing?.length ?? 0
+		if (enclosing) return [...repeat('delete', size), ...repeat('backspace', size)].join(' ')
+		const typed = [...marks].map(keyOf)
 		return [...typed, ...typed, ...repeat('left', marks.length)].join(' ')
 	}
-	const held = SPELLINGS[format].find(
-		(spelling) =>
-			inner >= 2 * spelling.length &&
-			isMarks(start, spelling) &&
-			isMarks(end - spelling.length, spelling)
-	)
-	if (held) {
-		const size = held.length
-		// arrows count characters, not UTF-16 units (an emoji is one step)
-		const kept = steps(text, start + size, end - size)
-		return [
-			'left',
-			...repeat('delete', size),
-			...repeat('right', kept),
-			...repeat('delete', size),
-			...repeat('shift-left', kept)
-		].join(' ')
-	}
-	if (enclosing) {
-		const size = enclosing.length
-		return [
-			'right',
-			...repeat('delete', size),
-			...repeat('left', steps(text, start, end)),
-			...repeat('backspace', size),
-			...repeat('shift-right', steps(text, start, end))
-		].join(' ')
-	}
+	const taken = unmarked(text, spansOf(text, format), start, end)
+	if (taken.length > 0) return editKeys(text, taken, start, end)
+
 	// editmd's mark leaves the spaces at the selection's ends outside it
 	const selected = text.slice(start, end)
-	const leading = steps(selected, 0, selected.length - selected.trimStart().length)
-	const marked = steps(selected.trim(), 0, selected.trim().length)
-	if (marked === 0) return ''
-	return [
-		'left',
-		...repeat('right', leading),
-		...typed,
-		...repeat('right', marked),
-		...typed,
-		...repeat('left', marks.length),
-		...repeat('shift-left', marked)
-	].join(' ')
+	const from = start + selected.length - selected.trimStart().length
+	const to = from + selected.trim().length
+	if (from === to) return ''
+	const others =
+		format === 'code'
+			? (['bold', 'italic', 'strikethrough'] as const).flatMap((other) =>
+					unmarked(text, spansOf(text, other), from, to)
+				)
+			: []
+	const wrap = [
+		{ at: from, remove: 0, insert: marks },
+		{ at: to, remove: 0, insert: marks }
+	]
+	return editKeys(text, [...others, ...wrap], from, to)
 }

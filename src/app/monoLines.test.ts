@@ -18,7 +18,7 @@ describe('monoLinesSource', () => {
 		expect(monoLinesSource('run ``` of three')).toBe('````run ``` of three````')
 	})
 
-	// a tab painted zero-width in native inline code; editmd's `white-space: pre-wrap` stops a tab at the
+	// native inline code paints a tab zero-width; editmd's `white-space: pre-wrap` stops a tab at the
 	// next multiple of 8 columns (CSS `tab-size` 8)
 	test('a tab becomes the spaces to the next stop of 8 columns', () => {
 		expect([

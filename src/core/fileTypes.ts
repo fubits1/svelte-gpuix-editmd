@@ -5,7 +5,10 @@
  * an allowlist, so an unknown extension is neither text nor image: links to it are revealed, never opened
  */
 
-/** editmd's document types (Info.plist CFBundleDocumentTypes) */
+/**
+ * editmd's document types (Info.plist CFBundleDocumentTypes), declared as net.daringfireball.markdown conforming to
+ * public.plain-text (Info.plist:85-110): inside editmd they are text, where macOS alone may give them a dynamic type
+ */
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd', 'mkdn'])
 
 /** extensions whose UTType conforms to public.text on macOS: plain text, markup, source, scripts */
@@ -65,7 +68,7 @@ const IMAGE_EXTENSIONS = new Set([
 	'avif'
 ])
 
-function extensionOf(path: string): string {
+export function extensionOf(path: string): string {
 	const name = path.slice(path.lastIndexOf('/') + 1)
 	const dot = name.lastIndexOf('.')
 	return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''

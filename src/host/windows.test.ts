@@ -29,7 +29,7 @@ describe('openWindow', () => {
 		await new Promise((done) => setTimeout(done, 200))
 	})
 
-	// Bun's compiled binary reports its own embedded entry as argv[1]: passing it on made every new window open the
+	// Bun's compiled binary reports its own embedded entry as argv[1]: passed on, it would make every new window open the
 	// bundle as its document
 	test('a compiled binary starts itself with no entry, and a source run with its script', () => {
 		expect([

@@ -1,4 +1,5 @@
 import type { BlockKind } from '../engine/blocks.ts'
+import { tableCells } from './tableCells.ts'
 
 /** the modifiers held with a key, as a gpuix key event reports them */
 type Modifiers = { cmd: boolean; ctrl: boolean; alt: boolean; shift: boolean }
@@ -41,6 +42,23 @@ export function tabAction(
 	if (key !== 'tab' || cmd || ctrl || alt || kind === 'frontmatter') return null
 	if (kind === 'list') return shift ? 'outdent' : 'indent'
 	return shift ? 'none' : 'spaces'
+}
+
+/**
+ * where Tab (or Shift-Tab, `backward`) goes from offset `at` in the table `source`, as editmd's table keymap's
+ * goToNextCell (preset-gfm table/input.ts:229-246): the next (previous) cell's text, selected; an empty cell is a
+ * caret in it. null before the first cell and past the last, where editmd's table takes no Tab
+ */
+export function tableCellStep(
+	source: string,
+	at: number,
+	backward = false
+): { start: number; end: number } | null {
+	const cells = tableCells(source)
+	// the cell holding `at`: the last one starting at or before it, a caret on a pipe counting for the cell before
+	const here = cells.findLastIndex((cell) => cell.from - 1 <= at)
+	const cell = cells[here + (backward ? -1 : 1)]
+	return here === -1 || cell === undefined ? null : { start: cell.from, end: cell.to }
 }
 
 /**

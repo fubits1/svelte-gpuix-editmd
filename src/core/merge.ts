@@ -12,17 +12,12 @@
 // (the base), and Yjs merges those edits with whatever the user did since.
 
 import * as Y from 'yjs'
-import { diff, lines } from './diff.ts'
+import { commonEnds, diff, lines } from './diff.ts'
 
 type State = Uint8Array
 
 /** An encoded empty document. */
 const EMPTY: State = Y.encodeStateAsUpdate(new Y.Doc())
-
-/** Everything in both states. */
-function merge(a: State, b: State): State {
-	return Y.mergeUpdates([a, b])
-}
 
 /**
  * A document holding `state`, which will write as `client`. The id is set
@@ -84,10 +79,12 @@ export function mergeTextMapping(
 	const other = load(baseState, THEIRS_CLIENT)
 	editText(other.getText(TEXT), base, theirs)
 
-	const result = load(merge(Y.encodeStateAsUpdate(ours), Y.encodeStateAsUpdate(other)))
-	const text = result.getText(TEXT).toString()
+	// only what the other side added goes into ours: Yjs converges on the same text in any order, and the anchors
+	// already belong to ours
+	Y.applyUpdate(ours, Y.encodeStateAsUpdate(other, Y.encodeStateVector(ours)))
+	const text = ours.getText(TEXT).toString()
 	const mapped = anchors.map(
-		(anchor) => Y.createAbsolutePositionFromRelativePosition(anchor, result)?.index ?? text.length
+		(anchor) => Y.createAbsolutePositionFromRelativePosition(anchor, ours)?.index ?? text.length
 	)
 	return { text, cursors: mapped }
 }
@@ -127,16 +124,9 @@ export function textEdits(from: string, to: string): TextEdit[] {
 		const start = offsets[hunk.aStart]!
 		const removed = from.slice(start, offsets[hunk.aEnd])
 		const added = b.slice(hunk.bStart, hunk.bEnd).join('')
-		let prefix = 0
-		while (prefix < removed.length && prefix < added.length && removed[prefix] === added[prefix])
-			prefix++
-		let suffix = 0
-		while (
-			suffix < removed.length - prefix &&
-			suffix < added.length - prefix &&
-			removed[removed.length - 1 - suffix] === added[added.length - 1 - suffix]
-		)
-			suffix++
+		const common = commonEnds(removed, added)
+		let prefix = common.start
+		let suffix = removed.length - common.aEnd
 		// never between the two halves of a surrogate pair: Yjs writes U+FFFD for a lone half (👍 to 👎 share the first)
 		if (prefix > 0 && isHighSurrogate(removed.charCodeAt(prefix - 1))) prefix--
 		if (suffix > 0 && isLowSurrogate(removed.charCodeAt(removed.length - suffix))) suffix--

@@ -1,4 +1,5 @@
 import type { GpuixTheme } from 'gpuix-svelte'
+import { NO_FILL } from './palette.ts'
 
 /**
  * read-only mono text (front matter, definition and HTML lines, diagram messages) as native <markdown> paints it: SF
@@ -7,15 +8,6 @@ import type { GpuixTheme } from 'gpuix-svelte'
  * headless: a 200-character URL wraps, the advance is SF Mono's, `  - item` keeps its two spaces)
  */
 
-/** a colour with no alpha, which GPUI paints as nothing */
-const NO_FILL = '#00000000'
-
-/**
- * `text` as markdown that paints each of its lines as written: a paragraph of one code span per line, whose fence is
- * longer than any run of backticks in it. a code span drops one space from each end when both ends have one, or to
- * keep a backtick at an end from joining the fence, so such a line gets a space at each end to give; an empty line
- * is a code span of one space, so it keeps its row
- */
 /** CSS `tab-size`, which editmd's `white-space: pre-wrap` lines stop a tab at; native inline code paints a tab as nothing */
 const TAB_SIZE = 8
 
@@ -28,6 +20,12 @@ function expandTabs(line: string): string {
 	return out
 }
 
+/**
+ * `text` as markdown that paints each of its lines as written: a paragraph of one code span per line, whose fence is
+ * longer than any run of backticks in it. a code span drops one space from each end when both ends have one, or to
+ * keep a backtick at an end from joining the fence, so such a line gets a space at each end to give; an empty line
+ * is a code span of one space, so it keeps its row
+ */
 export function monoLinesSource(text: string): string {
 	return text
 		.split('\n')

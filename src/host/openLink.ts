@@ -4,7 +4,7 @@ import type { LinkAction } from '../core/linkPolicy.ts'
 export type Run = (command: string, args: string[]) => void
 
 /**
- * fire-and-forget `open`; gpuix has no open-URL API. an argument `execFile` refuses (a NUL in a path a link names) does
+ * runs `open` without waiting for it; gpuix has no open-URL API. an argument `execFile` refuses (a NUL in a path a link names) does
  * nothing, as a link that names nothing does
  */
 export const runDetached: Run = (command, args) => {

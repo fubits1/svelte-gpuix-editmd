@@ -11,7 +11,7 @@ const VARIABLE_REFERENCE = /var\(--([a-z0-9_-]+)(?:,([^()]*))?\)/g
 
 /**
  * pele colours its SVG with `--_bg:var(--pele-bg,#fff)` on the root and `fill="var(--_bg)"` on shapes;
- * GPUI's SVG decoder drops every `var()` paint (shapes came out black), so each reference
+ * GPUI's SVG decoder drops every `var()` paint (shapes paint black), so each reference
  * is replaced from `palette` (keys without the leading `--`) or the fallback pele wrote
  */
 function inlineVariables(svg: string, palette: Palette): string {
@@ -45,26 +45,28 @@ function inlineVariables(svg: string, palette: Palette): string {
 	return inStyles(svg, resolve)
 }
 
+/** `svg` with `transform` applied to the content of every `<style>` element */
+const inStyleElements = (svg: string, transform: (css: string) => string): string =>
+	svg.replace(
+		/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/g,
+		(_all, open: string, css: string, close: string) => open + transform(css) + close
+	)
+
 /** `svg` with `transform` applied to every attribute value and `<style>` content, never to text between tags */
 function inStyles(svg: string, transform: (css: string) => string): string {
-	return svg
-		.replace(
-			/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/g,
-			(_all, open: string, css: string, close: string) => open + transform(css) + close
-		)
-		.replace(/(<[a-zA-Z][^<>]*>)/g, (tag: string) =>
-			tag.startsWith('<style')
-				? tag
-				: tag.replace(
-						/(=")([^"]*)(")/g,
-						(_all, open: string, value: string, close: string) => open + transform(value) + close
-					)
-		)
+	return inStyleElements(svg, transform).replace(/(<[a-zA-Z][^<>]*>)/g, (tag: string) =>
+		tag.startsWith('<style')
+			? tag
+			: tag.replace(
+					/(=")([^"]*)(")/g,
+					(_all, open: string, value: string, close: string) => open + transform(value) + close
+				)
+	)
 }
 
 /**
  * labels in one concrete family: pele's root style says `font:16px sans-serif` before its
- * `font-family`, and with the generic family unresolved GPUI's decoder fell back to serif;
+ * `font-family`, and with the generic family unresolved GPUI's decoder falls back to serif;
  * so the shorthand keeps only its size and the family goes on the root element as an attribute
  */
 function withFont(svg: string, family: string): string {
@@ -73,11 +75,7 @@ function withFont(svg: string, family: string): string {
 		css
 			.replace(/font:\s*(\d+(?:\.\d+)?px)\s+[^;"]+/g, 'font-size:$1')
 			.replaceAll('sans-serif', family)
-	return svg
-		.replace(
-			/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/g,
-			(_all, open: string, css: string, close: string) => open + styled(css) + close
-		)
+	return inStyleElements(svg, styled)
 		.replace(
 			/(\s(?:style|font-family)=")([^"]*)(")/g,
 			(_all, open: string, css: string, close: string) => open + styled(css) + close

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { parseBlocks } from '../engine/blocks.ts'
-import { paintedSlice, struckThrough, unquoted, withoutInfoString } from './paintedSlice.ts'
+import { paintedSlice, struckThrough, withoutInfoString } from './paintedSlice.ts'
 
 describe('withoutInfoString', () => {
 	// native <markdown> draws a header bar for a fence with an info string and none without (probed), and editmd
@@ -14,25 +14,6 @@ describe('withoutInfoString', () => {
 	test('a bare fence and an indented code block stay as written', () => {
 		expect(withoutInfoString('```\nx\n```')).toBe('```\nx\n```')
 		expect(withoutInfoString('    ```js')).toBe('    ```js')
-	})
-})
-
-describe('unquoted', () => {
-	// a quote paints in a view of its own (rail, padding, muted text), so its markdown goes in without its markers
-	test('drops one `>` and the space after it from each line', () => {
-		expect(unquoted('> A quote\n> over two lines')).toBe('A quote\nover two lines')
-	})
-
-	test('keeps lazy lines, inner quotes and a marker without its space', () => {
-		expect(unquoted('> one\nlazy\n>\n>two\n> > inner\n   > indented')).toBe(
-			'one\nlazy\n\ntwo\n> inner\nindented'
-		)
-	})
-
-	// CommonMark: the marker takes one column of a tab after it, and the rest stays as spaces (`>\tfoo`
-	// was painted as indented code)
-	test('a tab after the marker leaves the columns it had beyond the one space', () => {
-		expect([unquoted('>\tfoo'), unquoted('  >\tfoo')]).toEqual(['  foo', 'foo'])
 	})
 })
 
@@ -79,8 +60,39 @@ describe('paintedSlice', () => {
 		const [block] = parseBlocks(text)
 
 		expect(paintedSlice(text.slice(block!.start, block!.end), block!.start, block!)).toBe(
-			'See[\\[1\\]](footnote:1) and [`[](https://e.x)`](https://e.x) then[\\[2\\]](footnote:2).'
+			'See¹ and [`[](https://e.x)`](https://e.x) then².'
 		)
+	})
+
+	// editmd shows each inline HTML tag as its source in muted mono (`span[data-type="html"]`, style.css:346-349); a code
+	// span is the run <markdown> paints in mono, and the view gives it the muted colour
+	test('each inline HTML tag paints as a code span of its source, the text between them as it is', () => {
+		const text = 'Line<br>break <b>bold</b> and <https://a.example>.\n'
+		const [block] = parseBlocks(text)
+
+		expect(paintedSlice(text.slice(block!.start, block!.end), block!.start, block!)).toBe(
+			'Line`<br>`break `<b>`bold`</b>` and <https://a.example>.'
+		)
+	})
+
+	// a child of a quote or a list item spans lines that carry the container's `> ` or indent; it paints without them,
+	// as the child's own markdown
+	test('a Block inside a quote or a list item paints without its container’s line prefix', () => {
+		const quote = '> ```js\n> x\n> ```\n'
+		const list = '- a\n\n  ```\n  x\n  ```\n'
+		const code = parseBlocks(quote)[0]!.children![0]!
+		const listed = parseBlocks(list)[0]!.items![0]!.children![1]!
+		expect([
+			paintedSlice(quote.slice(code.start, code.end), code.start, code),
+			paintedSlice(list.slice(listed.start, listed.end), listed.start, listed)
+		]).toEqual(['```js\nx\n```', '```\nx\n```'])
+	})
+
+	// CommonMark lets a tab follow the `>`; left in, the tab would make a fence's lines indented code
+	test('a quote line whose marker a tab follows paints without the tab', () => {
+		const quote = '>\t```\n>\tx\n>\t```\n'
+		const code = parseBlocks(quote)[0]!.children![0]!
+		expect(paintedSlice(quote.slice(code.start, code.end), code.start, code)).toBe('```\nx\n```')
 	})
 
 	test('a part of a Block (one task item) rewrites only what lies inside it', () => {

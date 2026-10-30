@@ -2,7 +2,16 @@ import type { HighlightSpec } from 'gpuix-svelte'
 import type { Block } from '../../engine/blocks.ts'
 
 /** what every Block view receives */
-export type BlockViewProps = { block: Block; index: number }
+export type BlockViewProps = {
+	block: Block
+	/** the top-level Block's index, which a click opens: a Block inside a quote or a list item opens its container */
+	index: number
+	/**
+	 * what the view's test ids end in: the index for a top-level Block, `<container's key>.<n>` for the nth Block inside
+	 * a quote or a list item, so a nested one's never collide with a top-level one's
+	 */
+	testKey: string
+}
 
 /**
  * a code card's language label, `pre[data-language]::before { top: 0.35rem }` (5.6px), less the 2px GPUI sets 11px
@@ -25,9 +34,15 @@ export const NO_FIND: HighlightSpec = { ranges: [] }
 export const PREVIEW_GAP = 0.5 * 13.5
 
 /**
- * how far a definition and a block of HTML move their mono source up (negative) or down, so its ink sits where
- * editmd's does: measured with native <code> in SF Mono against editmd's screenshots of a definition and of HTML, a
- * definition's text 3.5px low and raw HTML's 1px high without it. px at actual size, scaled by the zoom
+ * CSS `line-height: normal` of SF Mono per px of its text, the line box WebKit gives it: the font's hhea ascender 1980
+ * and descender 432 of its 2048 units, no line gap (/System/Library/Fonts/SFNSMono.ttf). editmd's definition line is
+ * that tall, 16.21px of its 13.76px text, since its `font:` shorthand resets the line height (style.css:353-357)
  */
-export const DEFINITION_INK_SHIFT = -3.5
+export const SF_MONO_LINE_BOX = (1980 + 432) / 2048
+
+/**
+ * how far a block of HTML moves its mono source down, so its ink sits where editmd's does: measured with native
+ * <markdown> inline code in SF Mono against editmd's screenshot of HTML, its text 1px high without it; a definition in
+ * its own line box needs none. px at actual size, scaled by the zoom
+ */
 export const HTML_INK_SHIFT = 1

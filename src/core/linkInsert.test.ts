@@ -73,6 +73,28 @@ describe('linkAtSelection', () => {
 		)
 	})
 
+	// editmd's Edit Link puts a new link mark of only the href on the link's range (editor.ts:388-390,
+	// `link.create({ href })`), so the link keeps its text and loses its title; an autolink keeps its URL as text
+	test('a caret inside a link with a title, or an autolink, gives it the new URL and nothing else', () => {
+		const titled = 'see [docs](https://old.example "Old") here'
+		const auto = 'see <https://old.example> here'
+		expect([
+			linkAtSelection(titled, { start: 6, end: 6 }, 'https://a.example'),
+			linkAtSelection(auto, { start: 8, end: 8 }, 'https://a.example')
+		]).toEqual([
+			'see [docs](https://a.example) here',
+			'see [https://old.example](https://a.example) here'
+		])
+	})
+
+	// editmd's serializer writes a link whose text is its own URL as an autolink
+	test('a selection that is its own URL becomes an autolink', () => {
+		const source = 'write mailto:a@b.example now'
+		expect(linkAtSelection(source, at(source, 'mailto:a@b.example'), 'mailto:a@b.example')).toBe(
+			'write <mailto:a@b.example> now'
+		)
+	})
+
 	test('in code the URL goes in as text at the caret', () => {
 		expect(linkAtSelection('```js\nx\n```', { start: 7, end: 7 }, 'https://a.example')).toBe(
 			'```js\nxhttps://a.example\n```'
@@ -121,7 +143,7 @@ describe('linkAtSelection', () => {
 		])
 	})
 
-	// a destination with an escaped parenthesis is one destination (the old URL was cut at `\)`)
+	// a destination with an escaped parenthesis is one destination, not cut at `\)`
 	test('a caret in a link whose URL escapes a parenthesis replaces the whole URL', () => {
 		const source = 'see [docs](https://e.example/a\\)b) here'
 		expect(linkAtSelection(source, { start: 6, end: 6 }, 'https://a.example')).toBe(
@@ -129,8 +151,8 @@ describe('linkAtSelection', () => {
 		)
 	})
 
-	// across table rows the brackets went round the pipes and the table became a paragraph; editmd links
-	// each cell's text (run in editmd's own editor)
+	// across table rows editmd links each cell's text, never putting brackets round the pipes, which would make
+	// the table a paragraph (run in editmd's own editor)
 	test('a selection across table rows links the text of each cell, the table kept', () => {
 		const table = '| a | b |\n| - | - |\n| c | d |'
 		expect(linkAtSelection(table, { start: 6, end: 27 }, 'https://a.example')).toBe(
@@ -138,7 +160,8 @@ describe('linkAtSelection', () => {
 		)
 	})
 
-	// editmd's Add or Update with an empty URL removes the link (EditorWindowController.swift:133-134, editor.ts:380-385)
+	// editmd's Add or Update with an empty URL removes the link (EditorWindowController.swift:133-134, editor.ts:380-385);
+	// a URL left as text is escaped, as its serializer writes it, so GFM does not link it again
 	test('an empty URL takes the link off at the caret or across the selection', () => {
 		const source = 'see [docs](https://old.example) and <https://b.example> here'
 		expect([
@@ -147,9 +170,20 @@ describe('linkAtSelection', () => {
 			linkAtSelection('see docs', { start: 4, end: 4 }, '')
 		]).toEqual([
 			'see docs and <https://b.example> here',
-			'see docs and https://b.example here',
+			'see docs and https\\://b.example here',
 			null
 		])
+	})
+
+	// editmd's link toggles as a mark (editor.ts:398, toggleLinkCommand is toggleMark): a selection that holds a link
+	// loses it, whatever URL is given; a bare URL is a link to editmd (GFM), and the text left is escaped
+	test('a URL given for a selection that holds a link takes the link off', () => {
+		const bare = 'see https://a.example here'
+		const inline = 'see [docs](https://old.example) here'
+		expect([
+			linkAtSelection(bare, at(bare, 'https://a.example'), 'https://a.example'),
+			linkAtSelection(inline, at(inline, '[docs](https://old.example)'), 'https://a.example')
+		]).toEqual(['see https\\://a.example here', 'see docs here'])
 	})
 
 	test('an empty URL changes nothing', () => {

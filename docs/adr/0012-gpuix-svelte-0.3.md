@@ -32,7 +32,7 @@ In a real window on 0.3.0, Tab in a Block's field typed nothing, Shift-Tab typed
 - In a list item, a key typed while the probe runs can be lost, as with Format > Indent. TODO: hold the keys typed during a probe and send them after it
 - The 2 spaces are sent as keys behind any keys already waiting, so a key that arrives in the same batch as the Tab lands before them. Keys typed one after another keep their order
 - TODO: write a literal tab once gpuix reports a text field's caret and selection (G1)
-- `@gpuix/native` 0.11.0 adds dashed borders (would close G11), `outline*` and `registerFont`. The port does not use them yet
+- `@gpuix/native` 0.11.0 adds dashed borders, `outline*`, `onlayout` and `registerFont`. The blocked-image box uses the dashed border, the front matter field's focus ring the outline, and tables, images, mixed paragraphs and diagrams size from `onlayout` instead of 250ms polls (amended 2026-10-30); the deleted-block line keeps its `<svg>` dashes (ADR-0009 G11)
 - `--snapshot` of an empty Document paints the open field's caret, which editmd's snapshot does not. TODO: no caret in a snapshot
 - gpuix-svelte 0.3.0 still vendors `devalue` 5.9.2 ([ADR-0010](0010-tooling.md))
 

@@ -26,6 +26,9 @@ const SAVE_ATTEMPTS = 3
 /** how long a path seen gone is given to come back (another editor's rename-and-write save) before it is followed */
 const MOVE_SETTLE_MS = 150
 
+const sleepSync = (ms: number) =>
+	void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
 /** the reason a "Not Saved" label shows for a save of `path` */
 const messageOf = (path: string, error: unknown) =>
 	error instanceof Error ? saveErrorDescription(path, error) : String(error)
@@ -132,7 +135,7 @@ export class DocumentFile {
 			return
 		}
 		if (!this.#moveSeen) {
-			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, MOVE_SETTLE_MS)
+			sleepSync(MOVE_SETTLE_MS)
 			if (existsSync(this.#file.path)) return
 		}
 		this.#moveSeen = false
@@ -170,7 +173,7 @@ export class DocumentFile {
 		authorOfChange?: (path: string) => AgentAuthor | null,
 		options: { replace?: boolean } = {}
 	): DocumentFile {
-		const file = createTextFile(path, document.text, options)
+		const file = createTextFile(path, document.textToSave, options)
 		document.markSaved()
 		const documentFile = new DocumentFile({ file, document }, scheduler, onUpdate, authorOfChange)
 		documentFile.#reportSaved(null)
@@ -242,7 +245,7 @@ export class DocumentFile {
 			return
 		}
 		try {
-			this.#file = this.#file.saveAs(path, this.document.text, options)
+			this.#file = this.#file.saveAs(path, this.document.textToSave, options)
 		} catch (error) {
 			// asking to replace is not a failed save, so only other errors say Not Saved
 			if (!(error instanceof FileExistsError)) this.#reportSaved(messageOf(path, error))
@@ -299,9 +302,7 @@ export class DocumentFile {
 		let disk = read()
 		// a change is merged only once two reads agree: a program writing in place can be caught half way
 		if (disk !== null && disk !== this.document.baseline) {
-			disk = stableRead(read, (ms) =>
-				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-			)
+			disk = stableRead(read, sleepSync)
 		}
 		// the file as last loaded or saved (the watcher's event on this window's own save) changes nothing, and asking
 		// who wrote it runs `ps` and `lsof` synchronously (host/agentProcesses.ts)
@@ -335,7 +336,7 @@ export class DocumentFile {
 		for (let attempt = 1; ; attempt++) {
 			this.#mergeFromDisk(true)
 			try {
-				const notice = this.#file.save(this.document.text, { anyway })
+				const notice = this.#file.save(this.document.textToSave, { anyway })
 				this.#hold()
 				return notice
 			} catch (error) {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { parseBlocks } from '../engine/blocks.ts'
-import { spaceAbove, spaceAroundDeletions } from './blockSpacing.ts'
+import { spaceAbove, spaceAroundDeletions, spaceInItem } from './blockSpacing.ts'
 
 /** the size token above each Block of `text`, as `spaceAbove` picks it from the Block before */
 function spacesOf(text: string): (string | null)[] {
@@ -56,6 +56,28 @@ describe('spaceAbove', () => {
 		expect(spacesOf('---\ntitle: A\n---\n\n# Title\n')).toEqual([null, 'frontmatter-bottom'])
 	})
 
+	// a quote (`padding: 0 1em`, style.css:222-226) and a list (`padding-left: 1.75em`) have no top padding or border,
+	// so their first child's top margin collapses through them, `.markdown-body > :first-child` zeroing only their own
+	test('a heading or rule first in a quote or list item brings its top margin out above the container', () => {
+		expect([
+			...spacesOf('Text\n\n> ## H\n'),
+			...spacesOf('Text\n\n- ## H\n'),
+			...spacesOf('Text\n\n> > ---\n'),
+			...spacesOf('> # H\n'),
+			...spacesOf('---\nt: a\n---\n\n> # H\n')
+		]).toEqual([
+			null,
+			'heading-2-top',
+			null,
+			'heading-2-top',
+			null,
+			'rule-margin',
+			'heading-1-top',
+			null,
+			'heading-1-top'
+		])
+	})
+
 	// a link definition line (`div[data-type="definition"]`) has no margin of its own
 	test('a definition line has no bottom margin, so only the next Block’s top counts', () => {
 		expect(spacesOf('[a]: https://a.x\n\nText\n\n[b]: https://b.x\n\n# H\n')).toEqual([
@@ -63,6 +85,28 @@ describe('spaceAbove', () => {
 			null,
 			'block-bottom',
 			'heading-1-top'
+		])
+	})
+})
+
+/** the size token above each of the first list item's own Blocks in `text`, as `spaceInItem` picks it */
+function itemSpacesOf(text: string): (string | null)[] {
+	const children = parseBlocks(text)[0]?.items?.[0]?.children ?? []
+	return children.map((block, index) => spaceInItem(children[index - 1], block))
+}
+
+// editmd's `li > p { margin: 0 }` (style.css:235); every other Block in an item keeps its margins
+describe('spaceInItem', () => {
+	test('a paragraph in an item has no margin, so only the next Block’s top counts after it', () => {
+		expect(itemSpacesOf('- a\n\n  ```\n  x\n  ```\n\n  b\n')).toEqual([null, null, 'block-bottom'])
+		expect(itemSpacesOf('- a\n\n  ## H\n')).toEqual([null, 'heading-2-top'])
+	})
+
+	test('after any other Block, the space a top-level one has', () => {
+		expect(itemSpacesOf('- > q\n\n  ## H\n\n  b\n')).toEqual([
+			null,
+			'heading-2-top',
+			'heading-2-bottom'
 		])
 	})
 })

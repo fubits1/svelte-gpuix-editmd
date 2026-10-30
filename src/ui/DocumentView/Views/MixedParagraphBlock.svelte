@@ -1,25 +1,26 @@
 <!--
   @component
   A paragraph mixing text and images, which editmd paints inline. Each text run goes through native <markdown> with
-  the Document's definitions as context and its footnote references as links, each image through ImageView. Native
+  the Document's definitions as context and its footnote references as superscript, each image through ImageView. Native
   <markdown> takes the whole width it is given and has no content-sized mode, so a run cannot flow beside an image
   in a wrapping row: when the images lead, they keep their own width in one row and the text takes the rest of the
   line, and a run that needs more than one line there turns the paragraph back into a column of its parts, image
   above text. A click anywhere opens the whole paragraph, as the Block's own click does.
 -->
 <script lang="ts">
-	import { get_native, type ShadowNode } from 'gpuix-svelte'
-	import { emptyLinkThemeFor, heldLinkThemeFor } from '../../../app/palette.ts'
-	import { useCommandHeld, useTheme } from '../../../app/theme.svelte.ts'
+	import type { GpuixEvent } from 'gpuix-svelte'
+	import { emptyLinkThemeFor, inlineHtmlThemeFor, linkThemeFor } from '../../../app/palette.ts'
+	import { useCommandHeld, useQuoteColour, useTheme } from '../../../app/theme.svelte.ts'
 	import type { Image } from '../../../engine/blocks.ts'
 	import { documentController } from '../controller.svelte.ts'
 	import type { BlockViewProps } from '../DocumentView.model.ts'
 	import ImageView from './ImageView.svelte'
 
-	let { block, index }: BlockViewProps = $props()
+	let { block, testKey }: BlockViewProps = $props()
 
 	const theme = useTheme()
 	const commandHeld = useCommandHeld()
+	const quoteColour = useQuoteColour()
 
 	/** what one part paints: a text run's markdown source, or an image with its test id suffix */
 	type Part =
@@ -41,7 +42,7 @@
 						kind: 'image',
 						start: segment.start,
 						image: { src, alt, href },
-						testIdSuffix: `${index}-${images++}`
+						testIdSuffix: `${testKey}-${images++}`
 					}
 				]
 			}
@@ -67,16 +68,21 @@
 	})
 
 	/**
-	 * the theme a text run from `start` to `end` paints in: while ⌘ is held a link's underline takes its own colour
-	 * (`heldLinkThemeFor`), and a run holding a link with no text paints its source as editmd does, in the accent with
-	 * no fill (`emptyLinkThemeFor`), as MarkdownBlock paints a Block's
+	 * the theme a text run from `start` to `end` paints in: a link's underline in the accent at 35%, the accent while ⌘
+	 * is held (`linkThemeFor`), a run holding a link with no text its source as editmd does, in the accent with
+	 * no fill (`emptyLinkThemeFor`), and one holding an inline HTML tag its source in the muted colour with no fill
+	 * (`inlineHtmlThemeFor`), as MarkdownBlock paints a Block's
 	 */
 	function themeOf(start: number, end: number) {
-		const base =
-			commandHeld() && block.links ? heldLinkThemeFor(theme().textTheme) : theme().textTheme
-		const holdsEmptyLink = block.emptyLinks?.some((link) => link.start >= start && link.end <= end)
-		if (!holdsEmptyLink) return base
-		return emptyLinkThemeFor(base, documentController.text.slice(start, end).includes('`'))
+		const text = quoteColour(theme().textTheme)
+		const base = block.links ? linkThemeFor(text, commandHeld()) : text
+		const within = (span: { start: number; end: number }) => span.start >= start && span.end <= end
+		const holdsEmptyLink = block.emptyLinks?.some(within)
+		const holdsHtml = block.inlineHtml?.some(within)
+		if (!holdsEmptyLink && !holdsHtml) return base
+		const hasCode = documentController.text.slice(start, end).includes('`')
+		const html = holdsHtml ? inlineHtmlThemeFor(base, hasCode) : base
+		return holdsEmptyLink ? emptyLinkThemeFor(html, hasCode) : html
 	}
 
 	/** what the paragraph paints, so a run measured too long for one line counts only until it changes */
@@ -99,37 +105,34 @@
 	/** one row of images, then the text in the rest of the line, as editmd's inline images read */
 	const inline = $derived(imagesLead && multilineKey !== paintedKey)
 
-	/**
-	 * GPUI sends no layout event, so a text run in the row is measured on a timer from its painted bounds, as
-	 * ImageView measures its column: taller than one and a half lines, it wrapped
-	 */
-	function measureRun(run: ShadowNode) {
-		const measure = () => {
-			if (run.nativeId === null) return
-			const height = get_native()?.getElementBounds(run.nativeId)?.height
-			const lineHeight = theme().textTheme.metrics?.mdLineHeight ?? 0
-			if (height !== undefined && lineHeight > 0 && height > lineHeight * 1.5)
-				multilineKey = paintedKey
-		}
-		measure()
-		const timer = setInterval(measure, 250)
-		return () => clearInterval(timer)
+	/** a text run in the row, by its layout event: taller than one and a half lines, it wrapped */
+	function measureRun(event: GpuixEvent) {
+		const lineHeight = theme().textTheme.metrics?.mdLineHeight ?? 0
+		if (event.height !== undefined && lineHeight > 0 && event.height > lineHeight * 1.5)
+			multilineKey = paintedKey
 	}
+
+	/** the paragraph's width as its layout event last reported it, the column its images fit; null until painted */
+	let columnWidth = $state<number | null>(null)
 </script>
 
-<div class={['paragraph', inline ? 'inline' : 'stacked']}>
+<div
+	class={['paragraph', inline ? 'inline' : 'stacked']}
+	onlayout={(event) => (columnWidth = event.width ?? null)}
+>
 	{#each parts as part, partIndex (part.start)}
 		{#if part.kind === 'image'}
-			<ImageView image={part.image} testIdSuffix={part.testIdSuffix} />
+			<ImageView image={part.image} testIdSuffix={part.testIdSuffix} {columnWidth} {inline} />
 		{:else}
-			<markdown
-				class={inline ? 'run' : null}
-				testid={`text-run-${index}-${partIndex}`}
-				source={part.source}
-				theme={themeOf(part.start, part.end)}
-				onlinkclick={(event) => documentController.linkClicked(event.value)}
-				{@attach inline && measureRun}
-			></markdown>
+			<!-- a <markdown> reports no layout, so a div around it does -->
+			<div class={['text', inline && 'run']} onlayout={inline ? measureRun : null}>
+				<markdown
+					testid={`text-run-${testKey}-${partIndex}`}
+					source={part.source}
+					theme={themeOf(part.start, part.end)}
+					onlinkclick={(event) => documentController.linkClicked(event.value)}
+				></markdown>
+			</div>
 		{/if}
 	{/each}
 </div>
@@ -138,14 +141,22 @@
 	.paragraph {
 		display: flex;
 	}
+	/*
+	 * the bottoms meet: the one line of text at the row's foot, and each image standing on its baseline (ImageView
+	 * `inline`), as WebKit sets an inline `<img>`'s bottom on the line's baseline; a taller image makes the line taller
+	 */
 	.inline {
 		flex-direction: row;
-		align-items: center;
+		align-items: flex-end;
 		gap: var(--size-inline-gap);
 	}
 	.stacked {
 		flex-direction: column;
 		gap: var(--size-images-gap);
+	}
+	.text {
+		display: flex;
+		flex-direction: column;
 	}
 	/* the text takes the rest of the line after the images */
 	.run {

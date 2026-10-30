@@ -5,7 +5,7 @@
  */
 export type CellSizing = { plain: string; code: string[] }
 
-/** the named entities a cell is likely to hold, as the characters they paint */
+/** the common named entities, as the characters they paint; any other stays as written */
 const NAMED_ENTITIES: Record<string, string> = {
 	amp: '&',
 	lt: '<',
@@ -44,8 +44,7 @@ export function cellSizing(source: string): CellSizing {
 		.replace(/(?<!\\)(\*\*|__|~~|[*_])/g, '')
 		.replace(/\\(.)/g, '$1')
 		.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (entity, name: string) => {
-			if (name.startsWith('#x') || name.startsWith('#X'))
-				return String.fromCodePoint(Number.parseInt(name.slice(2), 16))
+			if (/^#x/i.test(name)) return String.fromCodePoint(Number.parseInt(name.slice(2), 16))
 			if (name.startsWith('#')) return String.fromCodePoint(Number.parseInt(name.slice(1), 10))
 			return NAMED_ENTITIES[name.toLowerCase()] ?? entity
 		})

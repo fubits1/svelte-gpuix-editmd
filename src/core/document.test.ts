@@ -1,6 +1,6 @@
 import { OUTSIDE_EDIT } from './agentEdits.ts'
 import { describe, expect, test } from 'vitest'
-import { caretThrough, deletionSlot, Document } from './document.ts'
+import { caretPastInsertions, caretThrough, deletionSlot, Document } from './document.ts'
 
 describe('Document', () => {
 	test('editing a block replaces exactly its slice; gaps and other blocks keep their bytes', () => {
@@ -11,6 +11,107 @@ describe('Document', () => {
 
 		expect(document.text).toBe('# Title\n\n\n- uno\n- dos\n\nLast   paragraph.  \n')
 		expect(document.blocks.map(({ kind }) => kind)).toEqual(['heading', 'list', 'paragraph'])
+	})
+
+	// editmd's Return at a Block's end makes an empty paragraph after it (splitBlock); the port opens a field for it
+	test('a new Block after Block 0 takes typing between its neighbours, as one undo step', () => {
+		const document = new Document('one\n\nthree\n')
+		const session = document.openEditAfter(0)
+		session.update('two')
+		session.close()
+
+		expect([document.text, document.blocks.map(({ kind }) => kind)]).toEqual([
+			'one\n\ntwo\n\nthree\n',
+			['paragraph', 'paragraph', 'paragraph']
+		])
+		expect([document.undo(), document.text]).toEqual([true, 'one\n\nthree\n'])
+	})
+
+	test('a new Block after the last one ends the text as before', () => {
+		const document = new Document('one\n')
+		const session = document.openEditAfter(0)
+		session.update('two')
+		session.close()
+		expect(document.text).toBe('one\n\ntwo\n')
+	})
+
+	test('a new Block closed untouched leaves the text and the undo history as they were', () => {
+		const document = new Document('one\n\nthree\n')
+		document.openEditAfter(0).close()
+		expect([document.text, document.undo()]).toEqual(['one\n\nthree\n', false])
+	})
+
+	// editmd's undo is y-prosemirror's Y.UndoManager with Yjs's default captureTimeout of 500ms (UndoManager.js:166,239):
+	// edits less than 500ms apart are one step
+	test('typing with a pause of 500ms or more takes two Undo steps back, faster typing one', () => {
+		const paused = new Document('a\n')
+		const session = paused.openEdit(0)
+		session.update('ab', 0)
+		session.update('abc', 100)
+		session.update('abcd', 700)
+		session.close()
+		const steps = [paused.text]
+		while (paused.undo()) steps.push(paused.text)
+
+		const fast = new Document('a\n')
+		const quick = fast.openEdit(0)
+		quick.update('ab', 0)
+		quick.update('abc', 100)
+		quick.update('abcd', 200)
+		quick.close()
+		fast.undo()
+
+		expect([steps, fast.text]).toEqual([['abcd\n', 'abc\n', 'a\n'], 'a\n'])
+	})
+
+	// editmd's Return is one transaction (splitBlock), so one Undo takes it back whole; the port writes the field's head
+	// and then the new Block, which must be one step too
+	test('Return in the middle of a Block is one Undo step, apart from typing before it', () => {
+		const document = new Document('one\n\nlast\n')
+		const session = document.openEdit(0)
+		session.update('one two', 0)
+		session.update('one', 1000)
+		const next = session.split(' two', 1000)
+		const split = [document.text, next.source]
+		next.close()
+		const steps = [document.text]
+		while (document.undo()) steps.push(document.text)
+		expect([split, steps]).toEqual([
+			['one\n\n two\n\nlast\n', 'two'],
+			['one\n\n two\n\nlast\n', 'one two\n\nlast\n', 'one\n\nlast\n']
+		])
+	})
+
+	// Yjs groups only changes less than 500ms apart, so a Return a second after the last change is a step of its own
+	test('a Return long after the last change is its own Undo step', () => {
+		const document = new Document('one two\n\nlast\n')
+		const session = document.openEdit(0)
+		session.update('one', 0)
+		session.split(' two', 1000).close()
+		const steps = [document.text]
+		while (document.undo()) steps.push(document.text)
+		expect(steps).toEqual(['one\n\n two\n\nlast\n', 'one\n\nlast\n', 'one two\n\nlast\n'])
+	})
+
+	// editmd's serializer ends every document with a newline, so no Undo step leaves a new document without one
+	test('Undo of a Return in a new document gives back its text with the final newline', () => {
+		const document = new Document('')
+		const session = document.openSourceEdit()
+		session.update('one two', 0)
+		session.update('one', 600)
+		session.split(' two', 600).close()
+		document.undo()
+		expect(document.text).toBe('one two\n')
+	})
+
+	// editmd builds a new editor each time Source mode turns on or off (editor.ts:303-320), and its undo history with it
+	test('forgetting the history leaves nothing to undo or redo, and the text as it is', () => {
+		const document = new Document('one\n')
+		document.editBlock(0, 'two')
+		document.editBlock(0, 'three')
+		document.undo()
+		document.forgetHistory()
+		expect([document.undo(), document.redo(), document.text]).toEqual([false, false, 'two\n'])
 	})
 
 	test('ticking a task flips one character and nothing else', () => {
@@ -145,9 +246,81 @@ describe('Document', () => {
 			['new block', null]
 		])
 
-		// typing in the Block makes its runs stale: it is marked whole from then on
-		document.editBlock(1, 'one TWO three, typed')
-		expect(marked()[1]).toEqual(['one TWO three, typed', null])
+		// editmd maps its inline decorations through the user's typing (highlights.ts:94, Decoration.inline at :186,
+		// not inclusive at either end): a run moves with its text, widens with what is typed inside it, keeps out what
+		// is typed at its ends, and goes with its text
+		const runsAfter = (field: string) => {
+			document.editBlock(1, field)
+			return marked()[1]![1]
+		}
+		expect([
+			runsAfter('one TWO three, typed'),
+			runsAfter('TWO one TWO three, typed'),
+			runsAfter('TWO one TWXO three, typed'),
+			runsAfter('TWO one xTWXO three, typed'),
+			runsAfter('TWO one xTWXOx three, typed')
+		]).toEqual([
+			[{ text: 'TWO', index: 0 }],
+			[{ text: 'TWO', index: 1 }],
+			[{ text: 'TWXO', index: 0 }],
+			[{ text: 'TWXO', index: 0 }],
+			[{ text: 'TWXO', index: 0 }]
+		])
+	})
+
+	// editmd has a highlight per changed item (changes.ts:28-56), which its legend counts one by one
+	test('a disk merge that changes two items of a list counts two changes on its highlight', () => {
+		const document = new Document('- one\n- two\n- three\n')
+		document.mergeFromDisk('- ONE\n- two\n- THREE\n')
+		expect(document.highlights.map(({ changes }) => changes)).toEqual([2])
+	})
+
+	// editmd's reveal stops at each change (highlights.ts:131-142); typing that takes one change's text away leaves the
+	// others, and the stops must name runs that are still there
+	test('a reveal stop per change keeps to the runs left after the user types', () => {
+		const document = new Document('- one\n- two\n- three\n')
+		document.mergeFromDisk('- ONE\n- two\n- THREE\n')
+		expect(document.highlights.map(({ firsts }) => firsts)).toEqual([[0, 1]])
+
+		document.editBlock(0, '- \n- two\n- THREE')
+
+		const [highlight] = document.highlights
+		expect(highlight?.firsts?.map((first) => highlight.runs?.[first]?.text) ?? []).not.toContain(
+			undefined
+		)
+	})
+
+	// a new item keeps its whole-item mark through typing, as editmd's node decoration maps with its node
+	test('a new item’s whole mark, and the gap of an item taken away, stay on a Block the user types in', () => {
+		const document = new Document('- a\n- b\n- c\n')
+		document.mergeFromDisk('- a\n- new\n- c\n- d\n')
+		document.editBlock(0, '- a, typed\n- new\n- c\n- d')
+		expect(document.highlights.map(({ runs, gaps }) => [runs, gaps ?? null])).toEqual([
+			[
+				[
+					{ text: 'new', index: 0 },
+					// the second `d` now, after `typed`
+					{ text: 'd', index: 1, whole: true }
+				],
+				null
+			]
+		])
+
+		const removing = new Document('- a\n- b\n- c\n')
+		removing.mergeFromDisk('- a\n- c\n')
+		removing.editBlock(0, '- a c\n- c')
+		expect(removing.highlights.map(({ gaps }) => gaps)).toEqual([
+			// the `c` the gap sits before is now the second in the Block
+			[{ text: 'b', before: { text: 'c', index: 1 } }]
+		])
+	})
+
+	// once the user deletes the changed text, nothing of the Block is marked, as editmd's decoration goes with its text
+	test('a Block whose changed text the user deleted is no longer highlighted', () => {
+		const document = new Document('one two three\n')
+		document.mergeFromDisk('one TWO three\n')
+		document.editBlock(0, 'one  three')
+		expect(document.highlights).toEqual([])
 	})
 
 	// editmd's "Deleted by" marker for text taken away inside a block carries that text (highlights.ts:189-219), cut
@@ -160,7 +333,7 @@ describe('Document', () => {
 		)
 	})
 
-	// 👍 to 👎 on disk came in as two U+FFFD and left the Document dirty, so the autosave wrote them
+	// 👍 to 👎 on disk must not come in as two U+FFFD, which would leave the Document dirty for the autosave to write
 	test('an emoji changed on disk merges whole and leaves the Document clean', () => {
 		const document = new Document('Status: 👍\n\nrest\n')
 		document.mergeFromDisk('Status: 👎\n\nrest\n')
@@ -219,7 +392,7 @@ describe('Document', () => {
 		expect(document.highlights).toEqual([])
 	})
 
-	// the user's report: typing in an open Block while an outside write removes or adds a Block above it lost the typing
+	// typing in an open Block survives an outside write that removes or adds a Block above it
 	test('an open Edit session keeps its typing when a disk merge removes or adds a Block above it', () => {
 		const run = (theirs: string) => {
 			const document = new Document('# Title\n\nFirst paragraph.\n\nSecond paragraph.\n')
@@ -387,6 +560,15 @@ describe('Document', () => {
 			expect(document.highlights).toEqual([])
 		})
 
+		// editmd's tooltip names a removed node by its text, or by its type when it has none (changes.ts:95-98)
+		test('a Deletion’s text is what the removed Blocks painted, a Block with no text named by its kind', () => {
+			const document = new Document('one\n\n## **Two**\n\n---\n\n- a\n- b\n\nlast\n')
+
+			document.mergeFromDisk('one\n\nlast\n', claude, 1)
+
+			expect(document.deletions.map(({ text }) => text)).toEqual(['Two\n(hr)\nab'])
+		})
+
 		test('a removed Block paired with a new one is a change; only the Blocks past the pairs are a Deletion', () => {
 			const document = new Document('# A\n\none\n\ntwo\n\nthree\n')
 
@@ -483,7 +665,7 @@ describe('Document', () => {
 		expect(document.isDirty).toBe(true)
 	})
 
-	// the user's bug: an outside change to the Block being typed in did not show in its field, as editmd shows it live
+	// editmd shows an outside change to the Block being typed in live, so its field is handed the change
 	test('an outside change to the open Block is handed to its field with the typing kept, and typing goes on after', () => {
 		const document = new Document('# Title\n\nFirst paragraph.\n')
 		const session = document.openEdit(1)
@@ -543,7 +725,7 @@ describe('Document', () => {
 		])
 	})
 
-	// through `start`, a caret right where the outside text came in moved after it
+	// mapped through `start`, a caret right where the outside text came in would move after it
 	test('the field’s caret goes through the outside change and stays before text that came in at it', () => {
 		const document = new Document('# Doc\n\none two three\n')
 		const session = document.openEdit(1)
@@ -555,6 +737,18 @@ describe('Document', () => {
 			caretThrough(edits, 3),
 			caretThrough([{ start: 0, end: 0, insert: 'ab' }], 2)
 		]).toEqual([14, 3, 4])
+	})
+
+	// a Format command's own syntax put in right at the caret goes before it, as ProseMirror maps a cursor (assoc 1):
+	// Heading 2 with the caret at a Block's start leaves typing after `## `
+	test('the caret goes past syntax a command puts in right at it, and stays on its text otherwise', () => {
+		const heading = [{ start: 0, end: 0, insert: '## ' }]
+		const indent = [{ start: 4, end: 4, insert: '  ' }]
+		expect([
+			caretPastInsertions(heading, 0),
+			caretPastInsertions(heading, 3),
+			caretPastInsertions(indent, 7)
+		]).toEqual([3, 6, 9])
 	})
 
 	// a fence typed into a Block and left open made every later Block code, painted and saved so;
@@ -575,12 +769,18 @@ describe('Document', () => {
 		const field = source.openSourceEdit()
 		field.update('```\nin source mode\n')
 		field.close()
+		// a field that already ends with its line's newline gets the fence right after it
+		const ended = new Document('Para one.\n\nPara two.\n')
+		const typed = ended.openEdit(0)
+		typed.update('```\nx\n')
+		typed.close()
 
-		expect([closed, document.text, fenced.text, source.text]).toEqual([
+		expect([closed, document.text, fenced.text, source.text, ended.text]).toEqual([
 			'```js\nlet a = 1\n```\n\nPara two.\n',
 			'Para one.\n\nPara two.\n',
 			'~~~~\nx\n~~~~\n',
-			'```\nin source mode\n'
+			'```\nin source mode\n',
+			'```\nx\n```\n\nPara two.\n'
 		])
 	})
 

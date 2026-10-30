@@ -74,6 +74,22 @@ export function diff<T>(
 	return hunks
 }
 
+/** The common start and end of `a` and `b`: they differ only in `a[start, aEnd)` and `b[start, bEnd)`. */
+export function commonEnds<T>(
+	a: ArrayLike<T>,
+	b: ArrayLike<T>
+): { start: number; aEnd: number; bEnd: number } {
+	let start = 0
+	while (start < a.length && start < b.length && a[start] === b[start]) start++
+	let aEnd = a.length
+	let bEnd = b.length
+	while (aEnd > start && bEnd > start && a[aEnd - 1] === b[bEnd - 1]) {
+		aEnd--
+		bEnd--
+	}
+	return { start, aEnd, bEnd }
+}
+
 /** Split text into lines, each keeping its line break, so joining restores it. */
 export function lines(text: string): string[] {
 	return text.match(/[^\n]*\n|[^\n]+$/g) ?? []

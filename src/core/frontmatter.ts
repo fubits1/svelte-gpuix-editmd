@@ -14,8 +14,8 @@ export function splitFrontmatter(text: string): { frontmatter: string; body: str
 
 export function joinFrontmatter(frontmatter: string, body: string): string {
 	if (!frontmatter) return body
-	const fm = frontmatter.endsWith('\n') ? frontmatter : frontmatter + '\n'
-	return body.trim() === '' ? fm : fm + '\n' + body.replace(/^\n+/, '')
+	const withNewline = frontmatter.endsWith('\n') ? frontmatter : frontmatter + '\n'
+	return body.trim() === '' ? withNewline : withNewline + '\n' + body.replace(/^\n+/, '')
 }
 
 /** Where the caret goes after `before` became `after`: the end of what changed. */
@@ -84,7 +84,7 @@ export class FrontmatterHistory {
 		return new Y.UndoManager(this.#ydoc.getText(), { trackedOrigins: new Set([USER]) })
 	}
 
-	#step(apply: () => unknown): number | null {
+	#step(apply: () => ReturnType<Y.UndoManager['undo']>): number | null {
 		const before = this.#value
 		if (!apply()) return null
 		this.#value = this.#ytext.toString()

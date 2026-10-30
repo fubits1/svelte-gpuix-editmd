@@ -16,6 +16,7 @@ export type Command =
 	| 'undo'
 	| 'redo'
 	| 'copy'
+	| 'paste'
 	| 'pasteAndMatchStyle'
 	| 'find'
 	| 'findNext'
@@ -66,6 +67,8 @@ const COMMANDS: Record<string, Command> = {
 	y: 'redo',
 	// Edit > Copy: a focused field copies its own selection; outside one, the painted text's selection is copied
 	c: 'copy',
+	// Edit > Paste: a focused field pastes on its own; with none, editmd's page pastes at its caret
+	v: 'paste',
 	// Edit > Paste and Match Style, ⌥⇧⌘V (MainMenu.swift): a focused field takes it; with none it is greyed, as Paste
 	'shift-alt-v': 'pasteAndMatchStyle',
 	f: 'find',

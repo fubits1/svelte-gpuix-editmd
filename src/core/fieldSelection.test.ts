@@ -3,6 +3,8 @@ import {
 	applyKeys,
 	caretKeys,
 	type FieldState,
+	lineEndsOf,
+	selectKeys,
 	selectionCandidates,
 	settleSelection,
 	takesMarks,
@@ -10,7 +12,8 @@ import {
 } from './fieldSelection.ts'
 
 // GPUI's field moves one character per arrow, an emoji included (measured headless: `x😀yéz`,
-// right right Z gives `x😀Zyéz`); the model and the keys counted UTF-16 units, so unbolding `**😀**` cut a space
+// right right Z gives `x😀Zyéz`), so the model and the keys count characters: counting UTF-16 units makes unbolding
+// `**😀**` cut a space
 describe('characters, not UTF-16 units', () => {
 	test('an arrow, delete and backspace step over a whole character', () => {
 		const at = (text: string, keys: string) => applyKeys({ text, anchor: 0, focus: 0 }, keys).text
@@ -162,6 +165,28 @@ describe('caretKeys', () => {
 
 // what editmd's Format > Bold, Italic, Strikethrough and Inline Code write (Milkdown toggles, serialized with
 // strong `**`, emphasis `_`, editor.ts:82-99); measured in editmd's own editor
+describe('selectKeys', () => {
+	test('selects the range from any caret, an emoji one step', () => {
+		const text = 'one x😀y two'
+		const range = { start: 4, end: 8 }
+		expect(applyKeys({ text, anchor: 12, focus: 12 }, selectKeys(text, range))).toEqual({
+			text,
+			anchor: 4,
+			focus: 8
+		})
+	})
+})
+
+describe('lineEndsOf', () => {
+	test('each line ends where its line break is, the last at the end of the source', () => {
+		expect([lineEndsOf('a\nbc\n'), lineEndsOf('one'), lineEndsOf('')]).toEqual([
+			[1, 4, 5],
+			[3],
+			[0]
+		])
+	})
+})
+
 describe('toggleInlineKeys', () => {
 	test('wraps the selection in the format’s marks and keeps it selected', () => {
 		const state = field('one two three', 'two')
@@ -218,6 +243,83 @@ describe('toggleInlineKeys', () => {
 		expect(after(caret, `${toggleInlineKeys(caret, 'bold')} x`)).toEqual({
 			text: 'one **x**',
 			selected: ''
+		})
+	})
+
+	// editmd's toggleInlineCodeCommand refuses an empty selection (preset-commonmark mark/inline-code.ts:66)
+	test('Inline Code with nothing selected changes nothing, even inside an empty pair of backticks', () => {
+		const caret = field('one ', '', 4)
+		const inPair = field('one ``', '', 5)
+		expect([toggleInlineKeys(caret, 'code'), toggleInlineKeys(inPair, 'code')]).toEqual(['', ''])
+	})
+
+	// editmd's toggleMark takes the mark off the whole selection when it holds the mark anywhere, and the marked text
+	// outside the selection keeps it (prosemirror-commands toggleMark, `rangeHasMark` then `removeMark`); each case is
+	// editmd's own result (e-inline-format)
+	test('a selection that crosses marks takes them off where it covers them, the rest stays marked', () => {
+		const cases = [
+			[field('one **two three** four', 'two'), 'bold'],
+			[field('one **two** three', 'one **tw'), 'bold'],
+			[field('one _two_ three', 'e _tw'), 'italic'],
+			[field('a ~~b~~ c', 'a ~~b~~ c'), 'strikethrough'],
+			[field('x `y`', 'x `y`'), 'code'],
+			[field('a `b` c', 'a `b` c'), 'code']
+		] as const
+		expect(cases.map(([state, format]) => after(state, toggleInlineKeys(state, format)))).toEqual([
+			{ text: 'one two **three** four', selected: 'two' },
+			{ text: 'one tw**o** three', selected: 'one tw' },
+			{ text: 'one tw_o_ three', selected: 'e tw' },
+			{ text: 'a b c', selected: 'a b c' },
+			{ text: 'x y', selected: 'x y' },
+			{ text: 'a b c', selected: 'a b c' }
+		])
+	})
+
+	// toggleMark's removeMark leaves the marked text before the selection marked too, its closing mark after its text
+	test('Bold off the end of a bold run keeps the start of the run bold', () => {
+		const state = field('**two three**', 'three')
+		expect(after(state, toggleInlineKeys(state, 'bold'))).toEqual({
+			text: '**two** three',
+			selected: 'three'
+		})
+	})
+
+	test('a selection of only spaces takes no marks', () => {
+		expect(toggleInlineKeys(field('one   two', '   '), 'bold')).toBe('')
+	})
+
+	// a `*` with a space after it opens nothing (CommonMark's flanking rule), so a bullet pairs with no mark
+	test('a list bullet is not taken for a mark', () => {
+		const state = field('* a *b*', 'b')
+		expect(after(state, toggleInlineKeys(state, 'italic'))).toEqual({
+			text: '* a b',
+			selected: 'b'
+		})
+	})
+
+	// an escaped `\*` is text, and a `*` with a space before it closes nothing (CommonMark), so neither pairs as italic
+	test('an escaped mark or one that cannot close is not taken for italic', () => {
+		const escaped = field('a \\*b\\* c', 'b')
+		const open = field('*a *', 'a')
+		expect([
+			after(escaped, toggleInlineKeys(escaped, 'italic')).text,
+			after(open, toggleInlineKeys(open, 'italic')).text
+		]).toEqual(['a \\*_b_\\* c', '*_a_ *'])
+	})
+
+	// `_` inside a word is no mark (CommonMark's flanking rule): Italic there must not take a name's underscores
+	test('underscores inside a word are not taken for italic marks', () => {
+		const state = field('snake_case_name', 'case')
+		const { text } = after(state, toggleInlineKeys(state, 'italic'))
+		expect([text.startsWith('snake_'), text.endsWith('_name')]).toEqual([true, true])
+	})
+
+	// editmd's Inline Code takes every other mark off the selection before it marks it (inline-code.ts:76-86)
+	test('Inline Code takes the other marks off what it marks', () => {
+		const state = field('one **two** three', '**two**')
+		expect(after(state, toggleInlineKeys(state, 'code'))).toEqual({
+			text: 'one `two` three',
+			selected: 'two'
 		})
 	})
 

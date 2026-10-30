@@ -1,7 +1,7 @@
 /** the signals that end an editor from outside: `kill`, Ctrl-C in its terminal, the terminal closing */
 const SIGNALS = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const
 
-type SignalTarget = { on(signal: keyof typeof SIGNALS, listener: () => void): unknown }
+type SignalTarget = { on(signal: keyof typeof SIGNALS, listener: () => void): void }
 
 /**
  * ends the process through `exit` on SIGTERM, SIGINT and SIGHUP, with the shell's code (128 + the signal), so the

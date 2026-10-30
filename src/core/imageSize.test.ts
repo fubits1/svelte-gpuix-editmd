@@ -62,6 +62,40 @@ describe('imageSize', () => {
 		expect(imageSize(jpeg)).toEqual({ width: 600, height: 400 })
 	})
 
+	// WebKit draws a JPEG turned as its EXIF Orientation says (`image-orientation: from-image`), and GPUI turns its
+	// pixels too (measured headless: a 200x100 JPEG tagged 6 painted 1:2 inside a 2:1 box), so 5-8 swap the sides
+	test('JPEG: an EXIF Orientation of 5 to 8, turned a quarter, swaps width and height', () => {
+		const frame = [0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x90, 0x02, 0x58]
+		const exif = (orientation: number, littleEndian: boolean) => [
+			...[0xff, 0xe1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00],
+			...(littleEndian
+				? [0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00]
+				: [0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, 0x00, 0x01]),
+			...(littleEndian
+				? [0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, orientation, 0x00, 0x00, 0x00]
+				: [0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation, 0x00, 0x00]),
+			...[0x00, 0x00, 0x00, 0x00]
+		]
+		const jpeg = (orientation: number, littleEndian = false) =>
+			bytes(0xff, 0xd8, ...exif(orientation, littleEndian), ...frame)
+		// EXIF whose directory lies past the data is read as upright
+		const broken = exif(6, false)
+		broken[17] = 0xff
+		expect([
+			imageSize(jpeg(6)),
+			imageSize(jpeg(8, true)),
+			imageSize(jpeg(3)),
+			imageSize(jpeg(1, true)),
+			imageSize(bytes(0xff, 0xd8, ...broken, ...frame))
+		]).toEqual([
+			{ width: 400, height: 600 },
+			{ width: 400, height: 600 },
+			{ width: 600, height: 400 },
+			{ width: 600, height: 400 },
+			{ width: 600, height: 400 }
+		])
+	})
+
 	test('WebP (VP8X): 24-bit little-endian size minus one', () => {
 		const webp = bytes(
 			0x52,
@@ -96,6 +130,34 @@ describe('imageSize', () => {
 			0x00
 		)
 		expect(imageSize(webp)).toEqual({ width: 640, height: 480 })
+	})
+
+	/** a RIFF WebP file whose first chunk is `fourcc`, `length` bytes long, its body starting at byte 20 */
+	const webpWith = (fourcc: string, length: number) => {
+		const webp = new Uint8Array(length)
+		webp.set(new TextEncoder().encode(`RIFF\0\0\0\0WEBP${fourcc}`))
+		return webp
+	}
+
+	// the lossless bitstream holds width-1 and height-1 in 14 bits each after its 0x2F signature
+	test('WebP (VP8L): 14-bit size minus one after the signature byte', () => {
+		const webp = webpWith('VP8L', 25)
+		webp.set([0x2f, 0x63, 0x40, 0x0c, 0x00], 20)
+		expect(imageSize(webp)).toEqual({ width: 100, height: 50 })
+	})
+
+	// the lossy bitstream's frame header holds width and height in the low 14 bits of the little-endian values at
+	// bytes 26 and 28; the top two bits are a scale, no part of the size
+	test('WebP (VP8): 14-bit little-endian size in the frame header, its scale bits left out', () => {
+		const webp = webpWith('VP8 ', 30)
+		webp.set([0x80, 0xc2, 0xe0, 0x41], 26)
+		expect(imageSize(webp)).toEqual({ width: 640, height: 480 })
+	})
+
+	test('a JPEG with no start-of-frame marker has no size', () => {
+		expect(
+			imageSize(bytes(0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xd9, 0, 0, 0, 0, 0, 0, 0, 0))
+		).toBeNull()
 	})
 
 	// GPUI's <img> decodes SVG, BMP, TIFF and ICO too (`setImage`, @gpuix/native index.d.ts:156-160)
@@ -181,8 +243,8 @@ describe('imageSize', () => {
 		])
 	})
 
-	// the root came after the first 4096 bytes, a commented-out <svg> was read as the root, and a JPEG
-	// with 0xFF fill bytes before a marker gave no size
+	// the root may come after the first 4096 bytes, a commented-out <svg> is not the root, and a JPEG marker
+	// may follow 0xFF fill bytes
 	test('a late root, a commented-out <svg> and JPEG fill bytes', () => {
 		const encode = (text: string) => new TextEncoder().encode(text)
 		const late = encode(`<!--${'x'.repeat(5000)}-->\n<svg width="30" height="20"/>`)

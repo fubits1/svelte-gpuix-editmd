@@ -1,18 +1,9 @@
-import { realpathSync } from 'node:fs'
 import { sep } from 'node:path'
 import type { AgentProcess } from '../core/agentEdits.ts'
 import { listAgentProcesses } from '../host/agentProcesses.ts'
+import { realPathOf } from '../host/files.ts'
 
 export type AgentProcessesOptions = { listAgentProcesses?: () => AgentProcess[] }
-
-/** `path` with its symlinks followed (`/tmp` is `/private/tmp`), or as given when it cannot be resolved */
-function realPathOf(path: string): string {
-	try {
-		return realpathSync(path)
-	} catch {
-		return path
-	}
-}
 
 /**
  * `EDITMD_GPUIX_AGENT_ROOT=<folder>`: only the coding agents working in that folder or below it count as running

@@ -18,7 +18,7 @@ describe('LegendPreference', () => {
 		expect([minimizedLater, new LegendPreference(store).minimized()]).toEqual([true, false])
 	})
 
-	// editmd's `remember` catches a storage error (highlights.ts:318-322); the port's click threw
+	// editmd's `remember` catches a storage error (highlights.ts:318-322); a store that cannot be written must not make the click throw
 	test('a store that cannot be written is ignored, and the store is replaced whole', () => {
 		const blocked = join(directory, 'file-not-folder')
 		writeFileSync(blocked, '')

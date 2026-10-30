@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { saveErrorDescription } from '../core/writeErrors.ts'
 import { saveFailure } from './saveFailure.ts'
 
 /** an error as node:fs throws it, with its errno code */
@@ -26,6 +27,43 @@ describe('saveFailure', () => {
 			title: 'The document “notes.md” could not be saved. There isn’t enough space.',
 			message: 'Remove some files from the volume, and then try again.'
 		})
+	})
+
+	// NSDocument's safe save into a folder that is gone fails with NSFileNoSuchFileError, Err4 (run in Swift:
+	// writeSafely to a missing folder gave "The file “a.md” doesn’t exist."), never node's message with the temp path
+	test('a folder that no longer exists, in Foundation’s words for NSFileNoSuchFileError', () => {
+		expect([
+			saveFailure('notes.md', fsError('ENOENT')),
+			saveErrorDescription('/gone/notes.md', fsError('ENOENT'))
+		]).toEqual([
+			{ title: 'The document “notes.md” could not be saved. The file doesn’t exist.', message: '' },
+			'The file “notes.md” doesn’t exist.'
+		])
+	})
+
+	// Not Saved's tooltip is the error's localizedDescription (EditorWindowController.swift:358-360): Foundation's sentence
+	// for a read-only volume (Err642), the error's own message for an error with no errno code
+	test('the Not Saved tooltip says Foundation’s sentence for a read-only volume, and an uncoded error’s message', () => {
+		expect([
+			saveErrorDescription('/Volumes/Disc/notes.md', fsError('EROFS')),
+			saveErrorDescription('/x/notes.md', new Error('the disk went away'))
+		]).toEqual([
+			'You can’t save the file “notes.md” because the volume is read only.',
+			'the disk went away'
+		])
+	})
+
+	// Foundation's NSFileWriteUnknownError, Err512, which NSDocument gave for a name too long (ENAMETOOLONG) and which
+	// has no failure reason (run in Swift: "The file “name.md” couldn’t be saved in the folder “folder”."), never
+	// node's message with the hidden copy's path
+	test('a write error Foundation has no sentence of its own for, in its words for NSFileWriteUnknownError', () => {
+		expect([
+			saveFailure('notes.md', fsError('ENAMETOOLONG')),
+			saveErrorDescription('/x/notes.md', fsError('EIO'))
+		]).toEqual([
+			{ title: 'The document “notes.md” could not be saved.', message: '' },
+			'The file “notes.md” couldn’t be saved in the folder “x”.'
+		])
 	})
 
 	// the port's ChangedOnDiskError names the path; editmd's error says this (Document.swift:152-154)

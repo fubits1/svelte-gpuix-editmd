@@ -28,6 +28,12 @@ const WRITE_ERRORS: Record<string, WriteError> = {
 		suggestion: 'Try saving the file to another volume.',
 		describe: (file) => `You can’t save the file “${file}” because the volume is read only.`
 	},
+	// Err4, NSFileNoSuchFileError: what NSDocument's safe save gives when the folder is gone
+	ENOENT: {
+		reason: 'The file doesn’t exist.',
+		suggestion: '',
+		describe: (file) => `The file “${file}” doesn’t exist.`
+	},
 	// Err640, NSFileWriteOutOfSpaceError
 	ENOSPC: {
 		reason: 'There isn’t enough space.',
@@ -36,10 +42,17 @@ const WRITE_ERRORS: Record<string, WriteError> = {
 	}
 }
 
-/** the Foundation words for `error`, by the errno code node:fs puts on it; undefined for any other error */
+/** Err512, NSFileWriteUnknownError: Foundation's words for any other write error, with no failure reason */
+const UNKNOWN: WriteError = {
+	reason: '',
+	suggestion: '',
+	describe: (file, folder) => `The file “${file}” couldn’t be saved in the folder “${folder}”.`
+}
+
+/** the Foundation words for `error`, by the errno code node:fs puts on it; undefined for an error with no code */
 export function writeErrorOf(error: Error): WriteError | undefined {
-	const code = 'code' in error && typeof error.code === 'string' ? error.code : ''
-	return WRITE_ERRORS[code]
+	if (!('code' in error) || typeof error.code !== 'string') return undefined
+	return WRITE_ERRORS[error.code] ?? UNKNOWN
 }
 
 /**

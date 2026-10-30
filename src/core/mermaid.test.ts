@@ -26,8 +26,8 @@ describe('renderMermaid', () => {
 		expect(result.svg).toMatch(/<svg[^>]* font-family="Helvetica"/)
 	})
 
-	// the font rewrite touched every match in the SVG, labels included: a label reading `sans-serif`
-	// became `Helvetica`, and one reading `font: 12px sans-serif` lost its text
+	// the font rewrite touches styles only: a label reading `sans-serif` stays as written, and one reading
+	// `font: 12px sans-serif` keeps its text
 	test('labels keep their text, whatever font names they spell', () => {
 		const result = renderMermaid(
 			'flowchart LR\n  A["sans-serif"] --> B["font: 12px sans-serif"]',
@@ -42,8 +42,8 @@ describe('renderMermaid', () => {
 		expect(labels).toEqual(expect.arrayContaining(['sans-serif', 'font: 12px sans-serif']))
 	})
 
-	// the variable rewrite ran over label text too: `var(--pele-fg)` became a colour, `--_s:red` was read as
-	// a declaration and broke the SVG
+	// the variable rewrite touches styles only: a label reading `var(--pele-fg)` stays text, and `--_s:red` in a
+	// label is no declaration and leaves the SVG whole
 	test('labels that spell CSS variables keep their text', () => {
 		const result = renderMermaid('flowchart LR\n  A["var(--pele-fg)"] --> B["--_s:red"]', palette)
 

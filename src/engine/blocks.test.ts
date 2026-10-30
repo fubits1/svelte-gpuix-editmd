@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
-import { parseBlocks } from './blocks.ts'
+import { type Block, parseBlocks } from './blocks.ts'
 
 const corpus: Record<string, string> = JSON.parse(
 	readFileSync('test/fixtures/editmd/corpus.json', 'utf8')
@@ -25,6 +25,38 @@ describe('parseBlocks', () => {
 		expect(parseBlocks(text).map(({ kind, start, end }) => ({ kind, start, end }))).toEqual([
 			{ kind: 'heading', start: 0, end: 7 },
 			{ kind: 'paragraph', start: 9, end: 19 }
+		])
+	})
+
+	// editmd paints a heading, a code block or a list inside a quote or a list item as it paints one at the top level
+	// (style.css applies to every `.markdown-body` element); the port paints each child through its own View, so the
+	// container carries its children as Blocks with Document offsets
+	test('a quote and a list item carry their children as Blocks, offsets into the Document', () => {
+		const quote = '> # Title\n>\n> ```js\n> x\n> ```\n'
+		const list = '- a\n\n  ```\n  x\n  ```\n'
+		const [quoted] = parseBlocks(quote)
+		const [listed] = parseBlocks(list)
+		const slices = (text: string, blocks: readonly Block[] | undefined) =>
+			(blocks ?? []).map((block) => [block.kind, text.slice(block.start, block.end)])
+		expect([slices(quote, quoted?.children), slices(list, listed?.items?.[0]?.children)]).toEqual([
+			[
+				['heading', '# Title'],
+				['code', '```js\n> x\n> ```']
+			],
+			[
+				['paragraph', 'a'],
+				['code', '```\n  x\n  ```']
+			]
+		])
+	})
+
+	// editmd's task checkbox inside a quote ticks as any other (its click handler is on every task item); the quote
+	// lists the tasks inside it, so the page lets their boxes take the click
+	test('a quote lists the tasks of the lists inside it, nested quotes too', () => {
+		const text = '> - [ ] a\n> > - [x] b\n'
+		expect(parseBlocks(text)[0]?.tasks?.map(({ mark, checked }) => [text[mark], checked])).toEqual([
+			[' ', false],
+			['x', true]
 		])
 	})
 

@@ -3,6 +3,8 @@ import {
 	emptyLinkThemeFor,
 	headingThemeFor,
 	heldLinkThemeFor,
+	inlineHtmlThemeFor,
+	linkThemeFor,
 	listItemThemeFor,
 	mermaidPaletteFor,
 	mutedThemeFor,
@@ -274,6 +276,35 @@ describe('emptyLinkThemeFor', () => {
 	})
 })
 
+// editmd paints its window chrome in AppKit's colours: Find's no-match count in systemRed (EditorWindowController.swift:301),
+// the save label in secondaryLabelColor and Not Saved in systemRed (:358); values read in Swift on this macOS, sRGB
+test('the chrome takes AppKit’s systemRed and secondaryLabelColor, light and dark', () => {
+	const chrome = (appearance: 'light' | 'dark') => {
+		const palette = paletteFor(appearance)
+		return [palette['system-red'], palette['secondary-label']]
+	}
+	expect([chrome('light'), chrome('dark')]).toEqual([
+		['#ff383c', '#0000007f'],
+		['#ff4245', '#ffffff8c']
+	])
+})
+
+describe('inlineHtmlThemeFor', () => {
+	test('a Block with inline HTML paints code muted with no wash, as editmd’s `span[data-type="html"]`', () => {
+		const theme = textThemeFor('light')
+		expect(inlineHtmlThemeFor(theme, false)).toEqual({
+			...theme,
+			codeWash: '#00000000',
+			codeText: EDITMD.light.muted
+		})
+	})
+
+	test('a Block with inline code of its own keeps the theme, so its code keeps editmd’s pill', () => {
+		const theme = textThemeFor('dark')
+		expect(inlineHtmlThemeFor(theme, true)).toBe(theme)
+	})
+})
+
 describe('agent change washes', () => {
 	test('an Agent’s changed text takes editmd’s `.agent-change` wash, its colour at 18%', () => {
 		const palette = paletteFor('dark')
@@ -289,6 +320,23 @@ describe('heldLinkThemeFor', () => {
 	test('while ⌘ is held a link’s underline takes the link’s colour, as editmd’s `body.cmd-down a` currentColor', () => {
 		const theme = textThemeFor('dark')
 		expect(heldLinkThemeFor(theme)).toEqual({ ...theme, textMuted: EDITMD.dark.text })
+	})
+})
+
+// native <markdown> paints a link's underline in `textMuted` (measured headless: `#rrggbb59` paints the accent at 35%)
+describe('linkThemeFor', () => {
+	test('a link’s underline is the accent at 35%, and the accent while ⌘ is held, in muted text too', () => {
+		const dark = textThemeFor('dark')
+		const muted = mutedThemeFor(textThemeFor('light'))
+		expect([
+			linkThemeFor(dark, false),
+			linkThemeFor(dark, true).textMuted,
+			linkThemeFor(muted, false).textMuted
+		]).toEqual([
+			{ ...dark, textMuted: `${EDITMD.dark.accent}59` },
+			EDITMD.dark.accent,
+			`${EDITMD.light.accent}59`
+		])
 	})
 })
 
@@ -398,10 +446,8 @@ describe('sizeTokensFor', () => {
 			'size-frontmatter-radius': '8px',
 			'size-frontmatter-text': '12.5px',
 			'size-frontmatter-line-height': '19.375px',
-			// open, `.frontmatter:focus`'s 2px ring as a border taken off the padding
+			// open, `.frontmatter:focus`'s 2px ring as an outline outside the box
 			'size-frontmatter-focus-ring': '2px',
-			'size-frontmatter-focus-padding-y': '10px',
-			'size-frontmatter-focus-padding-x': '14px',
 			// Source mode's field, `.source { font: 14px/1.6 mono }`
 			'size-source-text': '14px',
 			'size-source-line-height': '22.4px',
@@ -433,7 +479,7 @@ describe('sizeTokensFor', () => {
 			'size-checkbox-left': '3.2px',
 			'size-checkbox-offset': '5.5px',
 			'size-checkbox-radius': '4px',
-			// GPUI's measured text size for text with no size of its own, so zoom 1 paints as before
+			// GPUI's measured text size for text with no size of its own, so zoom 1 paints it at that same 16px
 			'size-list-marker': '16px',
 			'size-images-gap': '8px',
 			'size-image-fallback': '240px',

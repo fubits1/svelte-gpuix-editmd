@@ -7,7 +7,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { get_native } from 'gpuix-svelte'
+import { get_native, type GpuiStyle } from 'gpuix-svelte'
 import {
 	find_test_id,
 	MAX_HEADLESS_HEIGHT,
@@ -54,7 +54,7 @@ function filled(width: number, height: number, hex: string): Pixels {
 }
 
 /** a length the view sets in px, 0 where it sets none */
-const pixelsOf = (value: unknown): number => (typeof value === 'number' ? value : 0)
+const pixelsOf = (value: GpuiStyle[string]): number => (typeof value === 'number' ? value : 0)
 
 /** the page's painted height, settled: images and diagrams take a few frames to size themselves */
 async function settledHeight(contentId: number): Promise<number> {

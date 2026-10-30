@@ -89,7 +89,7 @@ describe('openTextFile', () => {
 		expect(file.save('# Café 😀 again\n')).toBeNull()
 	})
 
-	// a FIFO (or a device) named like text blocked the read for good, freezing the window; the read runs
+	// a FIFO (or a device) named like text would block the read for good and freeze the window; the read runs
 	// in a child process, since a blocked read would stop this test too
 	test('opening a FIFO or a device as a document throws at once', () => {
 		const fifo = join(directory, 'pipe.md')
@@ -105,8 +105,8 @@ describe('openTextFile', () => {
 		expect(JSON.parse(out)).toEqual(['refused', 'refused'])
 	})
 
-	// the copy's name was `.<name>.<pid>.editmd-gpuix`, and a symlink planted there made the save
-	// overwrite the file it pointed to
+	// a symlink planted at a predictable copy name (`.<name>.<pid>.editmd-gpuix`) must not make the save
+	// overwrite the file it points to
 	test('a save never writes through a link someone planted where its copy could go', () => {
 		const folder = mkdtempSync(join(directory, 'planted-'))
 		const path = join(folder, 'doc.md')

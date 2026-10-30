@@ -2,8 +2,8 @@ import { describe, expect, test } from 'vitest'
 import fc from 'fast-check'
 import { mergeText, mergeTextMapping } from './merge.ts'
 
-// an edit cut between the two halves of a surrogate pair made Yjs write U+FFFD for each half, so an
-// agent swapping 👍 for 👎 corrupted the file at the next save
+// an edit cut between the two halves of a surrogate pair makes Yjs write U+FFFD for each half, so an
+// agent swapping 👍 for 👎 would corrupt the file at the next save
 describe('characters outside the BMP', () => {
 	test('an emoji swapped for one with the same high surrogate merges whole', () => {
 		expect([
@@ -11,6 +11,11 @@ describe('characters outside the BMP', () => {
 			mergeText('x😀y', 'x😀y, mine', 'x😁y').text,
 			mergeText('a🔴b\n', 'a🔴b, mine\n', 'a🟢b\n').text
 		]).toEqual(['Status: 👎\n\nrest\n', 'x😁y, mine', 'a🟢b, mine\n'])
+	})
+
+	// 😀 is D83D DE00 and 🈀 is D83C DE00, so the common end of the two texts starts inside the pair
+	test('an emoji swapped for one with the same low surrogate merges whole', () => {
+		expect(mergeText('x😀y', 'x😀y, mine', 'x🈀y').text).toBe('x🈀y, mine')
 	})
 
 	test('any text with astral characters merges without U+FFFD', () => {
@@ -88,8 +93,8 @@ describe('mergeText', () => {
 		maxLength: 40
 	})
 
-	// typing right after a word the other side rewrote came out "a  twoONE"; editmd's own editor gives
-	// "a ONE two"
+	// typing right after a word the other side rewrote stays after it: "a ONE two", as editmd's own editor gives,
+	// not "a  twoONE"
 	test('a word rewritten on one side keeps its place before typing right after it on the other', () => {
 		expect([
 			mergeText('a one\n', 'a one two\n', 'a ONE\n').text,

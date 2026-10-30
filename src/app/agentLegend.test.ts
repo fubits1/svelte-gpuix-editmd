@@ -54,6 +54,28 @@ describe('AgentLegend.agents', () => {
 		])
 	})
 
+	// editmd has one highlight per change in a Block, a list's items apart (changes.ts:28-56), and counts each
+	test('a Block with several changes in it counts each of them', () => {
+		const legend = new AgentLegend()
+		const list: Highlight = { author: claude, start: 0, end: 20, at: 0, changes: 3 }
+
+		expect(legend.agents([list, ...highlights([claude, 30, 40])])).toEqual([
+			{ id: 'abc', name: 'Claude · plan', slot: 0, count: 4 }
+		])
+	})
+
+	// editmd takes an Agent's colour at every merge credited to it, one with no visible change too (editor.ts:226 calls
+	// `agents.agent(author)` before `changes()`)
+	test('an Agent seen at a merge with no change keeps its arrival and colour for later ones', () => {
+		const legend = new AgentLegend()
+		legend.see(claude)
+
+		expect(legend.agents(highlights([codex, 0, 5], [claude, 10, 20]))).toEqual([
+			{ id: 'abc', name: 'Claude · plan', slot: 0, count: 1 },
+			{ id: 'def', name: 'Codex', slot: 1, count: 1 }
+		])
+	})
+
 	test('a second Agent of the same name is named apart, as editmd’s `Agents.agent`', () => {
 		const legend = new AgentLegend()
 		const second: AgentAuthor = { id: 'ghi', name: 'Claude · plan' }
@@ -97,20 +119,22 @@ describe('AgentLegend.rename', () => {
 	})
 })
 
-describe('AgentLegend.nextBlock', () => {
+describe('AgentLegend.nextStop', () => {
 	const blocks = [
 		{ start: 0, end: 5 },
 		{ start: 7, end: 12 },
 		{ start: 14, end: 20 },
 		{ start: 22, end: 30 }
 	]
+	const nextBlock = (legend: AgentLegend, ...args: Parameters<AgentLegend['nextStop']>) =>
+		legend.nextStop(...args)?.index ?? null
 
 	test('steps through the Agent’s highlighted Blocks in document order and cycles back to the first', () => {
 		const legend = new AgentLegend()
 		const shown = highlights([claude, 7, 12], [codex, 14, 20], [claude, 22, 30])
 
-		expect([1, 2, 3].map(() => legend.nextBlock('abc', shown, blocks))).toEqual([1, 3, 1])
-		expect(legend.nextBlock('def', shown, blocks)).toBe(2)
+		expect([1, 2, 3].map(() => nextBlock(legend, 'abc', shown, blocks))).toEqual([1, 3, 1])
+		expect(nextBlock(legend, 'def', shown, blocks)).toBe(2)
 	})
 
 	// editmd's `reveal` steps through every highlight of the Agent by where it starts (highlights.ts:131-142)
@@ -140,11 +164,39 @@ describe('AgentLegend.nextBlock', () => {
 		]
 
 		expect(
-			[1, 2, 3, 4].map(() => legend.nextBlock('abc', highlights([claude, 0, 5]), blocks, deletions))
+			[1, 2, 3, 4].map(() =>
+				nextBlock(legend, 'abc', highlights([claude, 0, 5]), blocks, deletions)
+			)
 		).toEqual([0, 2, 3, 0])
 	})
 
+	// editmd's reveal steps through each highlight, one per change: two changed items of one list are two stops
+	test('each change in a Block is a stop of its own, naming the run it starts with', () => {
+		const legend = new AgentLegend()
+		const runs = [
+			{ text: 'ONE', index: 0 },
+			{ text: 'THREE', index: 0 }
+		]
+		const list: Highlight = { author: claude, start: 0, end: 5, at: 0, runs, firsts: [0, 1] }
+		expect([1, 2, 3].map(() => legend.nextStop('abc', [list], blocks)?.run?.text ?? null)).toEqual([
+			'ONE',
+			'THREE',
+			'ONE'
+		])
+	})
+
 	test('an Agent with no highlight left has no Block to show', () => {
-		expect(new AgentLegend().nextBlock('abc', [], blocks)).toBeNull()
+		expect(nextBlock(new AgentLegend(), 'abc', [], blocks)).toBeNull()
+	})
+
+	// editmd's reveal resolves each highlight first and skips one that no longer resolves (highlights.ts:153-178)
+	test('another Agent’s Deletion, a highlight in no Block and a Deletion with no Blocks left are no stops', () => {
+		const legend = new AgentLegend()
+		const others: Deletion[] = [{ author: codex, offset: 13, at: 0, text: 'gone' }]
+		const mine: Deletion[] = [{ author: claude, offset: 0, at: 0, text: 'gone' }]
+		expect([
+			nextBlock(legend, 'abc', highlights([claude, 5, 7]), blocks, others),
+			nextBlock(legend, 'abc', [], [], mine)
+		]).toEqual([null, null])
 	})
 })

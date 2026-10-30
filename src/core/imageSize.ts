@@ -14,8 +14,28 @@ const uint32BigEndian = (data: Uint8Array, at: number) =>
 const isStartOfFrame = (marker: number) =>
 	marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
 
+/** `Exif\0\0`, which opens an APP1 segment holding EXIF data */
+const EXIF = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00]
+
+/** the Orientation (274) of the TIFF structure EXIF data holds from `start`, 1 (upright) when it has none */
+function exifOrientation(data: Uint8Array, start: number): number {
+	const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+	const littleEndian = data[start] === 0x49
+	const directory = start + view.getUint32(start + 4, littleEndian)
+	for (let entry = 0; entry < view.getUint16(directory, littleEndian); entry++) {
+		const at = directory + 2 + entry * 12
+		if (view.getUint16(at, littleEndian) === 274) return view.getUint16(at + 8, littleEndian)
+	}
+	return 1
+}
+
+/**
+ * the size a JPEG is drawn at: its frame's, with the sides swapped when its EXIF Orientation turns it a quarter
+ * (5 to 8), as WebKit draws it (`image-orientation: from-image`) and GPUI turns its pixels
+ */
 function jpegSize(data: Uint8Array): Size | null {
 	let at = 2
+	let orientation = 1
 	// a start-of-frame segment is read up to `at + 8` (height at +5, width at +7)
 	while (at + 8 < data.length) {
 		if (data[at] !== 0xff) return null
@@ -25,8 +45,19 @@ function jpegSize(data: Uint8Array): Size | null {
 			continue
 		}
 		const marker = data[at + 1]!
-		if (isStartOfFrame(marker))
-			return { width: uint16BigEndian(data, at + 7), height: uint16BigEndian(data, at + 5) }
+		if (isStartOfFrame(marker)) {
+			const [width, height] = [uint16BigEndian(data, at + 7), uint16BigEndian(data, at + 5)]
+			return orientation >= 5 && orientation <= 8
+				? { width: height, height: width }
+				: { width, height }
+		}
+		if (marker === 0xe1 && startsWith(data, EXIF, at + 4)) {
+			try {
+				orientation = exifOrientation(data, at + 10)
+			} catch {
+				// EXIF cut short reads past the data: the image stays upright
+			}
+		}
 		at += 2 + uint16BigEndian(data, at + 2)
 	}
 	return null

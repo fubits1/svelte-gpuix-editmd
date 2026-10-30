@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 const LIMIT = 10
@@ -11,11 +11,12 @@ export class RecentFiles {
 		this.#store = store
 	}
 
+	/** the recent files newest first, a file that no longer exists left out, as NSDocumentController does */
 	list(): string[] {
 		try {
 			const paths: unknown = JSON.parse(readFileSync(this.#store, 'utf8'))
 			return Array.isArray(paths)
-				? paths.filter((path): path is string => typeof path === 'string')
+				? paths.filter((path): path is string => typeof path === 'string' && existsSync(path))
 				: []
 		} catch {
 			return []

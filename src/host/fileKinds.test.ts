@@ -58,7 +58,7 @@ describe('fileKinds', () => {
 		])
 	})
 
-	// a link named `.md` to a FIFO, a device or a program was taken as markdown by its own name; editmd
+	// a link named `.md` to a FIFO, a device or a program is not markdown by its own name; editmd
 	// reads the type of what it points to and reveals all three (named-pipe, character-special, unix-executable)
 	test('a link named like markdown is judged by what it points to', () => {
 		const fifo = join(folder, 'target-pipe')

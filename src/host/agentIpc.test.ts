@@ -13,7 +13,14 @@ import { connect, createServer, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test, vi } from 'vitest'
 import type { AgentEditReport } from '../core/agentEdits.ts'
-import { focusWindowFor, greetPeers, listenForReports, sendRename, sendReport } from './agentIpc.ts'
+import {
+	bringAllToFront,
+	focusWindowFor,
+	greetPeers,
+	listenForReports,
+	sendRename,
+	sendReport
+} from './agentIpc.ts'
 
 // unix socket paths are limited to ~104 bytes on macOS, so keep the folder short
 const directory = mkdtempSync(join(tmpdir(), 'eg-ipc-'))
@@ -55,8 +62,8 @@ describe('agent report IPC', () => {
 		)
 	})
 
-	// opening a file another window already has made a second window on it, where editmd brings the
-	// document's window forward
+	// opening a file another window already has brings that window forward, as editmd does, instead of
+	// opening a second window on it
 	test('a window that has the file comes forward and says so; none has it, and the opener goes ahead', async () => {
 		const folder = mkdtempSync(join(directory, 'f-'))
 		const focused: string[] = []
@@ -74,6 +81,34 @@ describe('agent report IPC', () => {
 		expect([found, missing, focused]).toEqual([true, false, ['owner']])
 		await owner()
 		await other()
+	})
+
+	// editmd's Window > Bring All to Front raises every window of its one process (MainMenu.swift:121, arrangeInFront);
+	// here every window is a process of its own, so the others hear it on their sockets
+	test('Bring All to Front brings every other window forward, the sender left out', async () => {
+		const folder = mkdtempSync(join(directory, 'a-'))
+		const focused: string[] = []
+		const handler = (name: string) => ({ owns: () => false, focus: () => focused.push(name) })
+		const sender = await listenForReports(folder, () => {}, undefined, undefined, handler('sender'))
+		const first = await listenForReports(folder, () => {}, undefined, undefined, handler('first'))
+		const second = await listenForReports(folder, () => {}, undefined, undefined, handler('second'))
+
+		await bringAllToFront(folder, sender.socket)
+		expect(focused.toSorted()).toEqual(['first', 'second'])
+		for (const close of [sender, first, second]) await close()
+	})
+
+	// a newer window may send a kind this one does not know: it must not be taken for a Report
+	test('a message of a kind the window does not know is dropped, not taken as a Report', async () => {
+		const folder = mkdtempSync(join(directory, 'k-'))
+		const reports = vi.fn()
+		const close = await listenForReports(folder, reports)
+		await new Promise<void>((done) => {
+			const socket = connect(close.socket, () => socket.end(JSON.stringify({ kind: 'later' })))
+			socket.on('close', () => done())
+		})
+		expect(reports).not.toHaveBeenCalled()
+		await close()
 	})
 
 	test('every listening editor receives a report sent to the folder', async () => {

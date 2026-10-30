@@ -8,7 +8,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { realpathSync, statSync } from 'node:fs'
-import { isImagePath, isTextPath } from '../core/fileTypes.ts'
+import { extensionOf, isImagePath, isMarkdownPath, isTextPath } from '../core/fileTypes.ts'
 import { describeOnDisk, type LinkTarget } from '../core/linkPolicy.ts'
 import { withUtf8Locale } from './locale.ts'
 
@@ -60,18 +60,6 @@ function ask(mode: 'disk' | 'name', path: string): Kind | null {
 	}
 }
 
-/**
- * the extensions editmd's Info.plist declares as net.daringfireball.markdown, conforming to public.plain-text
- * (Info.plist:85-110): inside editmd they are text, where macOS alone may give them a dynamic type
- */
-const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd', 'mkdn'])
-
-const extensionOf = (path: string) => {
-	const name = path.slice(path.lastIndexOf('/') + 1)
-	const dot = name.lastIndexOf('.')
-	return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
-}
-
 /** a type's conformance follows from its extension alone, so each extension is asked about once */
 const byExtension = new Map<string, Kind | null>()
 
@@ -100,7 +88,7 @@ export function describeFile(path: string): LinkTarget | null {
 function isMarkdownFile(path: string): boolean {
 	try {
 		const target = realpathSync(path)
-		return statSync(target).isFile() && MARKDOWN_EXTENSIONS.has(extensionOf(target))
+		return statSync(target).isFile() && isMarkdownPath(target)
 	} catch {
 		return false
 	}
@@ -108,7 +96,7 @@ function isMarkdownFile(path: string): boolean {
 
 /** whether a file named `path` is text by its extension's type */
 export function isTextName(path: string): boolean {
-	if (MARKDOWN_EXTENSIONS.has(extensionOf(path))) return true
+	if (isMarkdownPath(path)) return true
 	return nameKind(path)?.text ?? isTextPath(path)
 }
 

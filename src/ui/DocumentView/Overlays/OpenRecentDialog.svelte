@@ -2,12 +2,14 @@
   @component
   File > Open Recent in place of editmd's submenu, which needs the menu bar gpuix cannot extend (gap G2): the recent
   files, newest first, each by name with its folder, and Clear Menu below them, as the submenu ends. A click on a file
-  opens it and Escape closes the list. AppKit chrome in editmd, so it does not zoom; render it inside `Portal`, so it
-  paints over the Document.
+  opens it, Up and Down move the highlight over the files and Clear Menu and Return chooses the highlighted one, as in
+  the submenu, and Escape closes the list. AppKit chrome in editmd, so it does not zoom; render it inside `Portal`, so
+  it paints over the Document.
 -->
 <script lang="ts">
-	import { on_window_key } from 'gpuix-svelte'
+	import { type GpuixEvent, on_window_key } from 'gpuix-svelte'
 	import { basename, dirname } from 'node:path'
+	import { moveSelection } from '../../../app/commandPalette.ts'
 
 	let {
 		paths,
@@ -25,11 +27,26 @@
 		close: () => void
 	} = $props()
 
-	$effect(() =>
-		on_window_key('keydown', (event) => {
-			if (event.key === 'escape') close()
-		})
-	)
+	/** the highlighted row, the files then Clear Menu, -1 for none: transient key state, so it lives here */
+	let highlighted = $state(-1)
+	/** every row takes the highlight, Clear Menu last */
+	const rows = $derived(Array.from({ length: paths.length + 1 }, () => ({ enabled: true })))
+
+	/** Return on the highlighted row: a file opens, Clear Menu empties the list */
+	function chooseHighlighted(): void {
+		const path = paths[highlighted]
+		if (path !== undefined) onopen(path)
+		else if (highlighted === paths.length) onclear()
+	}
+
+	function pressKey(event: GpuixEvent): void {
+		if (event.key === 'escape') close()
+		else if (event.key === 'down') highlighted = moveSelection(rows, highlighted, 1)
+		else if (event.key === 'up') highlighted = moveSelection(rows, highlighted, -1)
+		else if (event.key === 'enter') chooseHighlighted()
+	}
+
+	$effect(() => on_window_key('keydown', pressKey))
 </script>
 
 <!-- the backdrop takes every click beside the list, so the Document under it stays untouched while it shows -->
@@ -38,7 +55,7 @@
 		<text class="open-recent-title">Open Recent</text>
 		{#each paths as path, index (path)}
 			<div
-				class="open-recent-item"
+				class={['open-recent-item', index === highlighted && 'open-recent-item-highlighted']}
 				testid={`open-recent-${index}`}
 				role="menuitem"
 				tabindex={0}
@@ -50,7 +67,7 @@
 		{/each}
 		<div class="open-recent-separator"></div>
 		<div
-			class="open-recent-item"
+			class={['open-recent-item', highlighted === paths.length && 'open-recent-item-highlighted']}
 			testid="open-recent-clear"
 			role="menuitem"
 			tabindex={0}
@@ -98,7 +115,8 @@
 		border-radius: 5px;
 		cursor: pointer;
 	}
-	.open-recent-item:hover {
+	.open-recent-item:hover,
+	.open-recent-item-highlighted {
 		background-color: var(--background);
 	}
 	.open-recent-name {

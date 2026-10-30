@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { filterEntries, menuBar, menuEntries, searchMenuBar, type MenuBarItem } from './menu.ts'
+import { commandFor } from './shortcuts.ts'
 
 const STATE = {
 	sourceMode: false,
@@ -25,7 +26,7 @@ describe('menuEntries', () => {
 		])
 	})
 
-	test('Format lists every item, the ones that need a text selection disabled (gap G1)', () => {
+	test('Format lists every item, each enabled outside Source mode', () => {
 		const format = menuEntries(STATE).filter((entry) => entry.menu === 'Format')
 
 		expect(format.map(({ title }) => title)).toEqual([
@@ -55,8 +56,8 @@ describe('menuEntries', () => {
 			keys: '⌥⌘2',
 			enabled: true
 		})
-		expect(format.find(({ title }) => title === 'Bold')?.enabled).toBe(false)
-		// with nothing selected Link… inserts the URL itself (editor.ts:387-396), which needs no selection
+		// with no field open Bold acts at the load caret, and Link… inserts the URL itself (editor.ts:387-396)
+		expect(format.find(({ title }) => title === 'Bold')?.enabled).toBe(true)
 		expect(format.find(({ title }) => title === 'Link…')?.enabled).toBe(true)
 	})
 
@@ -131,7 +132,7 @@ describe('menuBar', () => {
 			'-',
 			'(Cut ⌘X)',
 			'(Copy ⌘C)',
-			'(Paste ⌘V)',
+			'Paste ⌘V',
 			'(Paste and Match Style ⌥⇧⌘V)',
 			'(Delete)',
 			'(Select All ⌘A)',
@@ -140,10 +141,10 @@ describe('menuBar', () => {
 			'(▸ Spelling and Grammar)'
 		])
 		expect(spelled(bar[2]!.items)).toEqual([
-			'(Bold ⌘B)',
-			'(Italic ⌘I)',
-			'(Strikethrough ⇧⌘X)',
-			'(Inline Code ⌘E)',
+			'Bold ⌘B',
+			'Italic ⌘I',
+			'Strikethrough ⇧⌘X',
+			'Inline Code ⌘E',
 			'Link… ⌘K',
 			'-',
 			'Body Text ⌥⌘0',
@@ -247,13 +248,32 @@ describe('Copy', () => {
 	})
 })
 
+describe('Paste', () => {
+	// editmd's editable page takes `paste:` at its caret, a field open or not (plugin-clipboard handlePaste), so Paste
+	// is a command of its own, ⌘V, enabled in the bar and the palette alike
+	test('is enabled with no field open, as the command ⌘V runs', () => {
+		const bar = menuBar(STATE)[1]!.items.find(
+			(item) => item.kind === 'item' && item.title === 'Paste'
+		)
+		expect([
+			bar,
+			menuEntries(STATE).find(({ command }) => command === 'paste')?.enabled,
+			commandFor('v', { cmd: true, ctrl: false, alt: false, shift: false })
+		]).toEqual([
+			{ kind: 'item', title: 'Paste', keys: '⌘V', enabled: true, command: 'paste' },
+			true,
+			'paste'
+		])
+	})
+})
+
 describe('a field of the Document', () => {
 	/**
-	 * the inline formats act on a Block field's selection, read through its keys: enabled while a Block's
-	 * field is open, still disabled in Source mode with the rest of Format
+	 * the inline formats act on a Block field's selection, or with no field open at editmd's load caret, so they are
+	 * enabled as editmd's are in its rich editor, and disabled in Source mode with the rest of Format
 	 */
-	test('Bold, Italic, Strikethrough and Inline Code are enabled while a Block’s field is open, in the bar and the palette', () => {
-		const inline = (state: typeof STATE & { blockField?: boolean }) => [
+	test('Bold, Italic, Strikethrough and Inline Code are enabled outside Source mode, a field open or not, in the bar and the palette', () => {
+		const inline = (state: typeof STATE) => [
 			menuEntries(state)
 				.filter(({ menu }) => menu === 'Format')
 				.slice(0, 4)
@@ -261,17 +281,11 @@ describe('a field of the Document', () => {
 			spelled(menuBar(state)[2]!.items.slice(0, 4))
 		]
 
-		expect(inline({ ...STATE, blockField: true })).toEqual([
+		expect(inline(STATE)).toEqual([
 			[true, true, true, true],
 			['Bold ⌘B', 'Italic ⌘I', 'Strikethrough ⇧⌘X', 'Inline Code ⌘E']
 		])
-		expect(inline({ ...STATE, blockField: false })[0]).toEqual([false, false, false, false])
-		expect(inline({ ...STATE, blockField: true, sourceMode: true })[0]).toEqual([
-			false,
-			false,
-			false,
-			false
-		])
+		expect(inline({ ...STATE, sourceMode: true })[0]).toEqual([false, false, false, false])
 	})
 
 	/**

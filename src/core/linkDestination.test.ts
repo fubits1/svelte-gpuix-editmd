@@ -12,13 +12,22 @@ describe('linkDestination', () => {
 		expect(linkDestination('#Café', blocks, null)).toEqual({ kind: 'block', index: 2 })
 	})
 
-	test('a footnote link scrolls to its definition, labels matched without case', () => {
-		expect(linkDestination('footnote:n', blocks, null)).toEqual({ kind: 'block', index: 3 })
+	// editmd's page takes every h1-h6 as a target (main.ts:39), those inside quotes and lists too
+	test('a #fragment finds a heading inside a quote or a list, in the Block that holds it', () => {
+		const nested = parseBlocks('intro\n\n> ## Quoted\n\n- item\n\n  ### Listed\n\n## Quoted\n')
+		expect([
+			linkDestination('#quoted', nested, null),
+			linkDestination('#listed', nested, null),
+			linkDestination('#quoted-1', nested, null)
+		]).toEqual([
+			{ kind: 'block', index: 1 },
+			{ kind: 'block', index: 2 },
+			{ kind: 'block', index: 3 }
+		])
 	})
 
 	test('a link to nothing in the Document does nothing', () => {
 		expect(linkDestination('#missing', blocks, null)).toEqual({ kind: 'none' })
-		expect(linkDestination('footnote:gone', blocks, null)).toEqual({ kind: 'none' })
 	})
 
 	// a document can spell a link any way; a broken percent-escape is matched as written, as editmd's findHeading does
@@ -26,7 +35,9 @@ describe('linkDestination', () => {
 		expect(linkDestination('footnote:%E0%A4%A', blocks, null)).toEqual({ kind: 'none' })
 	})
 
-	test('other links resolve against the folder, and relative ones do nothing in an untitled Document', () => {
+	// in an untitled document editmd resolves a relative link against its page (`editmd:`, main.ts:44), which its
+	// LinkPolicy ignores ("a relative link in a document with no folder", LinkPolicy.swift:17-18) with a beep
+	test('other links resolve against the folder, and relative ones are ignored in an untitled Document', () => {
 		expect(linkDestination('other notes.md', blocks, '/Users/me/My Notes')).toEqual({
 			kind: 'url',
 			href: 'file:///Users/me/My%20Notes/other%20notes.md'
@@ -35,7 +46,7 @@ describe('linkDestination', () => {
 			kind: 'url',
 			href: 'https://example.com/a'
 		})
-		expect(linkDestination('other.md', blocks, null)).toEqual({ kind: 'none' })
+		expect(linkDestination('other.md', blocks, null)).toEqual({ kind: 'ignore' })
 	})
 
 	// editmd's page keeps a link's href only for these schemes (Milkdown's sanitizeLinkHref), so ⌘-clicking any other

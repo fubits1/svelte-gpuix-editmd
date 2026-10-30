@@ -1,4 +1,4 @@
-import { markdownToMdast, type MdastNode } from 'satteri'
+import { parsedWithOffsets, walk } from '../engine/blocks.ts'
 import { type TextEdit, textEdits } from './merge.ts'
 
 /** where a reference resolved to: its definition's URL and title */
@@ -13,23 +13,15 @@ type Reference = {
 	image: boolean
 }
 
-const BYTE_ORDER_MARK = String.fromCharCode(0xfeff)
-
 /** a definition line somewhere in the text, so a text without one is never parsed for nothing */
 const DEFINITION_LINE = /^ {0,3}\[[^\]\n]+\]:/m
 
-function walk(node: MdastNode, visit: (node: MdastNode) => void): void {
-	visit(node)
-	if ('children' in node) for (const child of node.children) walk(child as MdastNode, visit)
-}
-
 /** definitions by identifier, the first for a label winning as in markdown; and every reference with its span */
 function referencesIn(text: string): { targets: Map<string, Target>; references: Reference[] } {
-	// the parser drops a leading byte order mark, which the text's offsets still count
-	const shift = text.startsWith(BYTE_ORDER_MARK) ? 1 : 0
+	const { root, offset } = parsedWithOffsets(text)
 	const targets = new Map<string, Target>()
 	const references: Reference[] = []
-	walk(markdownToMdast(text, { position: true }), (node) => {
+	walk(root, (node) => {
 		if (node.type === 'definition') {
 			if (!targets.has(node.identifier)) {
 				targets.set(node.identifier, { url: node.url, title: node.title ?? null })
@@ -40,8 +32,8 @@ function referencesIn(text: string): { targets: Map<string, Target>; references:
 		const { position } = node
 		if (!position) return
 		references.push({
-			start: position.start.offset! + shift,
-			end: position.end.offset! + shift,
+			start: offset(position.start.offset!),
+			end: offset(position.end.offset!),
 			identifier: node.identifier,
 			label: node.label ?? node.identifier,
 			referenceType: node.referenceType,

@@ -1,5 +1,5 @@
 /** how long a remote image is given to answer, and how much of it is read: a size sits in its first bytes */
-export type FetchLimits = { timeoutMs?: number; maxBytes?: number }
+type FetchLimits = { timeoutMs?: number; maxBytes?: number }
 
 const TIMEOUT_MS = 10_000
 const MAX_BYTES = 1024 * 1024
@@ -28,13 +28,7 @@ export async function fetchImageHead(
 			length += value.length
 		}
 		await reader?.cancel()
-		const bytes = new Uint8Array(length)
-		let at = 0
-		for (const chunk of chunks) {
-			bytes.set(chunk, at)
-			at += chunk.length
-		}
-		return bytes
+		return Buffer.concat(chunks, length)
 	} finally {
 		clearTimeout(timer)
 		controller.abort()
