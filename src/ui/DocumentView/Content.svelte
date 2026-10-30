@@ -1,6 +1,7 @@
 <!--
   @component
-  Picks the View for a Block by its kind.
+  Picks the View for a Block by its kind: a top-level Block, and through NestedBlocks one inside a quote or a list item,
+  which editmd paints as it paints one at the top level.
 -->
 <script lang="ts">
 	import type { Component } from 'svelte'
@@ -17,9 +18,8 @@
 	import QuoteBlock from './Views/QuoteBlock.svelte'
 	import SourceLineBlock from './Views/SourceLineBlock.svelte'
 	import TableBlock from './Views/TableBlock.svelte'
-	import TaskListBlock from './Views/TaskListBlock.svelte'
 
-	let { block, index }: BlockViewProps = $props()
+	let { block, index, testKey }: BlockViewProps = $props()
 
 	const VIEW_BY_KIND: Partial<Record<BlockKind, Component<BlockViewProps>>> = {
 		blockquote: QuoteBlock,
@@ -34,21 +34,19 @@
 		table: TableBlock
 	}
 
-	// a list carries `tasks` only when it holds tasks, which native <markdown> paints as literal brackets, and
-	// `items` always, so a plain list paints its own rows with editmd's markers and indent;
+	// a list carries `items` always, so it paints its own rows with editmd's markers and indent, and its tasks'
+	// boxes, where native <markdown> paints a task as literal brackets;
 	// a paragraph carries `images` only when it is nothing but images, which it paints as link text;
 	// one mixing text and images carries `segments` instead, so each image paints as one between the text runs
 	const View = $derived(
-		block.tasks
-			? TaskListBlock
-			: block.items
-				? ListBlock
-				: block.images
-					? ImageBlock
-					: block.segments
-						? MixedParagraphBlock
-						: (VIEW_BY_KIND[block.kind] ?? MarkdownBlock)
+		block.items
+			? ListBlock
+			: block.images
+				? ImageBlock
+				: block.segments
+					? MixedParagraphBlock
+					: (VIEW_BY_KIND[block.kind] ?? MarkdownBlock)
 	)
 </script>
 
-<View {block} {index} />
+<View {block} {index} {testKey} />

@@ -1,38 +1,27 @@
-import { formatBlock, type BlockFormat } from '../core/formatBlock.ts'
+import type { BlockFormat } from '../core/formatBlock.ts'
 import type { Command } from './shortcuts.ts'
-
-/**
- * the Block's new source, or null where editmd's command refuses or changes nothing; `caret` is the field's caret in
- * `source`, the end of it when left out
- */
-export type BlockTransform = (source: string, caret?: number) => string | null
 
 /** the Format menu commands that rewrite the Active block's source (editmd MainMenu.swift `format()`) */
 export type FormatCommand = Extract<Command, BlockFormat>
 
-const transform =
-	(command: FormatCommand): BlockTransform =>
-	(source, caret) =>
-		formatBlock(command, source, caret)
-
-/** each Format menu command as a transform of one Block's source; the one list of them */
-export const BLOCK_TRANSFORMS: Record<FormatCommand, BlockTransform> = {
-	body: transform('body'),
-	heading1: transform('heading1'),
-	heading2: transform('heading2'),
-	heading3: transform('heading3'),
-	heading4: transform('heading4'),
-	heading5: transform('heading5'),
-	heading6: transform('heading6'),
-	bulletList: transform('bulletList'),
-	numberedList: transform('numberedList'),
-	quote: transform('quote'),
-	codeBlock: transform('codeBlock'),
-	indent: transform('indent'),
-	outdent: transform('outdent')
+/** every Format menu command, the one list of them; a Record, so a command added to the type must be listed */
+const FORMAT_COMMANDS: Record<FormatCommand, true> = {
+	body: true,
+	heading1: true,
+	heading2: true,
+	heading3: true,
+	heading4: true,
+	heading5: true,
+	heading6: true,
+	bulletList: true,
+	numberedList: true,
+	quote: true,
+	codeBlock: true,
+	indent: true,
+	outdent: true
 }
 
-/** whether `command` is a Format menu command, so `BLOCK_TRANSFORMS` has its transform */
+/** whether `command` is a Format menu command, which `formatBlock` carries out on the Active block's source */
 export function isFormatCommand(command: string): command is FormatCommand {
-	return Object.hasOwn(BLOCK_TRANSFORMS, command)
+	return Object.hasOwn(FORMAT_COMMANDS, command)
 }

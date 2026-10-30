@@ -14,10 +14,13 @@
 
 	const theme = useTheme()
 
-	/** editmd's `setResult(found:)`: the label colour, or system red when the query matches nothing */
+	/**
+	 * editmd's `setResult(found:)`: the label colour, or AppKit's systemRed when the query matches nothing
+	 * (EditorWindowController.swift:301)
+	 */
 	const fieldTheme = $derived({
 		...theme().chromeTextTheme,
-		text: findController.notFound ? theme().palette.danger : theme().palette.text
+		text: findController.notFound ? theme().palette['system-red'] : theme().palette.text
 	})
 
 	/** an SF Symbols-like chevron; GPUI's SVG decoder drops var(), so the colour is inlined */

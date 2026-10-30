@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 export type Spawn = (command: string, args: string[]) => void
 
 /** how this process was started; a compiled binary has no entry script, so `entry` is null there */
-export type Self = { execPath: string; execArgv: string[]; entry: string | null }
+type Self = { execPath: string; execArgv: string[]; entry: string | null }
 
 /**
  * detached, so closing this window never takes the new one with it. a window that cannot be started (the binary moved

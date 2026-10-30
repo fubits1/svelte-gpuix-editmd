@@ -1,13 +1,14 @@
 import type { Block } from '../engine/blocks.ts'
 import { findSlug } from './anchors.ts'
 import { linkBase } from './fileUrls.ts'
-import { footnoteIdentifierOf } from './footnotes.ts'
 
 export type LinkDestination =
 	/** a place in this Document: the Block to scroll to */
 	| { kind: 'block'; index: number }
 	/** somewhere else, as an absolute URL for `linkAction` */
 	| { kind: 'url'; href: string }
+	/** a relative link in an untitled Document, which editmd's LinkPolicy ignores with a beep (LinkPolicy.swift:17-18) */
+	| { kind: 'ignore' }
 	| { kind: 'none' }
 
 const NONE: LinkDestination = { kind: 'none' }
@@ -41,27 +42,22 @@ function sanitizedHref(href: string): string {
 
 /**
  * where a Cmd-clicked link goes, as editmd's `openLink` (web/src/main.ts) decides: `#fragment` scrolls
- * to the heading with that GitHub anchor, a footnote link to its definition, a link of a scheme editmd's
- * page strips (anything but http, https, mailto, tel, ftp) nowhere, and anything else is resolved against
- * the document's folder (null when untitled, where a relative link goes nowhere)
+ * to the heading with that GitHub anchor, a link of a scheme editmd's page strips (anything but http, https,
+ * mailto, tel, ftp) nowhere, and anything else is resolved against the document's folder (null when untitled,
+ * where editmd resolves a relative link against its own page, main.ts:44, and ignores it with a beep)
  */
 export function linkDestination(
 	link: string,
 	blocks: readonly Block[],
 	folder: string | null
 ): LinkDestination {
-	// footnote links are the port's own, made by withFootnoteLinks, never written in the document
-	const identifier = footnoteIdentifierOf(link)
-	if (identifier !== null) {
-		return toBlock(blocks.findIndex((block) => block.footnote?.identifier === identifier))
-	}
-
 	const href = sanitizedHref(link)
 	if (href === '') return NONE
 
 	if (href.startsWith('#')) {
+		// editmd's page takes every heading as a target (main.ts:39), those inside quotes and lists too
 		const headings = blocks.flatMap((block, index) =>
-			block.heading ? [{ index, slug: block.heading.slug }] : []
+			[block.heading?.slug ?? [], block.anchors ?? []].flat().map((slug) => ({ index, slug }))
 		)
 		const found = findSlug(
 			href,
@@ -71,5 +67,6 @@ export function linkDestination(
 	}
 
 	const base = linkBase(folder)
-	return URL.canParse(href, base) ? { kind: 'url', href: new URL(href, base).href } : NONE
+	if (URL.canParse(href, base)) return { kind: 'url', href: new URL(href, base).href }
+	return folder === null && !/^[a-z][a-z0-9+.-]*:/i.test(href) ? { kind: 'ignore' } : NONE
 }

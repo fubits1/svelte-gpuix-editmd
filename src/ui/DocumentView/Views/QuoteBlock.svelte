@@ -1,38 +1,21 @@
 <!--
   @component
   A blockquote as editmd paints it (`blockquote { padding: 0 1em; color: var(--muted); border-left: 0.25em solid
-  var(--border) }`): a rail in the border colour, no fill, and the quote's markdown without its `>` markers through
-  native <markdown> in the muted colour. Native's own quote paints a rail and a wash in its theme's accent.
+  var(--border) }`): a rail in the border colour, no fill, and the Blocks inside it painted as top-level ones are, in the
+  muted colour they inherit. Native <markdown>'s own quote paints a rail and a wash in its theme's accent.
 -->
 <script lang="ts">
-	import { heldLinkThemeFor, mutedThemeFor } from '../../../app/palette.ts'
-	import { useCommandHeld, useTheme } from '../../../app/theme.svelte.ts'
-	import { unquoted } from '../../../core/paintedSlice.ts'
-	import { documentController } from '../controller.svelte.ts'
+	import { provideQuoted } from '../../../app/theme.svelte.ts'
 	import type { BlockViewProps } from '../DocumentView.model.ts'
+	import NestedBlocks from '../NestedBlocks.svelte'
 
-	let { block, index }: BlockViewProps = $props()
+	let { block, index, testKey }: BlockViewProps = $props()
 
-	const theme = useTheme()
-	const commandHeld = useCommandHeld()
-
-	/**
-	 * native <markdown> ignores CSS, so editmd's muted quote text, its inline code too, goes in through its theme
-	 * (`mutedThemeFor`); while ⌘ is held a link's underline takes its own colour (`heldLinkThemeFor`)
-	 */
-	const quoteTheme = $derived.by(() => {
-		const muted = mutedThemeFor(theme().textTheme)
-		return commandHeld() && block.links ? heldLinkThemeFor(muted) : muted
-	})
+	provideQuoted()
 </script>
 
-<div class="quote" testid={`quote-${index}`}>
-	<markdown
-		testid={`quote-text-${index}`}
-		source={documentController.renderSource(unquoted(documentController.paintedSliceOf(block)))}
-		theme={quoteTheme}
-		onlinkclick={(event) => documentController.linkClicked(event.value)}
-	></markdown>
+<div class="quote" testid={`quote-${testKey}`}>
+	<NestedBlocks blocks={block.children ?? []} {index} {testKey} />
 </div>
 
 <style>

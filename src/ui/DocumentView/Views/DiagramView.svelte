@@ -4,11 +4,10 @@
   pointer or while its Block is open (`box-shadow: inset 0 0 0 1px var(--border)`), holding the image centred at its
   natural size and shrunk to the box when wider (`.diagram svg { max-width: 100%; height: auto }`), editmd's "Empty
   diagram" note centred, or the reason it could not be drawn, centred too in the danger colour. MermaidBlock paints it
-  in place of its Block, where a click opens the Block as editmd's `editSource` does; MermaidPreview under the Active
+  in place of its Block, where a click opens the Block as editmd's `editSource` does; MermaidBlock `editing` under the Active
   block's field.
 -->
 <script lang="ts">
-	import { get_native, type ShadowNode } from 'gpuix-svelte'
 	import type { Diagram } from '../../../app/diagrams.ts'
 	import { monoLinesSource, monoLinesTheme, monoLinesWidth } from '../../../app/monoLines.ts'
 	import { useTheme } from '../../../app/theme.svelte.ts'
@@ -20,14 +19,17 @@
 	let {
 		diagram,
 		index,
+		testKey,
 		editing = false
 	}: {
 		diagram: Diagram
-		/**
-		 * the Block's index, for the test ids `mermaid-box-<index>`, `mermaid-<index>`, `mermaid-error-<index>` and
-		 * `mermaid-empty-<index>`, and for opening it
-		 */
+		/** the top-level Block's index, which a click opens */
 		index: number
+		/**
+		 * the Block's test id key (BlockViewProps), for `mermaid-box-<key>`, `mermaid-<key>`, `mermaid-error-<key>` and
+		 * `mermaid-empty-<key>`
+		 */
+		testKey: string
 		/** shown under the open Block's field, as editmd's `.code-block.mermaid.editing > .diagram`: always bordered */
 		editing?: boolean
 	} = $props()
@@ -52,7 +54,7 @@
 		)
 	)
 
-	/** the box's inner width as last painted, null until the first paint */
+	/** the box's inner width as its layout event last reported it, null until the first paint */
 	let innerWidth = $state<number | null>(null)
 
 	/** the natural size at the page's zoom, shrunk to the box when wider, its shape kept */
@@ -61,37 +63,21 @@
 		const natural = { width: theme().scaled(diagram.width), height: theme().scaled(diagram.height) }
 		return innerWidth === null ? natural : fitToWidth(natural, innerWidth)
 	})
-
-	/**
-	 * GPUI sends no resize event, so the box's inner width is re-measured on a timer from its painted bounds, as
-	 * ImageView measures its column
-	 */
-	function measureInner(inner: ShadowNode) {
-		const measure = () => {
-			if (inner.nativeId === null) return
-			const width = get_native()?.getElementBounds(inner.nativeId)?.width
-			// an unchanged number is no change to $state, so the steady poll restyles nothing
-			if (width !== undefined) innerWidth = width
-		}
-		measure()
-		const timer = setInterval(measure, 250)
-		return () => clearInterval(timer)
-	}
 </script>
 
 <div
 	class={['mermaid', editing && 'editing']}
-	testid={`mermaid-box-${index}`}
+	testid={`mermaid-box-${testKey}`}
 	hitbox="self"
 	onclick={editing
 		? () => documentController.caretToSourceEnd()
 		: (event) => documentController.clickBlock(index, { cmd: event.modifiers?.cmd === true })}
 	onfiledrop={editing ? null : dropFiles}
 >
-	<div class="inner" {@attach measureInner}>
+	<div class="inner" onlayout={(event) => (innerWidth = event.width ?? null)}>
 		{#if diagram.kind === 'diagram' && size}
 			<img
-				testid={`mermaid-${index}`}
+				testid={`mermaid-${testKey}`}
 				src={diagramImageSrc(diagram)}
 				alt="Mermaid diagram"
 				style:width={`${size.width}px`}
@@ -105,7 +91,7 @@
 			<!-- as wide as its longest line, so the box centres it; a longer one is held to the box and wraps -->
 			<markdown
 				class="message"
-				testid={`mermaid-${diagram.kind}-${index}`}
+				testid={`mermaid-${diagram.kind}-${testKey}`}
 				style:width={`${monoLinesWidth(diagram.message, theme().scaled(12.5))}px`}
 				source={monoLinesSource(diagram.message)}
 				theme={diagram.kind === 'empty' ? emptyTheme : errorTheme}

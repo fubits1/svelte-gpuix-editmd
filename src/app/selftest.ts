@@ -42,6 +42,7 @@ import {
 	unfocus,
 	wait
 } from 'gpuix-svelte/test'
+import { selectKeys } from '../core/fieldSelection.ts'
 import { linkAction } from '../core/linkPolicy.ts'
 import { carryOutLink } from '../host/openLink.ts'
 import { encodePng } from '../host/png.ts'
@@ -328,14 +329,21 @@ async function documentBasics(test: SelfTest, url: string): Promise<void> {
 	await until('revert rendered', () => documentController.text === '# Changed on disk\n')
 	test.check(!documentController.edited, 'revert loads the file from disk')
 
-	// editmd selects all and runs Bold; the port's fields expose no selection (gap G1), so a Block's Format command
+	// editmd selects all of the heading's text and runs Format > Bold (SelfTest.swift:62-65); the port selects it in the
+	// open field with keys, which the selection probe reads (core/fieldSelection.ts)
 	click_test_id('block-0')
-	documentController.run('heading2')
+	typeKeys(selectKeys('# Changed on disk', { start: 2, end: 17 }))
+	documentController.run('bold')
+	// the selection probe types into the field, which takes its keys only as GPUI's queue is pumped
+	await until('bold applied', () => {
+		pump()
+		return !documentController.fieldBusy && documentController.text.includes('**')
+	})
 	press('escape')
 	documentController.run('save')
 	test.check(
-		readFileSync(url, 'utf8') === '## Changed on disk\n',
-		'menu formatting commands apply (Format > Heading 2 on the open Block)'
+		readFileSync(url, 'utf8') === '# **Changed on disk**\n',
+		'menu formatting commands apply'
 	)
 }
 
@@ -423,26 +431,20 @@ async function coEditing(test: SelfTest): Promise<void> {
 			'# Title\n\nFirst paragraph.\n\nSecond paragraph, by an agent.\n\nThird, reported.\n'
 		)
 		await until('reported write shown', () => documentController.text.includes('reported'))
-		/**
-		 * editmd lists its `.agent-change` runs only and compares them exactly; the port lists every Highlight, each
-		 * with the text of the Block it marks, so it checks by substring: the unreported change Outside edit's, the
-		 * reported one Selftest agent's. the paragraph the earlier atomic write added keeps its Outside edit mark as
-		 * a whole Block too, as editmd's `.agent-block` stays (it is not among editmd's listed runs)
-		 */
-		const highlighted = documentController.highlights.map(({ author, start, end }) => {
-			const slot = documentController.agents.find(({ id }) => id === author.id)?.slot ?? null
-			const colour = slot === null ? 'agent-unknown' : `agent-${slot}`
-			return `${colour}:${documentController.text.slice(start, end)}`
-		})
-		const marked = (colour: string, words: string) =>
-			highlighted.some((entry) => entry.startsWith(`${colour}:`) && entry.includes(words))
+		// editmd lists its `.agent-change` runs, colour and text, and compares them exactly (SelfTest.swift:123-127); a
+		// Block marked whole is its `.agent-block`, not among them
+		const highlighted = documentController.highlights
+			.flatMap(({ author, runs }) => {
+				const slot = documentController.agents.find(({ id }) => id === author.id)?.slot ?? null
+				const colour = slot === null ? 'agent-unknown' : `agent-${slot}`
+				return (runs ?? []).map((run) => `${colour}:${run.text}`)
+			})
+			.join('|')
 		const legend = documentController.agents.map(({ name }) => name).join('|')
 		test.check(
-			marked('agent-unknown', ', by an agent') &&
-				marked('agent-0', ', reported') &&
-				!marked('agent-0', ', by an agent') &&
+			highlighted === 'agent-unknown:, by an agent|agent-0:, reported' &&
 				legend === 'Selftest agent|Outside edit',
-			`a reported edit is highlighted and named, apart from unreported ones (${highlighted.join('|')}; ${legend})`
+			`a reported edit is highlighted and named, apart from unreported ones (${highlighted}; ${legend})`
 		)
 		await reportEdit(
 			JSON.stringify({ ...hook, hook_event_name: 'PostToolUse' }),
@@ -694,7 +696,7 @@ async function links(test: SelfTest): Promise<void> {
 		 * editmd's links WebKit tries to follow itself (SelfTest.swift:386-395): the page navigates there
 		 * (`location.href = …`), not a ⌘-click on a document link, and editmd's navigation delegate decides the URL
 		 * through its link policy, an `editmd://file/<path>` URL naming that file. the port's page navigates nowhere, and a
-		 * ⌘-click on such a link now does nothing, as editmd's page strips its href (Milkdown's `sanitizeLinkHref`), so the
+		 * ⌘-click on such a link does nothing, as editmd's page strips its href (Milkdown's `sanitizeLinkHref`), so the
 		 * URL goes through the same policy as editmd's navigation path (`navigate`), the recording opener catching what it
 		 * would start
 		 */

@@ -1,4 +1,8 @@
-import { parseBlocks } from '../engine/blocks.ts'
+import { type BlockKind, blockKindOf } from '../engine/blocks.ts'
+import { tableCells } from './tableCells.ts'
+
+/** Blocks with no text to hold a link */
+const HOLDS_NO_LINK = new Set<BlockKind>(['frontmatter', 'definition', 'thematicBreak'])
 
 /** what mdast-util-to-markdown writes as an autolink: a protocol, and nothing an autolink cannot hold */
 const AUTOLINKABLE = /^[a-z][a-z+.-]+:[^\0- <>\u007F]*$/i
@@ -37,7 +41,8 @@ const CLOSING_FENCE = /\n( {0,3}(`{3,}|~{3,})[ \t]*)$/
 export function insertLink(source: string, url: string): string | null {
 	const href = url.trim()
 	if (href === '') return null
-	const kind = parseBlocks(source)[0]?.kind ?? 'paragraph'
+	const kind = blockKindOf(source)
+	if (HOLDS_NO_LINK.has(kind)) return null
 
 	switch (kind) {
 		case 'code':
@@ -52,10 +57,6 @@ export function insertLink(source: string, url: string): string | null {
 			const cellEnd = source.slice(0, lastPipe).trimEnd().length
 			return `${source.slice(0, cellEnd)}${linkOf(href)}${source.slice(cellEnd)}`
 		}
-		case 'frontmatter':
-		case 'definition':
-		case 'thematicBreak':
-			return null
 		default:
 			return `${source}${linkOf(href)}`
 	}
@@ -84,13 +85,17 @@ export function linkAtSelection(
 	const href = url.trim()
 	const { start, end } = range
 	if (href === '') return unlinked(source, start, end)
-	const kind = parseBlocks(source)[0]?.kind ?? 'paragraph'
+	// editmd's link toggles as a mark (toggleLinkCommand is toggleMark): a selection holding a link loses it
+	if (start < end) {
+		const toggled = unlinked(source, start, end)
+		if (toggled !== null) return toggled
+	}
+	const kind = blockKindOf(source)
 	if (kind === 'code' || kind === 'mermaid') {
 		// editmd refuses a selection in code; a caret takes the URL as text
 		return start === end ? `${source.slice(0, start)}${href}${source.slice(end)}` : null
 	}
-	// no text to hold a link, as for insertLink
-	if (kind === 'frontmatter' || kind === 'definition' || kind === 'thematicBreak') return null
+	if (HOLDS_NO_LINK.has(kind)) return null
 	if (source.slice(start, end).includes('\n')) {
 		return kind === 'table'
 			? linkEachCell(source, start, end, href)
@@ -101,9 +106,9 @@ export function linkAtSelection(
 			const from = link.index
 			const to = from + link[0].length
 			if (start <= from || start >= to) continue
+			// editmd's Edit Link puts a mark of only the new href on the link (editor.ts:388-390): its title goes
 			const text = link[4] === undefined ? link[1] : linkTextOf(link[4])
-			const replaced = `[${text}](${destinationOf(href)}${link[3] ?? ''})`
-			return `${source.slice(0, from)}${replaced}${source.slice(to)}`
+			return `${source.slice(0, from)}[${text}](${destinationOf(href)})${source.slice(to)}`
 		}
 		return `${source.slice(0, start)}${linkOf(href)}${source.slice(start)}`
 	}
@@ -124,88 +129,64 @@ const LINE_PREFIX =
  * selected text becomes its own link, its prefix left out (measured in editmd's own editor)
  */
 function linkEachLine(source: string, start: number, end: number, href: string): string {
-	let out = ''
+	const ranges: Range[] = []
 	let lineStart = 0
 	for (const line of source.split('\n')) {
-		const lineEnd = lineStart + line.length
 		const from = Math.max(start, lineStart + (LINE_PREFIX.exec(line)?.[0].length ?? 0))
-		const to = Math.min(end, lineEnd)
-		out +=
-			from < to
-				? `${source.slice(lineStart, from)}[${linkTextOf(source.slice(from, to))}](${destinationOf(href)})${source.slice(to, lineEnd)}`
-				: line
-		if (lineEnd < source.length) out += '\n'
-		lineStart = lineEnd + 1
+		const to = Math.min(end, lineStart + line.length)
+		if (from < to) ranges.push({ from, to })
+		lineStart += line.length + 1
 	}
-	return out
+	return linkRanges(source, ranges, href)
 }
+
+type Range = { from: number; to: number }
+
+/** `source` with each of `ranges`, in order and apart, written as a link to `href` with its own text */
+function linkRanges(source: string, ranges: readonly Range[], href: string): string {
+	let out = ''
+	let at = 0
+	for (const { from, to } of ranges) {
+		out += `${source.slice(at, from)}[${linkTextOf(source.slice(from, to))}](${destinationOf(href)})`
+		at = to
+	}
+	return out + source.slice(at)
+}
+
+/** a URL GFM links as it stands (an autolink literal), which editmd's editor reads as a link to itself */
+const BARE_URL = /(?<![\w<(\\/])https?:\/\/[^\s<]*[^\s<?!.,:*_~'")\]]/gi
 
 /**
  * `source` with the links at a caret `start === end`, or across `[start, end)`, written as their text alone; null when
- * no link is there
+ * no link is there. a URL left as text gets its colon escaped, as editmd's serializer writes it, or GFM links it again
  */
 function unlinked(source: string, start: number, end: number): string | null {
+	const links = [...source.matchAll(LINKS), ...source.matchAll(BARE_URL)].sort(
+		(a, b) => a.index - b.index
+	)
 	let out = ''
 	let at = 0
-	for (const link of source.matchAll(LINKS)) {
+	for (const link of links) {
 		const from = link.index
 		const to = from + link[0].length
 		const reached = start === end ? start > from && start < to : start < to && end > from
-		if (!reached) continue
-		out += source.slice(at, from) + (link[4] ?? link[1] ?? '')
+		if (from < at || !reached) continue
+		out +=
+			source.slice(at, from) + (link[1] ?? (link[4] ?? link[0]).replace(/^(https?):/i, '$1\\:'))
 		at = to
 	}
 	return at === 0 ? null : out + source.slice(at)
 }
-
-/** where each cell's text lies in a table row `line` starting at `lineStart`: between unescaped pipes, trimmed */
-function cellTexts(line: string, lineStart: number): { from: number; to: number }[] {
-	const pipes = [...line.matchAll(/(?<!\\)\|/g)].map((pipe) => pipe.index)
-	// a row may leave out its outer pipes
-	const edges = [
-		...(line.trimStart().startsWith('|') ? [] : [-1]),
-		...pipes,
-		...(line.trimEnd().endsWith('|') ? [] : [line.length])
-	]
-	const cells: { from: number; to: number }[] = []
-	for (let i = 0; i + 1 < edges.length; i++) {
-		const cell = line.slice(edges[i]! + 1, edges[i + 1])
-		const lead = cell.length - cell.trimStart().length
-		const text = cell.trim()
-		if (text === '') continue
-		const from = lineStart + edges[i]! + 1 + lead
-		cells.push({ from, to: from + text.length })
-	}
-	return cells
-}
-
-/** a table's delimiter row, `| - | :-: |` */
-const DELIMITER_ROW = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
 
 /**
  * a selection across table rows: editmd's link mark covers the text of each cell it reaches, so each cell's selected
  * text becomes its own link and the pipes stay as they are (run in editmd's own editor)
  */
 function linkEachCell(source: string, start: number, end: number, href: string): string {
-	const pieces: { from: number; to: number }[] = []
-	let lineStart = 0
-	for (const line of source.split('\n')) {
-		if (!DELIMITER_ROW.test(line)) {
-			for (const cell of cellTexts(line, lineStart)) {
-				const from = Math.max(start, cell.from)
-				const to = Math.min(end, cell.to)
-				if (from < to) pieces.push({ from, to })
-			}
-		}
-		lineStart += line.length + 1
-	}
-	let out = ''
-	let at = 0
-	for (const { from, to } of pieces) {
-		out += `${source.slice(at, from)}[${linkTextOf(source.slice(from, to))}](${destinationOf(href)})`
-		at = to
-	}
-	return out + source.slice(at)
+	const ranges = tableCells(source)
+		.map((cell) => ({ from: Math.max(start, cell.from), to: Math.min(end, cell.to) }))
+		.filter(({ from, to }) => from < to)
+	return linkRanges(source, ranges, href)
 }
 
 /** the pasteboard's text as the sheet's URL when it is a web or mail address (EditorWindowController.swift:144-150) */

@@ -81,8 +81,9 @@ export function encodePng({ width, height, data }: Pixels): Uint8Array {
 	header.set([8, 6, 0, 0, 0], 8)
 	const stride = width * 4
 	const raw = Buffer.alloc(height * (stride + 1))
-	for (let y = 0; y < height; y++)
+	for (let y = 0; y < height; y++) {
 		raw.set(data.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1)
+	}
 	return Buffer.concat([
 		SIGNATURE,
 		chunk('IHDR', header),

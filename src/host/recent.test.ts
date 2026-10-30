@@ -11,22 +11,29 @@ describe('RecentFiles', () => {
 	test('newest first, no duplicates, at most ten, kept across instances', () => {
 		const store = join(directory, 'recent.json')
 		const recent = new RecentFiles(store)
-		for (let i = 1; i <= 12; i++) recent.add(`/notes/${i}.md`)
-		recent.add('/notes/5.md')
+		const note = (number: number) => join(directory, `${number}.md`)
+		for (let i = 1; i <= 12; i++) {
+			writeFileSync(note(i), '')
+			recent.add(note(i))
+		}
+		recent.add(note(5))
 
 		const reopened = new RecentFiles(store)
-		expect(reopened.list()).toEqual([
-			'/notes/5.md',
-			'/notes/12.md',
-			'/notes/11.md',
-			'/notes/10.md',
-			'/notes/9.md',
-			'/notes/8.md',
-			'/notes/7.md',
-			'/notes/6.md',
-			'/notes/4.md',
-			'/notes/3.md'
-		])
+		expect(reopened.list()).toEqual([5, 12, 11, 10, 9, 8, 7, 6, 4, 3].map(note))
+	})
+
+	// NSDocumentController leaves a deleted file out of its recent documents (run in Swift: noted, deleted, gone from
+	// `recentDocumentURLs`)
+	test('a file that no longer exists is left out', () => {
+		const recent = new RecentFiles(join(directory, 'deleted.json'))
+		const kept = join(directory, 'kept.md')
+		const gone = join(directory, 'gone.md')
+		writeFileSync(kept, '')
+		writeFileSync(gone, '')
+		recent.add(kept)
+		recent.add(gone)
+		rmSync(gone)
+		expect(recent.list()).toEqual([kept])
 	})
 
 	// every window is its own process: one reading the store while another writes must never find it cut short, and

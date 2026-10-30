@@ -142,7 +142,7 @@ function paragraph(format: BlockFormat, text: string): string | null {
 			return quote(text)
 		// editmd's code block takes the paragraph's text, without its marks and line breaks
 		case 'codeBlock':
-			return fenced(plainText([first, ...rest].join('\n')))
+			return fenced(plainText(linesOf(text).join('\n')))
 		default:
 			return null
 	}

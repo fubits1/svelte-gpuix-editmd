@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { pressTab, type TabEffects, tabAction } from './tabKey.ts'
+import { pressTab, type TabEffects, tabAction, tableCellStep } from './tabKey.ts'
 
 const plain = { cmd: false, ctrl: false, alt: false, shift: false }
 
@@ -38,6 +38,35 @@ describe('tabAction', () => {
 	test('another key is left alone', () => {
 		expect(tabAction('escape', plain, 'paragraph')).toBeNull()
 		expect(tabAction('space', plain, 'list')).toBeNull()
+	})
+})
+
+// editmd's Tab and Shift-Tab in a table go to the next and the previous cell and select its text (preset-gfm
+// table/input.ts:229-246, prosemirror-tables goToNextCell); past the last cell there is none
+describe('tableCellStep', () => {
+	const table = '| a | bb |\n| - | - |\n| c |    |'
+	const selected = (at: number, backward = false) => {
+		const range = tableCellStep(table, at, backward)
+		return range === null ? null : [table.slice(range.start, range.end), range.start]
+	}
+
+	test('Tab from a cell selects the next one’s text, across rows and past the delimiter row', () => {
+		expect([selected(2), selected(6), selected(23)]).toEqual([
+			['bb', 6],
+			['c', 23],
+			['', 27]
+		])
+	})
+
+	// GFM lets a row leave out its outer pipes
+	test('a table whose rows have no outer pipes steps through the same cells', () => {
+		const bare = 'a | b\n- | -\nc | d'
+		const range = tableCellStep(bare, 0)
+		expect(range && bare.slice(range.start, range.end)).toBe('b')
+	})
+
+	test('Shift-Tab selects the previous cell’s text; none before the first or after the last', () => {
+		expect([selected(22, true), selected(2, true), selected(27)]).toEqual([['bb', 6], null, null])
 	})
 })
 

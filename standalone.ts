@@ -1,5 +1,5 @@
 // the entry `pnpm run build` compiles: a binary carries no source to hot-reload, so it imports App statically
-import { readFileSync, realpathSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { render } from 'gpuix-svelte'
 import App from './App.svelte'
 import { agentProcessesOptions } from './src/app/agentProcessesEnv.ts'
@@ -7,22 +7,16 @@ import { dryRunOptions } from './src/app/dryRun.ts'
 import { HEADLESS_IO, runHeadless } from './src/app/headless.ts'
 import { parseLaunch } from './src/app/launch.ts'
 import { reportEdit, SOCKETS_DIRECTORY } from './src/app/reportEdit.ts'
+import { UNTITLED_FOLDER } from './src/app/supportFolder.ts'
 import { WINDOW, windowSizeFor } from './src/app/window.ts'
 import { focusWindowFor } from './src/host/agentIpc.ts'
+import { realPathOf } from './src/host/files.ts'
 import { readVisibleScreen } from './src/host/screen.ts'
 import { exitOnSignals } from './src/host/signals.ts'
+import { UntitledNumbers } from './src/host/untitledNumbers.ts'
 import { documentController, NEW_WINDOW_ENV } from './src/ui/DocumentView/controller.svelte.ts'
 
 const launch = parseLaunch(process.argv.slice(2), process.cwd())
-
-/** `path` with its symlinks followed, or as given when it cannot be resolved */
-function realPathOf(path: string): string {
-	try {
-		return realpathSync(path)
-	} catch {
-		return path
-	}
-}
 
 if (launch.kind === 'report-edit') {
 	// the hook never gets in an agent's way: silent, exit 0, whatever happened (AgentEdits.swift:77-96)
@@ -44,14 +38,20 @@ if (launch.kind === 'open' && (await focusWindowFor(SOCKETS_DIRECTORY, realPathO
 
 // `kill`, Ctrl-C or a closing terminal end the window through `exit`, so a file's edits are saved
 exitOnSignals()
-const options = { ...dryRunOptions(process.env), ...agentProcessesOptions(process.env) }
-let title = launch.title
-if (launch.kind === 'open') {
-	// a launch file that cannot be read leaves an untitled window with the open-failure alert
-	if (!documentController.openAtLaunch(launch.path, options)) title = 'Untitled'
-	// File > New's window says so, so Open… opens beside it rather than into it, as AppKit does
-} else
-	documentController.load('', { ...options, startedByNew: process.env[NEW_WINDOW_ENV] === '1' })
+const options = {
+	...dryRunOptions(process.env),
+	...agentProcessesOptions(process.env),
+	// an untitled window is numbered among every editor process's, as NSDocument's Untitled 2
+	untitledNumbers: new UntitledNumbers(UNTITLED_FOLDER)
+}
+// a launch file that cannot be read shows the open-failure alert, whose OK closes the window, as editmd opens none
+if (launch.kind === 'open') documentController.openAtLaunch(launch.path, options)
+// File > New's window says so, so Open… opens beside it rather than into it, as AppKit does
+else documentController.load('', { ...options, startedByNew: process.env[NEW_WINDOW_ENV] === '1' })
 
 // editmd caps its window to the screen; gpuix cannot read the screen, so AppKit is asked first
-render(App, { ...WINDOW, ...windowSizeFor(readVisibleScreen()), title })
+render(App, {
+	...WINDOW,
+	...windowSizeFor(readVisibleScreen()),
+	title: documentController.windowTitle
+})

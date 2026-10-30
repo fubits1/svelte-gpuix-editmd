@@ -39,7 +39,7 @@
 	import { documentController } from '../controller.svelte.ts'
 	import type { BlockViewProps } from '../DocumentView.model.ts'
 
-	let { block, index }: BlockViewProps = $props()
+	let { block, testKey }: BlockViewProps = $props()
 
 	const theme = useTheme()
 	const commandHeld = useCommandHeld()
@@ -66,11 +66,11 @@
 	)
 </script>
 
-<div class="footnote" testid={`footnote-box-${index}`}>
-	<text class="label" testid={`footnote-label-${index}`}>{block.footnote?.label ?? ''}</text>
+<div class="footnote" testid={`footnote-box-${testKey}`}>
+	<text class="label" testid={`footnote-label-${testKey}`}>{block.footnote?.label ?? ''}</text>
 	<div class="content">
 		<markdown
-			testid={`footnote-${index}`}
+			testid={`footnote-${testKey}`}
 			{source}
 			theme={footnoteTheme}
 			onlinkclick={(event) => documentController.linkClicked(event.value)}

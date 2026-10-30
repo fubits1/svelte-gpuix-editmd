@@ -33,8 +33,4 @@ export class SplitMix64 {
 	int(low: number, high: number): number {
 		return low + Math.floor(this.unit() * (high - low + 1))
 	}
-
-	pick<T>(items: readonly T[]): T {
-		return items[this.int(0, items.length - 1)]!
-	}
 }

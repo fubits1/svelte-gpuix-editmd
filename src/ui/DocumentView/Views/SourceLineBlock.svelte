@@ -8,36 +8,34 @@
 	import { useTheme } from '../../../app/theme.svelte.ts'
 	import { definitionText } from '../../../core/definitionText.ts'
 	import { documentController } from '../controller.svelte.ts'
-	import {
-		type BlockViewProps,
-		DEFINITION_INK_SHIFT,
-		HTML_INK_SHIFT
-	} from '../DocumentView.model.ts'
+	import { type BlockViewProps, HTML_INK_SHIFT, SF_MONO_LINE_BOX } from '../DocumentView.model.ts'
 
-	let { block, index }: BlockViewProps = $props()
+	let { block, testKey }: BlockViewProps = $props()
 
 	const theme = useTheme()
 
 	/**
 	 * what the Block paints: a definition rebuilt from what it defines, `[label]: url "title"`, as editmd paints it
-	 * (links.ts:133-136), so Find matches that too; raw HTML as written
+	 * (links.ts:133-136), so Find matches that too; raw HTML as written, inside a quote or a list item without what its
+	 * container puts in front of each line (`paintedSliceOf`)
 	 */
 	const shown = $derived(
 		block.kind === 'definition'
-			? definitionText(documentController.sliceOf(block))
-			: documentController.sliceOf(block)
+			? definitionText(documentController.paintedSliceOf(block))
+			: documentController.paintedSliceOf(block)
 	)
 
 	/**
-	 * `font: 0.86em var(--font-mono)` of the 16px body, muted: a definition is a block of its own at that size,
-	 * `line-height: 1.65` of it; raw HTML is a span inline in the body's 16px/1.65 line
+	 * `font: 0.86em var(--font-mono)` of the 16px body, muted: a definition is a block of its own at that size, the
+	 * shorthand's `line-height: normal` SF Mono's line box (style.css:353-357); raw HTML is a span inline in the body's
+	 * 16px/1.65 line
 	 */
 	const linesTheme = $derived(
 		monoLinesTheme(
 			theme().textTheme,
 			theme().palette.muted ?? '',
 			theme().scaled(16 * 0.86),
-			theme().scaled(block.kind === 'html' ? 16 * 1.65 : 16 * 0.86 * 1.65)
+			theme().scaled(block.kind === 'html' ? 16 * 1.65 : 16 * 0.86 * SF_MONO_LINE_BOX)
 		)
 	)
 </script>
@@ -48,8 +46,8 @@
 -->
 <markdown
 	class="source-line"
-	testid={`source-line-${index}`}
-	style:top={`${theme().scaled(block.kind === 'html' ? HTML_INK_SHIFT : DEFINITION_INK_SHIFT)}px`}
+	testid={`source-line-${testKey}`}
+	style:top={block.kind === 'html' ? `${theme().scaled(HTML_INK_SHIFT)}px` : null}
 	source={monoLinesSource(shown)}
 	theme={linesTheme}
 ></markdown>

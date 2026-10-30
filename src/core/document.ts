@@ -3,7 +3,7 @@ import { type AgentAuthor, OUTSIDE_EDIT } from './agentEdits.ts'
 import { diff } from './diff.ts'
 import { mergeText, mergeTextMapping, type TextEdit, textEdits } from './merge.ts'
 import { settleReferences } from './references.ts'
-import { type ChangedRun, changedText, removedText } from './changedText.ts'
+import { blockChange, type ChangedRun, describedText, type Gap, mappedRuns } from './changedText.ts'
 
 /** the Active block's text field, from click until blur or Escape; see CONTEXT.md "Edit session" */
 export type EditSession = {
@@ -14,14 +14,20 @@ export type EditSession = {
 	/** where the session's text sits in the Document now; a Disk merge moves it, Blocks above it may come and go */
 	readonly start: number
 	readonly end: number
-	/** the field's whole new value */
-	update(field: string): void
+	/** the field's whole new value, typed at `at` (ms since the epoch) */
+	update(field: string, at?: number): void
 	/**
 	 * a change from outside reached the Active block: the text the field should show now, the field's typing and the
 	 * outside change merged as editmd shows them live, with the edits from what the field showed, to carry its caret
 	 * through. the field takes it as its value, so later updates go on from it. null when nothing came in
 	 */
 	takeOutsideChange(): { text: string; edits: TextEdit[] } | null
+	/**
+	 * Return in the middle of the Block (editmd's splitBlock), the field already showing what stays: the session closes,
+	 * `tail` goes in as a new Block after it, and its session is returned. the split joins the Undo step of the field's
+	 * last change when that came within CAPTURE_MS, as Yjs groups it, so one Undo takes the Return back whole
+	 */
+	split(tail: string, at?: number): EditSession
 	close(): void
 }
 
@@ -40,6 +46,8 @@ type SessionRange = {
 	whole: boolean
 	/** opened on a Document with no text yet: its first field */
 	fresh: boolean
+	/** the text before a new Block's blank line went in (`openEditAfter`), null for an existing Block's session */
+	opened: string | null
 }
 
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/
@@ -67,7 +75,11 @@ function openFence(text: string): string | null {
 }
 
 /** one user change, as the whole text before and after it */
-type TextChange = { before: string; after: string }
+/** `started` and `typed` are a session keystroke run's first and last time, the Undo step grouping's clock */
+type TextChange = { before: string; after: string; started?: number; typed?: number }
+
+/** keystrokes closer than this are one Undo step, as Yjs's UndoManager `captureTimeout` default (UndoManager.js:166) */
+const CAPTURE_MS = 500
 
 /**
  * what one undo takes back: the user's changes in order. a step is a list, not one before/after pair,
@@ -77,17 +89,23 @@ type TextChange = { before: string; after: string }
 type UndoStep = TextChange[]
 
 /** an Agent's colour on text a Disk merge changed; see CONTEXT.md "Agent highlight" */
-/** `at` is when the change landed, in ms since the epoch, for the tooltip's time */
 export type Highlight = {
 	author: AgentAuthor
 	start: number
 	end: number
+	/** when the change landed, in ms since the epoch, for the tooltip's time */
 	at: number
 	/**
 	 * for a Block that kept its kind: the runs of its painted text that changed, which editmd marks inline instead of
 	 * the whole Block (web/src/changes.ts:48-74); none for a new or retyped Block, or once the user edits it
 	 */
 	runs?: ChangedRun[]
+	/** how many changes editmd reports in the Block, a list's items apart (changes.ts:28-56); one when not set */
+	changes?: number
+	/** with more than one change: the index in `runs` each change starts at, where editmd's reveal stops */
+	firsts?: number[]
+	/** where children of a list or quote were taken away, which editmd marks with a line between those left */
+	gaps?: Gap[]
 	/**
 	 * for a Block that only lost text: the painted text taken away, which editmd's "Deleted by" marker shows in its
 	 * title (changes.ts:71-73, highlights.ts:189-219); the port marks the Block whole and names the text in its tooltip
@@ -143,6 +161,13 @@ export const caretThrough = (edits: readonly TextEdit[], at: number): number =>
 	mappedThrough(edits, at, 'end')
 
 /**
+ * where a field's caret at `at` lands after a Format command's `edits`: syntax the command put in right at the caret
+ * comes before it, as ProseMirror maps a cursor through a step (assoc 1), so typing goes on after `## `
+ */
+export const caretPastInsertions = (edits: readonly TextEdit[], at: number): number =>
+	mappedThrough(edits, at, 'start')
+
+/**
  * the text an undo step started from, with the outside changes that landed between its changes (and after the last,
  * up to `now`) merged in: what the text would be had the user typed nothing, so the step's own changes can be told
  * from an agent's
@@ -182,12 +207,22 @@ export class Document {
 		return this.#baseline
 	}
 
+	/**
+	 * the text a save writes: `text` without the blank line of a new Block that holds nothing yet (`openEditAfter`), as
+	 * editmd never writes its empty paragraph. the Edit session stays open, so typing there brings the Block back
+	 */
+	get textToSave(): string {
+		const session = this.#session
+		if (session?.opened == null || session.start !== session.end) return this.#text
+		return this.#text.slice(0, session.start - 2) + this.#text.slice(session.start)
+	}
+
 	get isDirty(): boolean {
-		return this.#text !== this.#baseline
+		return this.textToSave !== this.#baseline
 	}
 
 	markSaved(): void {
-		this.#baseline = this.#text
+		this.#baseline = this.textToSave
 	}
 
 	/** start over from `text` as both text and Baseline (Revert to Saved): no session, no highlights or Deletions */
@@ -195,10 +230,18 @@ export class Document {
 		this.#session = null
 		this.#highlights = []
 		this.#deletions = []
-		this.#undoSteps = []
-		this.#redoSteps = []
+		this.forgetHistory()
 		this.#baseline = text
 		this.#setText(text)
+	}
+
+	/**
+	 * nothing left to undo or redo, as editmd's editor is built anew, its Yjs UndoManager with it, each time Source mode
+	 * turns on or off (editor.ts:303-320); the text stays as it is
+	 */
+	forgetHistory(): void {
+		this.#undoSteps = []
+		this.#redoSteps = []
 	}
 
 	get blocks(): readonly Block[] {
@@ -279,6 +322,21 @@ export class Document {
 		return this.#openSession(block.start, block.end)
 	}
 
+	/**
+	 * an Edit session for a new, empty Block right after Block `index`, as editmd's Return at a Block's end makes an
+	 * empty paragraph (splitBlock): a blank line goes in after the Block and the field writes after it; closed untouched,
+	 * the blank line goes again and nothing joins the undo history
+	 */
+	openEditAfter(index: number): EditSession {
+		this.#endSession()
+		const { end } = this.#blockAt(index)
+		const opened = this.#text
+		this.#splice([{ start: end, end, insert: '\n\n' }])
+		const session = this.#openSession(end + 2, end + 2)
+		this.#session!.opened = opened
+		return session
+	}
+
 	/** Source mode's field: one Edit session over the whole text, so outside changes defer into it like a Block's */
 	openSourceEdit(): EditSession {
 		// over blank text it is an empty Document's first field ("Start writing…"), a Block's field in all but name
@@ -293,7 +351,8 @@ export class Document {
 			deferred: null,
 			changes: [],
 			whole,
-			fresh: this.#text.trim() === ''
+			fresh: this.#text.trim() === '',
+			opened: null
 		}
 		this.#session = range
 
@@ -308,7 +367,7 @@ export class Document {
 			get end() {
 				return range.end
 			},
-			update: (field) => this.#updateSession(range, field),
+			update: (field, at = Date.now()) => this.#updateSession(range, field, at),
 			takeOutsideChange: () => {
 				if (this.#session !== range || range.deferred === null) return null
 				const shown = range.deferred.field
@@ -316,17 +375,38 @@ export class Document {
 				range.deferred = null
 				return { text, edits: textEdits(shown, text) }
 			},
+			split: (tail, at = Date.now()) => this.#split(range, tail, at),
 			close: () => {
 				if (this.#session === range) this.#endSession()
 			}
 		}
 	}
 
+	#split(range: SessionRange, tail: string, at: number): EditSession {
+		if (this.#session !== range) throw new Error('edit session is closed')
+		const typed = range.changes.at(-1)?.typed
+		const steps = this.#undoSteps.length
+		this.#endSession()
+		const index = this.#blocks.findLastIndex((block) => block.start < range.end)
+		const before = this.#text
+		const { end } = this.#blockAt(index)
+		this.#splice([{ start: end, end, insert: `\n\n${tail}` }])
+		const change = { before, after: this.#text }
+		const joins = this.#undoSteps.length > steps && typed !== undefined && at - typed < CAPTURE_MS
+		if (joins) this.#undoSteps.at(-1)!.push(change)
+		else this.#push([change])
+		return this.openEdit(index + 1)
+	}
+
 	/** close the open Edit session, if any, keeping its typing as one undo step */
 	#endSession(): void {
 		const session = this.#session
 		this.#session = null
-		if (!session || session.changes.length === 0) return
+		if (!session) return
+		if (session.opened !== null && session.end === session.start) {
+			return this.#splice([{ start: session.start - 2, end: session.start, insert: '' }])
+		}
+		if (session.changes.length === 0) return
 		const typed = this.#text
 		// a fence typed and left open would make every later Block code: closed at the Block's end, as editmd's input
 		// rule makes a code block of that Block alone
@@ -335,14 +415,9 @@ export class Document {
 			const ending = this.#text.slice(session.start, session.end).endsWith('\n') ? '' : '\n'
 			this.#splice([{ start: session.end, end: session.end, insert: `${ending}${fence}` }])
 		}
-		// a new document's text ends with a newline, as editmd's serializer writes every document; a file that has none
-		// keeps its bytes as they are
-		if (session.fresh && this.#text !== '' && !this.#text.endsWith('\n')) {
-			this.#splice([{ start: this.#text.length, end: this.#text.length, insert: '\n' }])
-		}
 		this.#settleReferences(withOutsideChanges(session.changes, typed))
 		if (this.#text !== typed) session.changes.push({ before: typed, after: this.#text })
-		this.#push(session.changes)
+		for (const step of this.#stepsOf(session.changes)) this.#push(step)
 	}
 
 	/**
@@ -444,7 +519,7 @@ export class Document {
 			const removed = blocksBefore
 				.slice(hunk.aStart + paired, hunk.aEnd)
 				.map((block, offset) =>
-					block.kind === 'frontmatter' ? '' : before[hunk.aStart + paired + offset]!
+					block.kind === 'frontmatter' ? '' : describedText(before[hunk.aStart + paired + offset]!)
 				)
 				.filter((slice) => slice !== '')
 			if (removed.length === 0) continue
@@ -461,11 +536,13 @@ export class Document {
 			if (block.kind === 'frontmatter') continue
 			const previous = was.get(index)
 			const now = this.#text.slice(block.start, block.end)
-			const runs = previous === undefined ? null : changedText(previous, now)
-			const removed = runs?.length === 0 ? removedText(previous!, now) : null
+			const change = previous === undefined ? null : blockChange(previous, now)
 			const highlight: Highlight = { author: credited, start: block.start, end: block.end, at }
-			if (runs && runs.length > 0) highlight.runs = runs
-			if (removed !== null) highlight.removed = removed
+			if (change && change.runs.length > 0) highlight.runs = change.runs
+			if (change?.removed != null) highlight.removed = change.removed
+			if (change && change.changes > 1) highlight.changes = change.changes
+			if (change && change.firsts.length > 1) highlight.firsts = change.firsts
+			if (change && change.gaps.length > 0) highlight.gaps = change.gaps
 			this.#highlights.push(highlight)
 		}
 		this.#highlights.sort((a, b) => a.start - b.start)
@@ -483,7 +560,7 @@ export class Document {
 		return this.#blocks.map((block) => this.#text.slice(block.start, block.end))
 	}
 
-	#updateSession(range: SessionRange, field: string): void {
+	#updateSession(range: SessionRange, field: string, at: number): void {
 		if (this.#session !== range) throw new Error('edit session is closed')
 
 		const source = range.deferred
@@ -495,18 +572,43 @@ export class Document {
 
 		// per minimal edit, so a highlight inside the session (all of them in Source mode) keeps its text
 		if (this.#highlights.length > 0 || this.#deletions.length > 0) {
-			for (const edit of textEdits(current, source)) {
-				this.#shiftHighlights(range.start + edit.start, range.start + edit.end, edit.insert.length)
+			let text = this.#text
+			for (const { start, end, insert } of textEdits(current, source)) {
+				this.#shiftHighlights(text, range.start + start, range.start + end, insert)
+				text = text.slice(0, range.start + start) + insert + text.slice(range.start + end)
 			}
 		}
 		const before = this.#text
-		this.#setText(this.#text.slice(0, range.start) + source + this.#text.slice(range.end))
+		let text = this.#text.slice(0, range.start) + source + this.#text.slice(range.end)
+		// a new document's text ends with a newline, as editmd's serializer writes every document, in every Undo step
+		if (range.fresh && !text.endsWith('\n')) text += '\n'
+		this.#setText(text)
 		range.end = range.start + source.length
 
 		// keystrokes with nothing from outside in between are one change: the same string object links them
 		const last = range.changes.at(-1)
-		if (last?.after === before) last.after = this.#text
-		else range.changes.push({ before, after: this.#text })
+		if (last?.after === before && at - (last.typed ?? at) < CAPTURE_MS) {
+			last.after = this.#text
+			last.typed = at
+		} else {
+			// a new Block's first keystroke takes back its blank line too when undone
+			const from = last ? before : (range.opened ?? before)
+			range.changes.push({ before: from, after: this.#text, started: at, typed: at })
+		}
+	}
+
+	/** the session's changes as Undo steps: a new step where a keystroke run starts CAPTURE_MS or more after the last */
+	#stepsOf(changes: readonly TextChange[]): UndoStep[] {
+		const steps: UndoStep[] = []
+		let typed: number | undefined
+		for (const change of changes) {
+			const pause =
+				change.started !== undefined && typed !== undefined && change.started - typed >= CAPTURE_MS
+			if (steps.length === 0 || pause) steps.push([])
+			steps.at(-1)!.push(change)
+			typed = change.typed ?? typed
+		}
+		return steps
 	}
 
 	/**
@@ -540,7 +642,7 @@ export class Document {
 		const suffix =
 			after === '' ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n'
 		const insert = `${prefix}${shown}${suffix}`
-		this.#shiftHighlights(at, at, insert.length)
+		this.#shiftHighlights(this.#text, at, at, insert)
 		this.#setText(before + insert + after)
 		session.start = at + prefix.length
 		session.end = session.start + shown.length
@@ -563,7 +665,7 @@ export class Document {
 		let text = this.#text
 		let overlapped = false
 		for (const { start, end, insert } of edits) {
-			this.#shiftHighlights(start, end, insert.length)
+			this.#shiftHighlights(text, start, end, insert)
 			text = text.slice(0, start) + insert + text.slice(end)
 			if (!session || start >= session.end) continue
 
@@ -597,11 +699,11 @@ export class Document {
 	}
 
 	/**
-	 * keep highlights on their text when `[start, end)` becomes `insertLength` characters, and Deletions between
-	 * theirs: one at `start` stays before what is typed there, one inside the replaced text moves to its start
+	 * keep highlights on their text when `[start, end)` of `text` becomes `insert`, and Deletions between theirs:
+	 * one at `start` stays before what is typed there, one inside the replaced text moves to its start
 	 */
-	#shiftHighlights(start: number, end: number, insertLength: number): void {
-		const delta = insertLength - (end - start)
+	#shiftHighlights(text: string, start: number, end: number, insert: string): void {
+		const delta = insert.length - (end - start)
 		for (const deletion of this.#deletions) {
 			if (deletion.offset <= start) continue
 			deletion.offset = deletion.offset >= end ? deletion.offset + delta : start
@@ -612,11 +714,33 @@ export class Document {
 				highlight.start += delta
 				highlight.end += delta
 			} else {
+				const shown = text.slice(highlight.start, highlight.end)
+				const within = highlight.start <= start && end <= highlight.end
+				const from = highlight.start
 				// a start inside the replaced text moves past what replaces it, which is not the highlight's
-				if (highlight.start > start) highlight.start = start + insertLength
+				if (highlight.start > start) highlight.start = start + insert.length
 				highlight.end = Math.max(highlight.start, highlight.end + delta)
-				// its text changed under it, so the runs no longer name what is painted
-				delete highlight.runs
+				// runs and gaps follow an edit inside the Block (editmd's decorations, highlights.ts:94); one across
+				// its ends leaves nothing to follow, so the Block is marked whole
+				const edited = shown.slice(0, start - from) + insert + shown.slice(end - from)
+				if (!within) {
+					delete highlight.runs
+					delete highlight.firsts
+					delete highlight.gaps
+				} else if (highlight.runs) {
+					const runs = mappedRuns(highlight.runs, shown, edited)
+					// a change whose text went takes its reveal stop along, which the runs' indices no longer name
+					if (runs.length < highlight.runs.length) delete highlight.firsts
+					highlight.runs = runs
+					// with its changed text gone, nothing of the Block is marked
+					if (runs.length === 0) highlight.end = highlight.start
+				}
+				if (within && highlight.gaps) {
+					highlight.gaps = highlight.gaps.map((gap) => ({
+						...gap,
+						before: gap.before && (mappedRuns([gap.before], shown, edited)[0] ?? null)
+					}))
+				}
 			}
 		}
 		// a highlight whose text is gone is dropped, as editmd's decorations are (highlights.ts:145-150, 169-170)

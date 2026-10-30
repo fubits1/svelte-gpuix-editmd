@@ -16,6 +16,15 @@ describe('settleReferences', () => {
 		)
 	})
 
+	// TextFile keeps a leading U+FEFF as content, which the parser drops from its offsets
+	test('a text starting with a byte order mark writes its references inline at their own offsets', () => {
+		expect(
+			settleReferences(`\u{FEFF}${BEFORE}`, '\u{FEFF}see [docs][d] and [d] here\n\nlast\n')
+		).toBe(
+			'\u{FEFF}see [docs](https://x.example "T") and [d](https://x.example "T") here\n\nlast\n'
+		)
+	})
+
 	test('an image reference becomes an inline image', () => {
 		expect(settleReferences('![pic][p]\n\n[p]: pic.png\n\nlast\n', '![pic][p]\n\nlast\n')).toBe(
 			'![pic](pic.png)\n\nlast\n'
@@ -45,6 +54,28 @@ describe('settleReferences', () => {
 	test('a reference that had no definition stays as written', () => {
 		expect(settleReferences('a [x][nope] b\n', 'a [x][nope] b, typed\n')).toBe(
 			'a [x][nope] b, typed\n'
+		)
+	})
+})
+
+// the port's own rules, not compared with editmd's output: CommonMark's first definition wins, a reference the edit
+// itself touched is left as typed, and mdast-util-to-markdown escapes a title's quotes
+describe('settleReferences, by its own rules', () => {
+	test('a label defined twice resolves to its first definition', () => {
+		expect(settleReferences('see [x]\n\n[x]: /one\n[x]: /two\n', 'see [x]\n')).toBe(
+			'see [x](/one)\n'
+		)
+	})
+
+	test('a reference the edit itself touched stays as typed', () => {
+		expect(settleReferences('see [x] here\n\n[x]: /one\n', 'see [xy] here\n')).toBe(
+			'see [xy] here\n'
+		)
+	})
+
+	test('a title holding quotes keeps them escaped', () => {
+		expect(settleReferences('see [x]\n\n[x]: /one "say \\"hi\\""\n', 'see [x]\n')).toBe(
+			'see [x](/one "say \\"hi\\"")\n'
 		)
 	})
 })

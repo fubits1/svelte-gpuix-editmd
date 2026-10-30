@@ -72,8 +72,8 @@ describe('TextFile', () => {
 		expect(file.format.encoding).toBe(encoding)
 	})
 
-	// Foundation's `data(using: .windowsCP1252)` precomposes `e` + U+0301 into é (0xE9); editmd's file stays Windows-1252
-	// (swift), where the port turned it into UTF-8 with a notice
+	// Foundation's `data(using: .windowsCP1252)` precomposes `e` + U+0301 into é (0xE9), so editmd's file stays
+	// Windows-1252 (swift) instead of turning into UTF-8 with a notice
 	test('a decomposed letter Windows-1252 holds precomposed is written in Windows-1252', () => {
 		const file = TextFile.fromData(Uint8Array.from([0x63, 0x61, 0x66, 0xe9]))
 		const edited = file.replacingText('café ok')

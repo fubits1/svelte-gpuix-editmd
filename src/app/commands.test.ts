@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import { BLOCK_TRANSFORMS, isFormatCommand } from './commands.ts'
+import { formatBlock } from '../core/formatBlock.ts'
+import { isFormatCommand } from './commands.ts'
 
-describe('BLOCK_TRANSFORMS', () => {
+describe('the Format menu commands', () => {
 	test.each([
 		['heading1', 'Title', '# Title'],
 		['heading2', 'Title', '## Title'],
@@ -17,7 +18,7 @@ describe('BLOCK_TRANSFORMS', () => {
 		['indent', '- one\n- two', '- one\n  - two'],
 		['outdent', '- one\n  - two', '- one\n- two']
 	] as const)('%s turns %j into %j', (command, source, expected) => {
-		expect(BLOCK_TRANSFORMS[command](source)).toBe(expected)
+		expect(formatBlock(command, source)).toBe(expected)
 	})
 })
 

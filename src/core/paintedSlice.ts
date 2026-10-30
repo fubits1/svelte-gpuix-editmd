@@ -1,5 +1,5 @@
 import type { Block } from '../engine/blocks.ts'
-import { footnoteLink } from './footnotes.ts'
+import { footnoteMark } from './footnotes.ts'
 
 type Rewrite = { start: number; end: number; text: string }
 
@@ -53,25 +53,9 @@ export function withoutInfoString(source: string): string {
 }
 
 /**
- * a blockquote's `source` without its outer markers: one `>` (up to three spaces before it, one after) off each
- * line, so its view paints the rail and native <markdown> only the content. lazy lines stay, and an inner quote
- * keeps its own `>`
- */
-export function unquoted(source: string): string {
-	return source.replace(
-		/^( {0,3})>([ \t])?/gm,
-		(_all, indent: string, after: string | undefined) => {
-			if (after !== '\t') return ''
-			// CommonMark: a tab after the marker counts to the next stop of 4; the marker's space takes one column of it
-			const width = 4 - ((indent.length + 1) % 4)
-			return ' '.repeat(width - 1)
-		}
-	)
-}
-
-/**
  * what native <markdown> paints for `source`, the part of `block` that starts at Document offset `start`:
- * each footnote reference as a link run (native paints `[^label]` literally), and each link with
+ * each footnote reference as its raised label (native paints `[^label]` literally), each inline HTML tag as a code
+ * span of its source, as editmd shows a tag in mono (style.css:346-349), and each link with
  * no text as a link whose text is its own source in code, as editmd shows it (style.css:363-366), since
  * native paints it as nothing. untouched text stays as written
  */
@@ -81,7 +65,12 @@ export function paintedSlice(source: string, start: number, block: Block): strin
 		...(block.footnoteReferences ?? []).map((reference) => ({
 			start: reference.start,
 			end: reference.end,
-			text: footnoteLink(reference)
+			text: footnoteMark(reference)
+		})),
+		...(block.inlineHtml ?? []).map((tag) => ({
+			start: tag.start,
+			end: tag.end,
+			text: inlineCode(source.slice(tag.start - start, tag.end - start))
 		})),
 		...(block.emptyLinks ?? []).map((link) => {
 			const written = source.slice(link.start - start, link.end - start)
@@ -103,5 +92,12 @@ export function paintedSlice(source: string, start: number, block: Block): strin
 		result += source.slice(at - start, rewrite.start - start) + rewrite.text
 		at = rewrite.end
 	}
-	return result + source.slice(at - start)
+	result += source.slice(at - start)
+	// a Block inside a quote or a list item paints as its own markdown, without what its container puts on its lines
+	if (block.prefix === undefined) return result
+	const prefix = new RegExp(`^${block.prefix}`)
+	return result
+		.split('\n')
+		.map((line, index) => (index === 0 ? line : line.replace(prefix, '')))
+		.join('\n')
 }

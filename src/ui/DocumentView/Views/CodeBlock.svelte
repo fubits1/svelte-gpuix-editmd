@@ -8,29 +8,34 @@
 -->
 <script lang="ts">
 	import { codeText } from '../../../app/codeText.ts'
-	import { useTheme } from '../../../app/theme.svelte.ts'
+	import { useQuoteColour, useTheme } from '../../../app/theme.svelte.ts'
 	import { documentController } from '../controller.svelte.ts'
 	import { type BlockViewProps, CODE_LABEL_TOP, NO_FIND } from '../DocumentView.model.ts'
 
-	let { block, index }: BlockViewProps = $props()
+	let { block, testKey }: BlockViewProps = $props()
 
 	const theme = useTheme()
+	const quoteColour = useQuoteColour()
 
-	/** the code between the fences, as editmd's `pre` shows it */
-	const code = $derived(codeText(documentController.sliceOf(block)))
+	/**
+	 * the code between the fences, as editmd's `pre` shows it; inside a quote or a list item without what its container
+	 * puts in front of each line (`paintedSliceOf`)
+	 */
+	const code = $derived(codeText(documentController.paintedSliceOf(block)))
 
 	/** editmd's `text-transform: lowercase` on the label */
 	const label = $derived(block.lang ? block.lang.toLowerCase() : null)
 </script>
 
 <div class="code-block">
-	<div class="card" testid={`code-card-${index}`}>
-		<code class="lines" testid={`code-${index}`} {code} theme={theme().textTheme}></code>
+	<div class="card" testid={`code-card-${testKey}`}>
+		<code class="lines" testid={`code-${testKey}`} {code} theme={quoteColour(theme().textTheme)}
+		></code>
 		{#if label}
 			<!-- editmd's label is `::before` content, which its find never matches -->
 			<text
 				class="label"
-				testid={`code-label-${index}`}
+				testid={`code-label-${testKey}`}
 				highlight={NO_FIND}
 				style:top={`${theme().scaled(CODE_LABEL_TOP)}px`}>{label}</text
 			>
@@ -40,7 +45,7 @@
   the room editmd's code block keeps below its card: the pre's margin, then the diagram box `hidden` cannot hide
   (diagrams.ts:78-87, `.diagram { display: flex }` outranks it); a click there opens the Block, as in editmd
 -->
-	<div class="diagram-room" testid={`code-room-${index}`}></div>
+	<div class="diagram-room" testid={`code-room-${testKey}`}></div>
 </div>
 
 <style>

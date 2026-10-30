@@ -8,10 +8,19 @@ function headingMargin(block: Block, side: 'top' | 'bottom'): BlockMargin | null
 	return `heading-${Math.min(Math.max(level, 1), 6)}-${side}` as BlockMargin
 }
 
-/** editmd's top margin of `block`: headings and rules have one, every other Block none */
+/**
+ * editmd's top margin of `block`: headings and rules have one; a quote or list has none of its own, but neither has
+ * top padding or a top border, so its first child's top margin collapses through it (`innerTop`)
+ */
 function topOf(block: Block): BlockMargin | null {
 	if (block.kind === 'heading') return headingMargin(block, 'top')
-	return block.kind === 'thematicBreak' ? 'rule-margin' : null
+	return block.kind === 'thematicBreak' ? 'rule-margin' : innerTop(block)
+}
+
+/** the top margin a quote's or list's first child brings out through it */
+function innerTop(block: Block): BlockMargin | null {
+	const first = block.kind === 'blockquote' ? block.children?.[0] : block.items?.[0]?.children?.[0]
+	return first ? topOf(first) : null
 }
 
 /** editmd's bottom margin of `block`: a link definition line has none, the body Blocks 1em */
@@ -27,15 +36,21 @@ const lengthOf = (margin: BlockMargin | null) => (margin === null ? 0 : BLOCK_MA
 /**
  * the space above `block`, after `previous`, as the size token (palette.ts SIZES) of the margin that wins when
  * the two collapse as CSS margins do: the larger of `previous`'s bottom and `block`'s top. null for none: the
- * first Block has no top margin (`.markdown-body > :first-child`), and neither has the Block after front matter,
- * which sits before editmd's `.markdown-body`, so only its 2rem counts
+ * first Block has no top margin of its own (`.markdown-body > :first-child`), and neither has the Block after front
+ * matter, which sits before editmd's `.markdown-body`; a margin its first child brings out through it still counts
  */
 export function spaceAbove(previous: Block | undefined, block: Block): BlockMargin | null {
-	if (previous === undefined) return null
-	const bottom = bottomOf(previous)
-	if (previous.kind === 'frontmatter') return bottom
-	const top = topOf(block)
-	return lengthOf(top) > lengthOf(bottom) ? top : bottom
+	const first = previous === undefined || previous.kind === 'frontmatter'
+	const top = first ? innerTop(block) : topOf(block)
+	return previous === undefined ? top : larger(bottomOf(previous), top)
+}
+
+/**
+ * the space above `block` among a list item's own Blocks, after `previous`: as `spaceAbove`, except that a paragraph
+ * there has no margin, editmd's `li > p { margin: 0 }` (style.css:235), so only `block`'s top counts after one
+ */
+export function spaceInItem(previous: Block | undefined, block: Block): BlockMargin | null {
+	return previous?.kind === 'paragraph' ? topOf(block) : spaceAbove(previous, block)
 }
 
 /** the larger of two collapsing margins, the first on a tie */

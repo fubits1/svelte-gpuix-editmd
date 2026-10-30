@@ -10,7 +10,7 @@ export default defineConfig({
 			exclude: ['**/*.test.ts', '**/*.svelte'],
 			reporter: ['text-summary', 'json-summary'],
 			reportsDirectory: 'coverage',
-			thresholds: { lines: 61.99, branches: 64.59, functions: 59.9, statements: 61.09 }
+			thresholds: { lines: 62, branches: 65, functions: 60, statements: 61 }
 		},
 		projects: [
 			{

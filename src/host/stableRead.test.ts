@@ -2,8 +2,8 @@ import { describe, expect, test } from 'vitest'
 import { stableRead } from './stableRead.ts'
 
 describe('stableRead', () => {
-	// an agent writing a file in place (truncate, then write) was read half written, and the empty or
-	// cut text merged into the open field; a read is taken only once two reads in a row agree
+	// an agent writing a file in place (truncate, then write) can be read half written, and the empty or
+	// cut text would merge into the open field; a read is taken only once two reads in a row agree
 	test('reads again until two reads in a row agree, waiting between them', () => {
 		const reads = ['', 'half', 'the whole file', 'the whole file']
 		const waits: number[] = []

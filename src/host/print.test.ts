@@ -4,13 +4,28 @@ import { describe, expect, test } from 'vitest'
 import { printablePage, removePrintedPages, writePrintablePage } from './print.ts'
 
 describe('print', () => {
-	test('a printable page renders the document with its title and without front matter', () => {
-		const page = printablePage('---\ntitle: A\n---\n\n# Heading\n\nSome **bold**.\n', 'notes.md')
+	// editmd prints its live page (Document.swift:312-319 `webView.printOperation`), front matter box included
+	test('a printable page renders the document with its title, front matter in its box', () => {
+		const page = printablePage('---\ntitle: <A>\n---\n\n# Heading\n\nSome **bold**.\n', 'notes.md')
 
 		expect(page).toContain('<title>notes.md</title>')
+		expect(page).toContain('<pre class="frontmatter">---\ntitle: &#60;A&#62;\n---\n</pre>')
 		expect(page).toContain('<h1')
 		expect(page).toContain('<strong>bold</strong>')
-		expect(page).not.toContain('title: A')
+	})
+
+	// editmd's footnote definitions carry no back link (preset-gfm footnote definition renders none)
+	test('footnotes print without back links', () => {
+		const page = printablePage('a[^1]\n\n[^1]: note\n', 'x.md')
+		expect([page.includes('data-footnote-backref'), page.includes('↩')]).toEqual([false, false])
+	})
+
+	test('a diagram prints as its drawing, not its source', () => {
+		const page = printablePage('```mermaid\nflowchart LR\n  A --> B\n```\n', 'x.md')
+		expect([page.includes('<img src="data:image/svg+xml'), page.includes('flowchart LR')]).toEqual([
+			true,
+			false
+		])
 	})
 
 	// editmd prints its page, whose code is in `--font-mono: ui-monospace, "SF Mono", Menlo, monospace` (style.css:14)
@@ -73,17 +88,33 @@ describe('print', () => {
 		]).toEqual([false, false, false, false, true, true])
 	})
 
-	// `//host/p.png` has no scheme, so it passed as a relative path, and a file:// page resolves it to
+	// `//host/p.png` has no scheme yet is no relative path: a file:// page resolves it to
 	// `file://host/…`, which the policy lets load
 	test('an image from another host with no scheme prints as its alt text', () => {
 		const page = printablePage('![pic](//evil.example/p.png)\n', 'x.md')
 		expect([page.includes('evil.example'), page.includes('pic')]).toEqual([false, true])
 	})
 
-	// the same look however the link is spelled (inline in italics, by reference plain)
-	test('a neutralised link prints in italics, inline or by reference', () => {
+	// editmd prints its live page, which loads no scheme but its own (web/src/remote.ts:15), so a `file:` URL written in
+	// the document stays blocked there, as in the port's window (core/remote.ts); a plain path still loads
+	test('an image written as a file: URL prints as its alt text, a path as an image', () => {
+		const page = printablePage('![pic](file:///Users/me/p.png) ![shot](/Users/me/s.png)\n', 'x.md')
+		expect([
+			page.includes('file:///Users/me/p.png'),
+			page.includes('alt="pic"'),
+			page.includes('src="/Users/me/s.png"')
+		]).toEqual([false, false, true])
+	})
+
+	// editmd's page keeps such a link's `a` with no href (Milkdown's sanitizeLinkHref), styled as every
+	// `.markdown-body a` (style.css:170-180), however the link is spelled
+	test('a neutralised link prints as a link with no href, inline or by reference', () => {
 		const page = printablePage('[in](slack://a) [ref][r]\n\n[r]: slack://b\n', 'x.md')
-		expect([page.includes('<em>in</em>'), page.includes('<em>ref</em>')]).toEqual([true, true])
+		expect([
+			page.includes('<a>in</a>'),
+			page.includes('<a>ref</a>'),
+			page.includes('a{color:')
+		]).toEqual([true, true, true])
 	})
 
 	// editmd's page shows no "Footnotes" heading; satteri marks it sr-only, which the page must hide
@@ -92,7 +123,7 @@ describe('print', () => {
 		expect([page.includes('class="sr-only"'), page.includes('.sr-only{')]).toEqual([true, true])
 	})
 
-	// the page lives in a temporary folder, so a README's `![shot](img/shot.png)` printed broken
+	// the page lives in a temporary folder, so a README's `![shot](img/shot.png)` resolves only against a base set to the document's folder
 	test('relative images resolve against the document’s folder, and an untitled page has no base', () => {
 		const page = printablePage('![shot](img/shot.png)\n', 'README.md', '/Users/me/My Notes')
 		expect([

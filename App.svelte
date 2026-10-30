@@ -52,8 +52,11 @@
 	{#if findController.visible}
 		<FindBar />
 	{/if}
-	<!-- the label sits in the page's corner, below the find bar, as editmd's sits in the title bar beside it -->
-	<div class="page">
+	<!--
+	  the label sits in the page's corner, below the find bar, as editmd's sits in the title bar beside it. a wheel over
+	  the page shows an overlay scroller's thumb for a while (`ThemeController.pageScrolled`)
+	-->
+	<div class="page" onscroll={() => theme.pageScrolled()}>
 		<!--
 		  Source mode's field grows to its whole text, as editmd's `field-sizing: content`, so the column scrolls it as it
 		  scrolls the Blocks; its testid names the thumb `page-scroller-thumb` too
@@ -115,13 +118,16 @@
 		top: 8px;
 		right: 10px;
 	}
-	/* editmd's `NSFont.smallSystemFontSize` in `secondaryLabelColor`, window chrome that never zooms */
+	/*
+	 * editmd's `NSFont.smallSystemFontSize` in `secondaryLabelColor`, window chrome that never zooms
+	 * (EditorWindowController.swift:340, 358)
+	 */
 	.status {
 		font-size: var(--size-status-text);
-		color: var(--muted);
+		color: var(--secondary-label);
 	}
-	/* editmd paints Not Saved in `systemRed` */
+	/* editmd paints Not Saved in `systemRed` (EditorWindowController.swift:358) */
 	.status-failed {
-		color: var(--danger);
+		color: var(--system-red);
 	}
 </style>

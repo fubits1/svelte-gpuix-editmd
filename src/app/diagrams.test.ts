@@ -15,7 +15,7 @@ describe('diagramSource', () => {
 		expect(diagramSource('```mermaid\nflowchart LR\n  A --> B\n')).toBe('flowchart LR\n  A --> B')
 	})
 
-	// a tilde fence closes with tildes, a longer fence with at least as many (`~~~` was taken as source)
+	// a tilde fence closes with tildes, a longer fence with at least as many; a closing `~~~` is no part of the source
 	test('a tilde fence and a longer fence close as GFM closes them', () => {
 		expect([
 			diagramSource('~~~mermaid\nflowchart LR\n  A --> B\n~~~'),

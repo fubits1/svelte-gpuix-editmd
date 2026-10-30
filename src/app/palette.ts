@@ -48,40 +48,45 @@ const BASE: Record<Appearance, BaseColours> = {
 	}
 }
 
+/**
+ * AppKit's colours editmd paints its window chrome in, read in Swift on this macOS as sRGB: systemRed for Find's
+ * no-match count and Not Saved (EditorWindowController.swift:301, 358), secondaryLabelColor for Saving… and Saved
+ */
+const APPKIT: Record<Appearance, Record<'system-red' | 'secondary-label', string>> = {
+	light: { 'system-red': '#ff383c', 'secondary-label': '#0000007f' },
+	dark: { 'system-red': '#ff4245', 'secondary-label': '#ffffff8c' }
+}
+
 /** editmd's Agent colours by slot, assigned in the order Agents first edit the file */
 const AGENTS: Record<Appearance, AgentColours> = {
 	light: ['#8250df', '#1a7f37', '#bc4c00', '#bf3989', '#0969da', '#1b7c83'],
 	dark: ['#ab7df8', '#3fb950', '#f0883e', '#f778ba', '#4493f8', '#39c5cf']
 }
 
+/** a share of full opacity as the two hex digits a `#rrggbbaa` colour ends in */
+const alphaHex = (share: number) =>
+	Math.round(share * 255)
+		.toString(16)
+		.padStart(2, '0')
+
 /** editmd tints an Agent's block with `color-mix(var(--agent) 13%, transparent)`; var() cannot fade a token, so the alpha is baked in */
-const TINT_ALPHA = Math.round(0.13 * 255)
-	.toString(16)
-	.padStart(2, '0')
+const TINT_ALPHA = alphaHex(0.13)
 
 /** editmd's changed text inside a Block, `.agent-change { background: color-mix(var(--agent) 18%, transparent) }` */
-const CHANGE_ALPHA = Math.round(0.18 * 255)
-	.toString(16)
-	.padStart(2, '0')
+const CHANGE_ALPHA = alphaHex(0.18)
 
 /** editmd's Deletion line, `color-mix(var(--agent) 70%, transparent)`, baked in as TINT_ALPHA is */
-const DELETED_ALPHA = Math.round(0.7 * 255)
-	.toString(16)
-	.padStart(2, '0')
+const DELETED_ALPHA = alphaHex(0.7)
 
 /** editmd's `.agent-legend button:hover`: `color-mix(var(--text) 8%, transparent)`, baked in as TINT_ALPHA is */
-const HOVER_ALPHA = Math.round(0.08 * 255)
-	.toString(16)
-	.padStart(2, '0')
+const HOVER_ALPHA = alphaHex(0.08)
 
 /** editmd's `--selection`, the accent at 22%, baked in as TINT_ALPHA is */
-const SELECTION_ALPHA = Math.round(0.22 * 255)
-	.toString(16)
-	.padStart(2, '0')
+const SELECTION_ALPHA = alphaHex(0.22)
 
 /** every colour token the views read through `var(--token)` */
 export function paletteFor(appearance: Appearance): Palette {
-	const palette: Palette = { ...BASE[appearance] }
+	const palette: Palette = { ...BASE[appearance], ...APPKIT[appearance] }
 	// the active find match: editmd shows WebKit's yellow find indicator behind it, and nothing on the other matches
 	// (editmd's screenshot); a wash cannot recolour the text (gap G4), so the strong `mark` stands in for the yellow
 	palette['find-active'] = BASE[appearance].mark
@@ -93,15 +98,15 @@ export function paletteFor(appearance: Appearance): Palette {
 	// editmd's `--selection: color-mix(in srgb, var(--accent) 22%, transparent)`, the open front matter's focus ring
 	palette.selection = `${BASE[appearance].accent}${SELECTION_ALPHA}`
 	/**
-	 * gpuix's Scroller paints its thumb in these, else in its own dark slate `#585b70` whatever the appearance;
-	 * editmd shows the system's overlay scroller, a quiet grey in light and dark, so faint, and muted on hover
-	 */
-	/**
 	 * gpuix's Tooltip paints its tip in these, else in its own `#313244` and `#cdd6f4` whatever the appearance; editmd's
 	 * tooltips are the system's, which the surface and the text colour come close to
 	 */
 	palette['tooltip-surface'] = BASE[appearance].surface
 	palette['tooltip-ink'] = BASE[appearance].text
+	/**
+	 * gpuix's Scroller paints its thumb in these, else in its own dark slate `#585b70` whatever the appearance;
+	 * editmd shows the system's overlay scroller, a quiet grey in light and dark, so faint, and muted on hover
+	 */
 	palette['scroller-thumb'] = BASE[appearance].faint
 	palette['scroller-thumb-hover'] = BASE[appearance].muted
 	AGENTS[appearance].forEach((colour, slot) => {
@@ -227,7 +232,7 @@ export function tableThemeFor(theme: GpuixTheme, zoom = 1): GpuixTheme {
 }
 
 /** a colour with no alpha, which GPUI paints as nothing */
-const NO_FILL = '#00000000'
+export const NO_FILL = '#00000000'
 
 /**
  * the `theme` a Block holding a link with no text paints in: editmd shows such a link as its source,
@@ -242,12 +247,37 @@ export function emptyLinkThemeFor(theme: GpuixTheme, hasCode: boolean): GpuixThe
 }
 
 /**
+ * the `theme` a Block holding inline HTML paints in: editmd shows each tag as its source, `span[data-type="html"] {
+ * font: 0.86em var(--font-mono); color: var(--muted) }` (style.css:346-349), with no fill. native <markdown> paints it
+ * as inline code (paintedSlice), so the code wash goes and code takes the muted colour; a Block with inline code of
+ * its own (`hasCode`) keeps `theme`, so its code keeps editmd's pill
+ */
+export function inlineHtmlThemeFor(theme: GpuixTheme, hasCode: boolean): GpuixTheme {
+	if (hasCode) return theme
+	return { ...theme, codeWash: NO_FILL, codeText: theme.textMuted }
+}
+
+/**
  * the `theme` a Block holding a link paints in while ⌘ is held: editmd's `body.cmd-down a { text-decoration-color:
  * currentColor }` (style.css:178-181) turns the underline to the link's own colour. native <markdown> paints a link
  * in the theme's `text` and its underline in `textMuted`, so `textMuted` takes the text colour
  */
 export function heldLinkThemeFor(theme: GpuixTheme): GpuixTheme {
 	return { ...theme, textMuted: theme.text }
+}
+
+/** editmd's `.markdown-body a { text-decoration-color: color-mix(var(--accent) 35%, transparent) }` */
+const LINK_UNDERLINE_ALPHA = alphaHex(0.35)
+
+/**
+ * the `theme` a Block holding a link paints in: editmd underlines a link in the accent at 35%, and while ⌘ is held in
+ * the link's own colour, the accent (style.css:170-181), wherever it sits. native <markdown> draws a link's underline in
+ * `textMuted` (and a strike line with it, which editmd draws in the text colour)
+ */
+export function linkThemeFor(theme: GpuixTheme, held: boolean): GpuixTheme {
+	// the page's caret is editmd's accent (`emptyLinkThemeFor`)
+	const accent = theme.caret ?? theme.textMuted
+	return { ...theme, textMuted: held ? accent : `${accent}${LINK_UNDERLINE_ALPHA}` }
 }
 
 /**
@@ -281,7 +311,7 @@ export function mutedThemeFor(theme: GpuixTheme): GpuixTheme {
  */
 export function plainFieldThemeFor(theme: GpuixTheme, colour?: string): GpuixTheme {
 	const text = colour ?? theme.text
-	return colour === undefined ? { ...theme, caret: text } : { ...theme, text, caret: text }
+	return { ...theme, text, caret: text }
 }
 
 /** editmd's h5 and h6 sizes in em, which native <markdown> would paint in its h4 tier */
@@ -317,12 +347,6 @@ export function headingThemeFor(theme: GpuixTheme, level: number, zoom = 1): Gpu
 }
 
 /**
- * the views' own lengths in CSS px at actual size, each read as `var(--size-<name>)`. only what editmd paints
- * inside its web page is here, since WKWebView's pageZoom scales the page and nothing around it: the save-status
- * label, the scrollbar and the link dialog (an NSAlert in editmd) stay out, and so do 1px hairline borders,
- * which WebKit snaps to whole device pixels
- */
-/**
  * editmd's margins around the Blocks in CSS px, which `spaceAbove` (blockSpacing.ts) collapses between two
  * neighbours: `p, ul, ol, blockquote, pre, table, dl { margin: 0 0 1em }`, headings `margin: 1.6em 0 0.6em` in
  * their own em (2.1, 1.55, 1.25, 1.05, 0.95 and 0.9 of the 16px body), `hr { margin: 2em 0 }` and
@@ -356,6 +380,12 @@ export type BlockMargin = keyof typeof BLOCK_MARGINS
  */
 export const LIST_INDENT = 28
 
+/**
+ * the views' own lengths in CSS px at actual size, each read as `var(--size-<name>)`. only what editmd paints
+ * inside its web page is here, since WKWebView's pageZoom scales the page and nothing around it: the save-status
+ * label, the scrollbar and the link dialog (an NSAlert in editmd) stay out, and so do 1px hairline borders,
+ * which WebKit snaps to whole device pixels
+ */
 const SIZES: Record<string, number> = {
 	// editmd's `#editor { max-width: 46rem; padding: 3rem 2.5rem 40vh }`; the 40vh is a share of the window, not zoomed
 	'page-measure': 736,
@@ -388,10 +418,8 @@ const SIZES: Record<string, number> = {
 	'frontmatter-radius': 8,
 	'frontmatter-text': 12.5,
 	'frontmatter-line-height': 19.375,
-	// open, `.frontmatter:focus { box-shadow: 0 0 0 2px var(--selection) }` as a border taken off the padding
+	// open, `.frontmatter:focus { box-shadow: 0 0 0 2px var(--selection) }` as an outline outside the box
 	'frontmatter-focus-ring': 2,
-	'frontmatter-focus-padding-y': 10,
-	'frontmatter-focus-padding-x': 14,
 	// Source mode's field, `.source { font: 14px/1.6 var(--font-mono) }`
 	'source-text': 14,
 	'source-line-height': 22.4,
@@ -441,8 +469,8 @@ const SIZES: Record<string, number> = {
 	'checkbox-offset': 5.5,
 	'checkbox-radius': 4,
 	/**
-	 * text with no size of its own paints at GPUI's 16px and so never zoomed: a bullet or number marker
-	 * and a blocked image's alt text take these instead, 16px at actual size so zoom 1 paints as before
+	 * text with no size of its own paints at GPUI's 16px and so never zooms: a bullet or number marker
+	 * and a blocked image's alt text take these instead, 16px at actual size, so zoom 1 paints them at GPUI's own 16px
 	 */
 	'list-marker': 16,
 	'images-gap': 8,

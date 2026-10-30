@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import {
-	clipboardEnvironment,
-	readClipboardUrl,
-	writeClipboard,
-	type WriteInput
-} from './clipboard.ts'
+import { readClipboardUrl, writeClipboard, type WriteInput } from './clipboard.ts'
+import { withUtf8Locale } from './locale.ts'
 
 describe('writeClipboard', () => {
 	test('hands the text to pbcopy on its stdin, and says whether it worked', () => {
@@ -27,11 +23,11 @@ describe('writeClipboard', () => {
 
 // pbcopy and pbpaste read and write in the locale's encoding, the C encoding when there is none (man pbcopy), and an
 // app started from Finder has no LANG: their children always get a UTF-8 locale
-describe('clipboardEnvironment', () => {
+describe('withUtf8Locale', () => {
 	test('gives pbcopy and pbpaste a UTF-8 locale whatever the app was started with', () => {
 		expect([
-			clipboardEnvironment({ PATH: '/usr/bin' }),
-			clipboardEnvironment({ PATH: '/usr/bin', LANG: 'de_DE.ISO8859-1', LC_ALL: 'C' })
+			withUtf8Locale({ PATH: '/usr/bin' }),
+			withUtf8Locale({ PATH: '/usr/bin', LANG: 'de_DE.ISO8859-1', LC_ALL: 'C' })
 		]).toEqual([
 			{ PATH: '/usr/bin', LC_ALL: 'en_US.UTF-8' },
 			{ PATH: '/usr/bin', LANG: 'de_DE.ISO8859-1', LC_ALL: 'en_US.UTF-8' }

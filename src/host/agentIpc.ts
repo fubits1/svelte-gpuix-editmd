@@ -25,11 +25,14 @@ type HelloMessage = { kind: 'hello'; from: string }
 /** a window about to open `path` asks the others whether one has it; that one comes forward and answers `yes` */
 type FocusMessage = { kind: 'focus'; path: string }
 
+/** Window > Bring All to Front in one window: every other comes forward */
+type ActivateMessage = { kind: 'activate' }
+
 /** what a window answers a focus message with: whether its document is `path`, and how it comes forward */
-export type FocusHandler = { owns: (path: string) => boolean; focus: () => void }
+type FocusHandler = { owns: (path: string) => boolean; focus: () => void }
 
 /** closes the listener; `socket` is its path, which a rename from this window leaves out */
-export type ReportListener = (() => Promise<void>) & { readonly socket: string }
+type ReportListener = (() => Promise<void>) & { readonly socket: string }
 
 let listeners = 0
 
@@ -76,6 +79,7 @@ export async function listenForReports(
 				const message = JSON.parse(payload) as Partial<RenameMessage> &
 					Partial<HelloMessage> &
 					Partial<FocusMessage> &
+					Partial<ActivateMessage> &
 					Partial<AgentEditReport>
 				const rename = renameIn(message)
 				if (rename) onRename(rename)
@@ -87,7 +91,7 @@ export async function listenForReports(
 						focus.focus()
 						answer = 'yes'
 					}
-				}
+				} else if (message.kind === 'activate') focus.focus()
 				// a message of a kind this window does not know is neither
 				else if (message.kind === undefined) onReport(message as AgentEditReport)
 			} catch {
@@ -153,40 +157,63 @@ export async function focusWindowFor(
 	path: string,
 	except: string | null = null
 ): Promise<boolean> {
-	let names: string[]
-	try {
-		names = readdirSync(directory).filter((name) => name.endsWith('.sock'))
-	} catch {
-		return false
-	}
 	const message: FocusMessage = { kind: 'focus', path }
 	const answers = await Promise.all(
-		names
-			.map((name) => join(directory, name))
-			.filter((socket) => socket !== except)
-			.map((socket) => ask(socket, JSON.stringify(message)))
+		socketsIn(directory, except).map((socket) => ask(socket, JSON.stringify(message)))
 	)
 	return answers.includes('yes')
 }
 
-/** writes `payload` to the socket at `path` and reads its answer; '' when there is none or the window does not take it */
-function ask(path: string, payload: string): Promise<string> {
+/**
+ * Window > Bring All to Front: every window listening in `directory` but `except` comes forward, as editmd's
+ * `arrangeInFront` raises every window of its one process (MainMenu.swift:121)
+ */
+export async function bringAllToFront(directory: string, except: string | null): Promise<void> {
+	const message: ActivateMessage = { kind: 'activate' }
+	await sendToAll(directory, JSON.stringify(message), except)
+}
+
+/** every socket in `directory` but `except`; none when the folder cannot be read */
+function socketsIn(directory: string, except: string | null): string[] {
+	try {
+		return readdirSync(directory)
+			.filter((name) => name.endsWith('.sock'))
+			.map((name) => join(directory, name))
+			.filter((path) => path !== except)
+	} catch {
+		return []
+	}
+}
+
+/**
+ * writes `payload` to the socket at `path` and reads its answer; '' when there is none or the window does not take
+ * it, after `failed` has seen the error
+ */
+function ask(
+	path: string,
+	payload: string,
+	failed: (error: NodeJS.ErrnoException) => void = () => {}
+): Promise<string> {
 	return new Promise<string>((done) => {
 		let answer = ''
 		const socket = connect(path, () => socket.end(payload))
 		socket.setEncoding('utf8')
+		// a window that never reads (frozen, or stopped in a debugger) must not hold the agent's hook
 		const deadline = setTimeout(() => socket.destroy(), SEND_DEADLINE_MS)
 		socket.on('data', (chunk) => (answer += chunk))
 		socket.on('close', () => {
 			clearTimeout(deadline)
 			done(answer)
 		})
-		socket.on('error', () => done(''))
+		socket.on('error', (error: NodeJS.ErrnoException) => {
+			failed(error)
+			done('')
+		})
 	})
 }
 
 /** a window's socket name as `listenForReports` makes it: process id and a count, base 36 */
-const SOCKET_NAME = /^[0-9a-z]+-[0-9a-z]+\.sock$/
+const SOCKET_NAME = /^([0-9a-z]+)-[0-9a-z]+\.sock$/
 
 /** `path` names a window's socket directly inside `directory` */
 function isSocketIn(directory: string, path: string): boolean {
@@ -207,19 +234,7 @@ async function answerHello(to: string, names: readonly AgentRename[]): Promise<v
 
 /** writes `payload` to every socket in `directory` but `except`, removing sockets nobody listens on any more */
 async function sendToAll(directory: string, payload: string, except: string | null = null) {
-	let names: string[]
-	try {
-		names = readdirSync(directory).filter((name) => name.endsWith('.sock'))
-	} catch {
-		return
-	}
-
-	await Promise.all(
-		names
-			.map((name) => join(directory, name))
-			.filter((path) => path !== except)
-			.map((path) => sendTo(path, payload))
-	)
+	await Promise.all(socketsIn(directory, except).map((path) => sendTo(path, payload)))
 }
 
 /** how long one window is given to take a message before the send to it is dropped */
@@ -234,7 +249,7 @@ const DEAD_SOCKET = new Set(['ECONNREFUSED', 'ENOTSOCK'])
  * (`listenForReports`). a name that holds none has no owner to ask
  */
 function ownerAlive(path: string): boolean {
-	const owner = /^([0-9a-z]+)-[0-9a-z]+\.sock$/.exec(basename(path))?.[1]
+	const owner = SOCKET_NAME.exec(basename(path))?.[1]
 	if (owner === undefined) return false
 	try {
 		process.kill(Number.parseInt(owner, 36), 0)
@@ -250,24 +265,14 @@ function ownerAlive(path: string): boolean {
  * other error (a full backlog, a permission) leaves it, since a live window would otherwise stop hearing reports
  * and renames for good
  */
-function sendTo(path: string, payload: string, removeDead = true): Promise<void> {
-	return new Promise<void>((done) => {
-		const socket = connect(path, () => socket.end(payload))
-		// a window that never reads (frozen, or stopped in a debugger) must not hold the agent's hook
-		const deadline = setTimeout(() => socket.destroy(), SEND_DEADLINE_MS)
-		socket.on('close', () => {
-			clearTimeout(deadline)
-			done()
-		})
-		socket.on('error', (error: NodeJS.ErrnoException) => {
-			try {
-				if (removeDead && DEAD_SOCKET.has(error.code ?? '') && !ownerAlive(path)) {
-					rmSync(path, { force: true })
-				}
-			} catch {
-				// a folder named like a socket stays; a failed send never ends the process
+async function sendTo(path: string, payload: string, removeDead = true): Promise<void> {
+	await ask(path, payload, (error) => {
+		try {
+			if (removeDead && DEAD_SOCKET.has(error.code ?? '') && !ownerAlive(path)) {
+				rmSync(path, { force: true })
 			}
-			done()
-		})
+		} catch {
+			// a folder named like a socket stays; a failed send never ends the process
+		}
 	})
 }

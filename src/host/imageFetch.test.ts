@@ -28,7 +28,7 @@ afterAll(() => {
 	server.close()
 })
 
-// the size read fetched the whole body with no limit and waited forever on a server that never answers
+// a size read must not fetch the whole body with no limit, nor wait forever on a server that never answers
 describe('fetchImageHead', () => {
 	test('reads at most the bytes a size needs, and gives up on a server that never answers', async () => {
 		const started = Date.now()

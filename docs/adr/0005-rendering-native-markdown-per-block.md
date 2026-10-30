@@ -26,7 +26,7 @@ What it does not do:
   - images: `<img>`; paragraphs that contain images are split into text and image segments
   - mermaid: [ADR-0006](0006-mermaid-via-pele.md)
   - frontmatter: its own box
-  - footnotes (amended 2026-10-25 after S9): the engine owns them. Each `[^label]` is rewritten at render time into a link run `[\[label\]](footnote:label)`, which sets it apart as an underlined, clickable run; clicking it scrolls to the definition. (Corrected after a screenshot of the binary: link runs paint in the text colour, not the accent as first assumed, so editmd's accent-coloured label is gap G9.) A `footnoteDefinition` Block gets its own view: the label in bold, then its content as markdown, muted, with a rule above it, as editmd's `dl[data-type="footnote_definition"]`. Footnote definitions are no longer appended as context
+  - footnotes (amended 2026-10-25 after S9): the engine owns them. Each `[^label]` is rewritten at render time into its label in Unicode superscript characters (`[^1]` paints `¹`), as editmd paints the label alone in a small raised `sup` that links nowhere (preset-gfm `footnote/reference.ts:33-45`, `style.css:370-374`). A character with no superscript form stays as written. (Amended 2026-10-30: the earlier link run `[\[label\]](footnote:label)` scrolled to the definition, which editmd does not do.) The accent colour and the 0.75em size stay gap G9. A `footnoteDefinition` Block gets its own view: the label in bold, then its content as markdown, muted, with a rule above it, as editmd's `dl[data-type="footnote_definition"]`. Footnote definitions are no longer appended as context
 
 ## Amendment, 2026-10-29
 

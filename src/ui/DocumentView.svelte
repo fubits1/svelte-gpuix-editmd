@@ -25,13 +25,16 @@
 	import { findController } from '../app/find.svelte.ts'
 	import type { Match } from '../app/findMatches.ts'
 	import { commandFor } from '../app/shortcuts.ts'
-	import { headingThemeFor, plainFieldThemeFor } from '../app/palette.ts'
+	import { headingThemeFor, NO_FILL, plainFieldThemeFor } from '../app/palette.ts'
 	import { provideCommandHeld, useTheme } from '../app/theme.svelte.ts'
+	import { type ChangedRun, linkRunsOf } from '../core/changedText.ts'
 	import { type Deletion, deletionSlot } from '../core/document.ts'
 	import type { Row } from '../core/dropTarget.ts'
 	import type { Block } from '../engine/blocks.ts'
 	import AgentLegend from './DocumentView/AgentLegend.svelte'
 	import Content from './DocumentView/Content.svelte'
+	import DeletedLine from './DocumentView/DeletedLine.svelte'
+	import GapLines from './DocumentView/GapLines.svelte'
 	import { CODE_LABEL_TOP, NO_FIND, PREVIEW_GAP } from './DocumentView/DocumentView.model.ts'
 	import { documentController, type RevealPlace } from './DocumentView/controller.svelte.ts'
 	import { dropFiles } from './DocumentView/fileDrop.ts'
@@ -41,7 +44,7 @@
 	import ConfirmLinkDialog from './DocumentView/Overlays/ConfirmLinkDialog.svelte'
 	import OpenRecentDialog from './DocumentView/Overlays/OpenRecentDialog.svelte'
 	import SaveAsDialog from './DocumentView/Overlays/SaveAsDialog.svelte'
-	import MermaidPreview from './DocumentView/Views/MermaidPreview.svelte'
+	import MermaidBlock from './DocumentView/Views/MermaidBlock.svelte'
 
 	let {
 		autofocus = true
@@ -79,13 +82,8 @@
 	 */
 	const WHOLE_TEXT_ROWS = 1_000_000
 
-	/** editmd's `.source { font: 14px/1.6 }`: a Source mode line, 22.4px at actual size */
-	const SOURCE_LINE_HEIGHT = 14 * 1.6
-
-	/** `.source { min-height: 70vh }` in Source mode's lines, at the page's zoom */
-	const sourceMinRows = $derived(
-		Math.max(1, Math.ceil((window_size.height * 0.7) / theme().scaled(SOURCE_LINE_HEIGHT)))
-	)
+	/** `.source { min-height: 70vh }` (style.css:90-103): gpuix has no `vh`, so 70% of the window's height in px */
+	const sourceMinHeight = $derived(`${Math.round(window_size.height * 7) / 10}px`)
 
 	/**
 	 * the menu shortcuts, subscribed here rather than in App.svelte: every Command acts on the open Document,
@@ -107,7 +105,7 @@
 	)
 
 	/**
-	 * ⌘ is held, so a Block holding a link shows the pointer, as editmd's `cmd-down` body class turns a link's text
+	 * ⌘ is held, so a link shows the pointer (`handOver`), as editmd's `cmd-down` body class turns a link's text
 	 * cursor into one (main.ts:48-54, style.css:170-181); transient UI (ADR-0011). told by the pointer's modifiers on
 	 * every move, and by the window's keys: ⌘ alone arrives as the key `platform` (headless), any other key
 	 * says whether ⌘ is down with it
@@ -138,13 +136,25 @@
 
 	/**
 	 * the Blocks to paint: an empty Document started from its hint (`startWriting`) holds FIRST_BLOCK for its
-	 * field, keyed as the Block typing makes, so the field stays mounted when that Block arrives
+	 * field, keyed as the Block typing makes, so the field stays mounted when that Block arrives. a new Block's empty
+	 * field (`activeIsNew`) holds an empty paragraph the same way, at `activeIndex`, before the Block that has that
+	 * index, so the Blocks from there on paint one place later than their index (`blockIndexAt`)
 	 */
-	const paintedBlocks = $derived(
-		documentController.blocks.length === 0 && documentController.activeIndex === 0
-			? [FIRST_BLOCK]
-			: documentController.blocks
-	)
+	const paintedBlocks = $derived.by(() => {
+		const { blocks, activeIndex, activeIsNew } = documentController
+		if (blocks.length === 0 && activeIndex === 0) return [FIRST_BLOCK]
+		if (!activeIsNew || activeIndex === null) return blocks
+		const at = blocks[activeIndex - 1]?.end ?? 0
+		return blocks.toSpliced(activeIndex, 0, { kind: 'paragraph', start: at, end: at })
+	})
+
+	/** the index in the Document's Blocks of what paints at `place`: past a new Block's field, the place before */
+	const blockIndexAt = (place: number) =>
+		documentController.activeIsNew &&
+		documentController.activeIndex !== null &&
+		place > documentController.activeIndex
+			? place - 1
+			: place
 
 	/**
 	 * editmd's empty-document hint (style.css `.markdown-body > p:only-child…::before`): a paragraph in the faint
@@ -205,18 +215,35 @@
 	/**
 	 * scroll the nearest scrolling ancestor so `node`'s top meets the middle of what it shows, as editmd's `reveal`
 	 * scrolls a change's top to the window's middle (highlights.ts:131-142: `coordsAtPos(at).top` by
-	 * `top - window.innerHeight / 2`). a Block near the top stops the page at its top, offsets running negative
-	 * as the page scrolls down; GPUI clamps one past the end, as for `scrollToTop`. `top`, in window coordinates, puts a
-	 * point inside the node there instead of its top (a changed run's)
+	 * `top - window.innerHeight / 2`), smoothly as its `behavior: "smooth"`: a step a frame over SMOOTH_SCROLL_MS, easing
+	 * in and out, a new reveal taking over from where the last one got to. a Block near the top stops the page at its top,
+	 * offsets running negative as the page scrolls down; GPUI clamps one past the end, as for `scrollToTop`. `top`, in
+	 * window coordinates, puts a point inside the node there instead of its top (a changed run's)
 	 */
 	function scrollToMiddle(node: ShadowNode, top?: number): void {
+		clearTimeout(smoothScroll)
 		const scrolling = scrollingAncestorOf(node)
 		if (!scrolling) return
 		const { native, id, offset, viewport, target } = scrolling
-		const [x, y] = offset
+		const [x = 0, from = 0] = offset
 		const shownMiddle = viewport.y + viewport.height / 2
-		native.scrollTo(id, x ?? 0, Math.min(0, (y ?? 0) - ((top ?? target.y) - shownMiddle)))
+		const wanted = Math.min(0, from - ((top ?? target.y) - shownMiddle))
+		const started = Date.now()
+		const step = () => {
+			const progress = Math.min(1, (Date.now() - started) / SMOOTH_SCROLL_MS)
+			const eased = (1 - Math.cos(Math.PI * progress)) / 2
+			native.scrollTo(id, x, from + (wanted - from) * eased)
+			if (progress < 1) smoothScroll = setTimeout(step, FRAME_MS)
+		}
+		smoothScroll = setTimeout(step, FRAME_MS)
 	}
+
+	/** how long a revealed change takes to scroll into the middle, about a browser's smooth `scrollIntoView` */
+	const SMOOTH_SCROLL_MS = 300
+	/** one step of that scroll, a frame at 60Hz */
+	const FRAME_MS = 16
+	/** the smooth scroll's next step, cleared by the next reveal and when the view goes */
+	let smoothScroll: ReturnType<typeof setTimeout> | undefined
 
 	/** the first ancestor of `node` that reports a scroll offset, with its viewport and `node`'s painted box */
 	function scrollingAncestorOf(node: ShadowNode) {
@@ -235,10 +262,10 @@
 
 	/**
 	 * scrolls Block `index` to the top, as a followed link does, or to the middle, as an Agent's revealed change; a
-	 * revealed change of `run`, a changed run's text, puts that run's painted top there, as editmd's `reveal` scrolls to
-	 * the change's own position (`coordsAtPos`, highlights.ts:133-141), however deep in a tall Block it is
+	 * revealed change of `run`, a changed run, puts that run's painted top there, as editmd's `reveal` scrolls to the
+	 * change's own position (`coordsAtPos`, highlights.ts:133-141), however deep in a tall Block it is
 	 */
-	function revealBlock(index: number, place: RevealPlace = 'top', run?: string): void {
+	function revealBlock(index: number, place: RevealPlace = 'top', run?: ChangedRun): void {
 		const node = blockNodes.get(index)
 		if (!node) return
 		const runTop = run === undefined ? undefined : runRectIn(node, run)?.y
@@ -246,15 +273,40 @@
 		else scrollToTop(node, runTop)
 	}
 
+	/** one `highlight` wash the last frame painted, as native reports it */
+	type PaintedWash = ReturnType<
+		NonNullable<ReturnType<typeof get_native>>['getPaintedHighlights']
+	>[number]
+
 	/** the first painted box of the changed run `run` washed inside `node`, null when none paints */
-	function runRectIn(node: ShadowNode, run: string) {
-		const wash = get_native()
-			?.getPaintedHighlights()
-			.find(
-				({ active, elementId, text, start, end }) =>
-					active && text.slice(start, end) === run && holds(node, elementId)
-			)
-		return wash?.rects[0] ?? null
+	function runRectIn(node: ShadowNode, run: ChangedRun) {
+		const washes = get_native()?.getPaintedHighlights() ?? []
+		const painted = washedRunsIn(node, washes).find(
+			({ text, occurrence }) => text === run.text && occurrence === run.index
+		)
+		return painted?.wash.rects[0] ?? null
+	}
+
+	/**
+	 * the runs washed active inside `node`, each with which occurrence of its text in the Block it is: native numbers a
+	 * spec's matches in paint order, and every run's spec washes every occurrence of its text, so each place counts once
+	 */
+	function washedRunsIn(node: ShadowNode, washes: readonly PaintedWash[]) {
+		const inside = washes.filter((wash) => holds(node, wash.elementId))
+		const placeOf = (wash: PaintedWash) => `${wash.elementId}:${wash.sub}:${wash.start}`
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local to one measurement
+		const places = new Map<string, string[]>()
+		for (const wash of inside) {
+			const text = wash.text.slice(wash.start, wash.end)
+			const seen = places.get(text) ?? []
+			if (!seen.includes(placeOf(wash))) places.set(text, [...seen, placeOf(wash)])
+		}
+		return inside
+			.filter((wash) => wash.active)
+			.map((wash) => {
+				const text = wash.text.slice(wash.start, wash.end)
+				return { text, occurrence: (places.get(text) ?? []).indexOf(placeOf(wash)), wash }
+			})
 	}
 
 	/** a changed run's underline, editmd's inset 2px shadow, and how often its painted boxes are read */
@@ -265,8 +317,8 @@
 	const TIP_DELAY_MS = 300
 
 	/**
-	 * whose tooltip shows, once the pointer has rested on it: a highlighted Block (`block-<index>`) or a Deletion
-	 * line (`deleted-<n>`); transient UI (ADR-0011)
+	 * whose tooltip shows, once the pointer has rested on it: a highlighted Block (`block-<index>`); transient UI
+	 * (ADR-0011). a Deletion line keeps its own (DeletedLine)
 	 */
 	let tipped = $state<string | null>(null)
 	/** whose tip waits out the delay; GPUI may report the next one's enter before this one's leave */
@@ -274,7 +326,7 @@
 	let tipTimer: ReturnType<typeof setTimeout> | undefined
 
 	/**
-	 * the pointer on a highlighted Block or a Deletion line: its tip shows after the delay. the Block, not a Tooltip
+	 * the pointer on a highlighted Block: its tip shows after the delay. the Block, not a Tooltip
 	 * around it, takes the hover: Tooltip's wrapper shrinks a full-width Block to its content (45px of 784)
 	 */
 	function enterTip(key: string): void {
@@ -308,30 +360,13 @@
 		return bySlot
 	})
 
-	/**
-	 * a Deletion line's dashes, `border-top: 2px dashed` (style.css:494-498), which gpuix cannot draw as a border
-	 * (remorses/gpuix#60): svg lines side by side, together wider than the column, which the line's box clips to its own
-	 * width. WebKit dashes a border three times its width; GPUI paints an svg as a mask in its element's `color`, the
-	 * Agent's. one svg 2400px wide painted nothing (measured headlessly; 300px painted), so each is at most 1000px, a
-	 * whole number of dash periods, so the dashes run on across them
-	 */
-	const dashes = $derived.by(() => {
-		const thickness = theme().scaled(2)
-		const period = thickness * 6
-		const width = period * Math.floor(1000 / period)
-		const dash = thickness * 3
-		return {
-			thickness,
-			width,
-			count: Math.ceil(theme().scaled(736) / width),
-			source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${thickness}" viewBox="0 0 ${width} ${thickness}"><line x1="0" y1="${thickness / 2}" x2="${width}" y2="${thickness / 2}" stroke="black" stroke-width="${thickness}" stroke-dasharray="${dash} ${dash}"/></svg>`
-		}
-	})
-
 	/** the space class of a margin token, null for none */
 	const spaceClassOf = (margin: string | null) => margin && `space-${margin}`
 
-	onDestroy(() => clearTimeout(tipTimer))
+	onDestroy(() => {
+		clearTimeout(tipTimer)
+		clearTimeout(smoothScroll)
+	})
 
 	// an Active block shows its field instead, which has no node here, so it is not scrolled
 	$effect(() => documentController.onRevealBlock(revealBlock))
@@ -499,32 +534,83 @@
 	}
 
 	/**
-	 * the Blocks Agents' changes mark by their changed runs (`changedRunsOf`), by index, with a wash for each run of
-	 * every such change: editmd's `.agent-change` (style.css:468-472) in its own Agent's colour over exactly that
-	 * occurrence of the run's text, the others transparent (measured headless: `activeIndex` washes the nth occurrence
-	 * only). editmd also underlines the run, which a `highlight` cannot draw (HighlightSpec has no underline), so
-	 * `runUnderlines` draws it from the washes' painted boxes
+	 * each Block holding a link with its links as runs of its painted text (`linkRunsOf`), by index: what ⌘ turns the
+	 * pointer to a hand over. the render source carries the definitions a reference link needs to parse as one
 	 */
-	const runWashes = $derived.by(() => {
+	const linkRuns = $derived.by(() => {
+		const byBlock = new SvelteMap<number, ChangedRun[]>()
+		documentController.blocks.forEach((block, index) => {
+			if (!block.links) return
+			const runs = linkRunsOf(documentController.renderSourceOf(block))
+			if (runs.length > 0) byBlock.set(index, runs)
+		})
+		return byBlock
+	})
+
+	/** a wash over exactly the `run.index`th occurrence of `run.text` in `colour`, the other occurrences transparent */
+	const washOf = (run: ChangedRun, colour: string | undefined): HighlightSpec => ({
+		query: run.text,
+		caseSensitive: true,
+		color: NO_FILL,
+		activeColor: colour,
+		activeIndex: run.index
+	})
+
+	/**
+	 * the Blocks that wash runs of their own, by index: the runs Agents' changes mark (`changedRunsOf`), each in editmd's
+	 * `.agent-change` (style.css:468-472) of its own Agent's colour over exactly that occurrence of the run's text, the
+	 * others transparent (measured headless: `activeIndex` washes the nth occurrence only), and the links, transparent,
+	 * so their painted boxes say where a hand shows. editmd also underlines a changed run, which a `highlight` cannot
+	 * draw (HighlightSpec has no underline), so `runUnderlines` draws it from the washes' painted boxes
+	 */
+	const blockWashes = $derived.by(() => {
 		const marked = new SvelteMap<number, HighlightSpec[]>()
-		paintedBlocks.forEach((block, index) => {
-			const changes = documentController.changedRunsOf(block)
-			if (changes.length === 0) return
-			marked.set(
-				index,
-				changes.flatMap(({ runs, agentClass }) =>
-					runs.map((run) => ({
-						query: run.text,
-						caseSensitive: true,
-						color: '#00000000',
-						activeColor: theme().palette[`${agentClass}-change`],
-						activeIndex: run.index
-					}))
-				)
-			)
+		documentController.blocks.forEach((block, index) => {
+			const specs = [
+				...documentController
+					.changedRunsOf(block)
+					.flatMap(({ runs, agentClass }) =>
+						runs.map((run) => washOf(run, theme().palette[`${agentClass}-change`]))
+					),
+				...(linkRuns.get(index) ?? []).map((run) => washOf(run, NO_FILL))
+			]
+			if (specs.length > 0) marked.set(index, specs)
 		})
 		return marked
 	})
+
+	/**
+	 * the Block whose link the pointer last moved over, null when it moved off every link: while ⌘ is held only a link
+	 * shows the hand, as editmd's `body.cmd-down .markdown-body a { cursor: pointer }` (style.css:178-181); transient UI
+	 * (ADR-0011)
+	 */
+	let handOver = $state<number | null>(null)
+
+	/** the Block with a link painted under the window point (`x`, `y`), null for none */
+	function linkBlockAt(x: number, y: number): number | null {
+		if (linkRuns.size === 0) return null
+		const washes = get_native()?.getPaintedHighlights() ?? []
+		for (const [index, runs] of linkRuns) {
+			const node = blockNodes.get(index)
+			if (!node) continue
+			const under = washedRunsIn(node, washes).some(
+				({ text, occurrence, wash }) =>
+					runs.some((run) => run.text === text && run.index === occurrence) &&
+					wash.rects.some(
+						(rect) =>
+							x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+					)
+			)
+			if (under) return index
+		}
+		return null
+	}
+
+	/** a move of the pointer over the page: whether ⌘ is held with it, and which link it is on */
+	function pointerMoved(event: GpuixEvent): void {
+		cmdHeld = event.modifiers?.cmd === true
+		handOver = linkBlockAt(event.x ?? -1, event.y ?? -1)
+	}
 
 	/** the key of the `occurrence`th run of `text` in its Block, which one Agent's change marks */
 	const runKey = (text: string, occurrence: number) => `${text}\u0000${occurrence}`
@@ -536,7 +622,7 @@
 	 */
 	const underlineColours = $derived.by(() => {
 		const byBlock = new SvelteMap<number, SvelteMap<string, string>>()
-		paintedBlocks.forEach((block, index) => {
+		documentController.blocks.forEach((block, index) => {
 			const colours = new SvelteMap<string, string>()
 			for (const { runs, agentClass } of documentController.changedRunsOf(block))
 				for (const run of runs)
@@ -573,25 +659,7 @@
 			const node = blockNodes.get(index)
 			const box = node?.nativeId == null ? null : native?.getElementBounds(node.nativeId)
 			if (!node || !box) continue
-			/**
-			 * which occurrence of its text in the Block each painted run is: native numbers a spec's matches in paint
-			 * order, and every run's spec washes every occurrence of its text, so each place counts once
-			 */
-			// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local to one measurement
-			const places = new Map<string, string[]>()
-			for (const wash of washes) {
-				if (!holds(node, wash.elementId)) continue
-				const text = wash.text.slice(wash.start, wash.end)
-				const place = `${wash.elementId}:${wash.sub}:${wash.start}`
-				const seen = places.get(text) ?? []
-				if (!seen.includes(place)) places.set(text, [...seen, place])
-			}
-			for (const wash of washes) {
-				if (!wash.active || !holds(node, wash.elementId)) continue
-				const text = wash.text.slice(wash.start, wash.end)
-				const occurrence = (places.get(text) ?? []).indexOf(
-					`${wash.elementId}:${wash.sub}:${wash.start}`
-				)
+			for (const { text, occurrence, wash } of washedRunsIn(node, washes)) {
 				const colour = colours.get(runKey(text, occurrence))
 				if (colour === undefined) continue
 				for (const rect of wash.rects)
@@ -616,28 +684,28 @@
 		return () => clearInterval(poll)
 	})
 
-	// Find leaves the runs' washes out of its matches, since native lists them with its own
+	// Find leaves the Blocks' own washes out of its matches, since native lists them with its own
 	$effect(() =>
 		findController.setForeignTexts(
-			[...runWashes.values()].flatMap((specs) => specs.map(({ query }) => query ?? ''))
+			[...blockWashes.values()].flatMap((specs) => specs.map(({ query }) => query ?? ''))
 		)
 	)
 
 	/**
-	 * Find's `highlight` with Blocks marked by runs: such a Block declares its own `highlight`, which replaces the
-	 * container's in it and which the container's numbering skips (measured headless), so the container's active
-	 * index counts only the matches outside them, and each such Block repeats Find's spec from its first match on
+	 * Find's `highlight` with Blocks that wash runs of their own: such a Block declares its own `highlight`, which
+	 * replaces the container's in it and which the container's numbering skips (measured headless), so the container's
+	 * active index counts only the matches outside them, and each such Block repeats Find's spec from its first match on
 	 * (`matchIndexOffset`), the matches read from the paint giving both
 	 */
 	const findSpecs = $derived.by(() => {
 		const spec = findController.highlight(theme().palette)
 		const offsets = new SvelteMap<number, number>()
-		if (!spec || runWashes.size === 0) return { outer: spec, inner: spec, offsets }
+		if (!spec || blockWashes.size === 0) return { outer: spec, inner: spec, offsets }
 		let outerActive = -1
 		let outerCount = 0
 		findController.matches.forEach((match, n) => {
 			const owner = blockIndexOf(match.elementId)
-			if (owner !== null && runWashes.has(owner)) {
+			if (owner !== null && blockWashes.has(owner)) {
 				if (!offsets.has(owner)) offsets.set(owner, n)
 				return
 			}
@@ -651,9 +719,9 @@
 		}
 	})
 
-	/** a Block's own `highlight`: Find's, then its runs' washes, for a Block marked by runs; null for any other */
+	/** a Block's own `highlight`: Find's, then its own washes, for a Block that washes runs; null for any other */
 	function blockHighlight(index: number): HighlightSpec[] | null {
-		const washes = runWashes.get(index)
+		const washes = blockWashes.get(index)
 		if (!washes) return null
 		const { inner, offsets } = findSpecs
 		return inner ? [{ ...inner, matchIndexOffset: offsets.get(index) ?? 0 }, ...washes] : washes
@@ -667,40 +735,16 @@
 <!-- a Tooltip's trigger for a tip the Block's own hover opens: nothing, so the Tooltip is only the point it hangs from -->
 {#snippet noTrigger()}{/snippet}
 
-<!--
-  the Deletion lines above the Block at `slot` (after the last Block when `slot` is their count): editmd's dashed
-  2px line in the Agent's colour, its dashes an svg since gpuix has no dashed border (remorses/gpuix#60)
--->
+<!-- the Deletion lines above the Block at `slot` (after the last Block when `slot` is their count) -->
 {#snippet deletionLines(slot: number, spaceClass: string | null)}
 	<div class={['deletions', spaceClass]}>
 		{#each deletionsBySlot.get(slot) ?? [] as { deletion, n } (n)}
-			<div
-				class={['deleted', documentController.deletionClassOf(deletion)]}
+			<DeletedLine
+				colour={documentController.deletionClassOf(deletion)}
+				tooltip={documentController.deletionTooltipOf(deletion)}
 				testid={`deleted-${n}`}
-				role="separator"
-				aria-label={documentController.deletionTooltipOf(deletion)}
-				onmouseenter={() => enterTip(`deleted-${n}`)}
-				onmouseleave={() => leaveTip(`deleted-${n}`)}
-			>
-				{#each { length: dashes.count }, part (part)}
-					<svg
-						class="dashes"
-						style:width={`${dashes.width}px`}
-						style:height={`${dashes.thickness}px`}
-						source={dashes.source}
-					></svg>
-				{/each}
-				<div class="block-tip">
-					<Tooltip
-						content={documentController.deletionTooltipOf(deletion)}
-						open={tipped === `deleted-${n}`}
-						side="bottom"
-						align="start"
-						testid={`deleted-tooltip-${n}`}
-						children={noTrigger}
-					/>
-				</div>
-			</div>
+				tooltipTestid={`deleted-tooltip-${n}`}
+			/>
 		{/each}
 	</div>
 {/snippet}
@@ -730,6 +774,7 @@
 		{@attach tracked && trackField}
 		{@attach trackEditor}
 		onchange={changeOfField}
+		onsubmit={() => documentController.pressReturn()}
 		onkeydown={(event) => {
 			if (event.key === 'escape') documentController.closeEdit()
 			else if (
@@ -742,12 +787,7 @@
 {/snippet}
 
 <!-- a file dropped anywhere on the page, its margins included, lands between the Blocks -->
-<div
-	class="page"
-	onfiledrop={dropFiles}
-	onmousemove={(event) => (cmdHeld = event.modifiers?.cmd === true)}
-	role="presentation"
->
+<div class="page" onfiledrop={dropFiles} onmousemove={pointerMoved} role="presentation">
 	<div class="document" testid="document" style:padding-bottom={pageBottom}>
 		{#if !documentController.sourceMode && documentController.blocks.length === 0 && documentController.activeIndex === 0}
 			<!--
@@ -769,9 +809,10 @@
 				<textarea
 					class="source"
 					testid="source-editor"
+					style:min-height={sourceMinHeight}
 					{autofocus}
 					value={documentController.activeSource}
-					minRows={sourceMinRows}
+					minRows={1}
 					maxRows={WHOLE_TEXT_ROWS}
 					theme={sourceTextTheme}
 					{@attach trackSource}
@@ -781,22 +822,23 @@
 				  the Active block's key follows its Edit session, not its offset: a Disk merge that adds or removes a Block
 				  above moves its start, and a new key would remount the field, losing what it shows and its caret
 				-->
-				{#each paintedBlocks as block, index (index === documentController.activeIndex ? 'active' : block.start)}
+				{#each paintedBlocks as block, place (place === documentController.activeIndex ? 'active' : block.start)}
+					{@const index = blockIndexAt(place)}
 					{@const agentClass = documentController.agentClassOf(block)}
 					{@const tooltip = documentController.highlightTooltipOf(block)}
-					{@const deleted = deletionsBySlot.has(index)}
+					{@const deleted = deletionsBySlot.has(place)}
 					<!-- a Deletion line above takes the space above the Block, and the Block keeps the line's own below it -->
-					{@const around = spaceAroundDeletions(paintedBlocks[index - 1], block)}
+					{@const around = spaceAroundDeletions(paintedBlocks[place - 1], block)}
 					{@const spaceClass = spaceClassOf(
-						deleted ? around.below : spaceAbove(paintedBlocks[index - 1], block)
+						deleted ? around.below : spaceAbove(paintedBlocks[place - 1], block)
 					)}
 					{@const covered = documentController.coveredByField(index)}
 					{#if deleted && !covered}
-						{@render deletionLines(index, spaceClassOf(around.above))}
+						{@render deletionLines(place, spaceClassOf(around.above))}
 					{/if}
 					{#if covered}
 						<!-- a Block the open field holds after its own (a Format command wrote several) paints only there -->
-					{:else if documentController.activeIndex === index}
+					{:else if documentController.activeIndex === place}
 						<!-- a Format command replaces the field's text by mounting a fresh field -->
 						{#key documentController.fieldRevision}
 							{#if documentController.activeKind === 'code' || documentController.activeKind === 'mermaid'}
@@ -870,7 +912,7 @@
 						<!-- editmd keeps a diagram painted below its source while it is edited, as a live preview -->
 						{#if block.kind === 'mermaid'}
 							<div class="preview" style:margin-top={`${theme().scaled(PREVIEW_GAP)}px`}>
-								<MermaidPreview {block} {index} />
+								<MermaidBlock {block} {index} testKey={`${index}`} editing />
 							</div>
 						{/if}
 					{:else}
@@ -882,7 +924,7 @@
 							class={['block', spaceClass, agentClass !== null && `agent ${agentClass}`]}
 							testid={`block-${index}`}
 							highlight={blockHighlight(index)}
-							style:cursor={cmdHeld && block.links ? 'pointer' : 'text'}
+							style:cursor={cmdHeld && handOver === index ? 'pointer' : 'text'}
 							hitbox={block.tasks ? null : 'self'}
 							onmousedown={block.tasks
 								? null
@@ -900,7 +942,9 @@
 							onmouseleave={tooltip === null ? null : () => leaveTip(`block-${index}`)}
 							{@attach (node: ShadowNode) => trackBlock(index, node)}
 						>
-							<Content {block} {index} />
+							<Content {block} {index} testKey={`${index}`} />
+							<!-- children an Agent took away after a list's or quote's last row -->
+							<GapLines place={{ index }} />
 							<!-- a measure left from runs since cleared paints nothing: only a run-marked Block draws underlines -->
 							{#each underlineColours.has(index) ? runUnderlines.filter((line) => line.index === index) : [] as line (line.key)}
 								<div
@@ -1049,7 +1093,7 @@
 {:else if documentController.overlay?.kind === 'openFailed'}
 	<!--
 	  NSDocumentController's alert, in its words (AppKit Document.loctable and Common.loctable's OK, Foundation
-	  FoundationErrors.loctable)
+	  FoundationErrors.loctable); after a launch that opened nothing, dismissing it ends the window
 	-->
 
 	<Portal>
@@ -1061,12 +1105,12 @@
 				{
 					label: 'OK',
 					testid: 'open-failed-ok',
-					onclick: () => documentController.closeOverlay(),
+					onclick: () => documentController.dismissOpenFailure(),
 					primary: true
 				}
 			]}
-			ondefault={() => documentController.closeOverlay()}
-			oncancel={() => documentController.closeOverlay()}
+			ondefault={() => documentController.dismissOpenFailure()}
+			oncancel={() => documentController.dismissOpenFailure()}
 		/>
 	</Portal>
 {:else if documentController.overlay?.kind === 'saveFailed'}
@@ -1299,42 +1343,8 @@
 		gap: var(--size-deleted-margin);
 		width: 100%;
 	}
-	/*
-	 * `.agent-deleted.between { height: 0; border-top: 2px dashed }` as a 2px box holding the dashes, clipped to the
-	 * column: GPUI reported a 0-height box below a border-only line, which a pointer could not land on
-	 */
-	.deleted {
-		display: flex;
-		width: 100%;
-		height: var(--size-deleted-line);
-		overflow: hidden;
-	}
-	.dashes {
-		flex-shrink: 0;
-	}
 	.space-deleted-margin {
 		margin-top: var(--size-deleted-margin);
-	}
-	.agent-0-deleted {
-		color: var(--agent-0-deleted);
-	}
-	.agent-1-deleted {
-		color: var(--agent-1-deleted);
-	}
-	.agent-2-deleted {
-		color: var(--agent-2-deleted);
-	}
-	.agent-3-deleted {
-		color: var(--agent-3-deleted);
-	}
-	.agent-4-deleted {
-		color: var(--agent-4-deleted);
-	}
-	.agent-5-deleted {
-		color: var(--agent-5-deleted);
-	}
-	.agent-unknown-deleted {
-		color: var(--agent-unknown-deleted);
 	}
 	.editor {
 		width: 100%;
@@ -1389,17 +1399,17 @@
 	}
 	/*
 	 * editmd's `.frontmatter { padding: 0.75rem 1rem; background: var(--surface); border-radius: 8px }` around the open
-	 * field, with `.frontmatter:focus { box-shadow: 0 0 0 2px var(--selection) }`: @gpuix/native 0.10's style has no
-	 * shadow or outline, so the ring is a 2px border inside the box, taken off its padding, so the text stays put
+	 * field, with `.frontmatter:focus { box-shadow: 0 0 0 2px var(--selection) }` (style.css:73-86): an outline outside
+	 * the box takes no room, so the box keeps its closed size and its text stays put
 	 */
 	.frontmatter-card {
 		width: 100%;
-		padding-top: var(--size-frontmatter-focus-padding-y);
-		padding-bottom: var(--size-frontmatter-focus-padding-y);
-		padding-left: var(--size-frontmatter-focus-padding-x);
-		padding-right: var(--size-frontmatter-focus-padding-x);
-		border-width: var(--size-frontmatter-focus-ring);
-		border-color: var(--selection);
+		padding-top: var(--size-frontmatter-padding-y);
+		padding-bottom: var(--size-frontmatter-padding-y);
+		padding-left: var(--size-frontmatter-padding-x);
+		padding-right: var(--size-frontmatter-padding-x);
+		outline-width: var(--size-frontmatter-focus-ring);
+		outline-color: var(--selection);
 		border-radius: var(--size-frontmatter-radius);
 		background-color: var(--surface);
 	}
@@ -1411,7 +1421,7 @@
 		font-size: var(--size-frontmatter-text);
 		line-height: var(--size-frontmatter-line-height);
 	}
-	/* editmd's `.source { font: 14px/1.6 var(--font-mono) }` (style.css:88-103); its height comes from its rows */
+	/* editmd's `.source { font: 14px/1.6 var(--font-mono) }` (style.css:90-103); its min height is set inline */
 	.source {
 		width: 100%;
 		font-family: Menlo;

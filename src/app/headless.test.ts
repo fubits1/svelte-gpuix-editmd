@@ -30,20 +30,20 @@ describe('headless modes', () => {
 
 	// editmd `Headless.swift:64-73`: the result on stdout and exit 0, or "editmd: <error>" on stderr and exit 1
 	test('a headless launch writes its result to stdout, or the error to stderr, and says how to exit', async () => {
-		const out: (string | Uint8Array)[] = []
-		const err: string[] = []
+		const written: (string | Uint8Array)[] = []
+		const errors: string[] = []
 		const io = {
-			stdout: (chunk: string | Uint8Array) => out.push(chunk),
-			stderr: (line: string) => err.push(line)
+			stdout: (chunk: string | Uint8Array) => written.push(chunk),
+			stderr: (line: string) => errors.push(line)
 		}
 		const path = fileWith(WINDOWS_1252_CRLF)
 
 		expect(await runHeadless({ kind: 'roundtrip', path }, io)).toBe(0)
-		expect(Buffer.from(out[0] as Uint8Array)).toEqual(Buffer.from(WINDOWS_1252_CRLF))
+		expect(Buffer.from(written[0] as Uint8Array)).toEqual(Buffer.from(WINDOWS_1252_CRLF))
 		expect(await runHeadless({ kind: 'normalize', path }, io)).toBe(0)
-		expect(out[1]).toBe('Café\n* a\n')
+		expect(written[1]).toBe('Café\n* a\n')
 		expect(await runHeadless({ kind: 'roundtrip', path: `${path}.missing` }, io)).toBe(1)
-		expect(err[0]).toMatch(/^editmd-gpuix: ENOENT: no such file or directory/)
+		expect(errors[0]).toMatch(/^editmd-gpuix: ENOENT: no such file or directory/)
 		expect(await runHeadless({ kind: 'open', path, title: 'note.md' }, io)).toBeNull()
 	})
 })

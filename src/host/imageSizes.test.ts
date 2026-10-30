@@ -70,7 +70,7 @@ describe('ImageSizes', () => {
 		])
 	})
 
-	// percent-encoded bytes that are no UTF-8 text (a PNG's 0x89) gave no size
+	// percent-encoded bytes need be no UTF-8 text (a PNG's 0x89), and are sized as bytes
 	test('a percent-encoded data: URL of binary bytes is sized from them', () => {
 		const png = Buffer.alloc(24)
 		png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -80,7 +80,7 @@ describe('ImageSizes', () => {
 		expect(new ImageSizes().sizeOf(url)).toEqual({ width: 10, height: 20 })
 	})
 
-	// a `data:` image was looked up as a file, found missing and painted as its alt text; editmd shows it
+	// a `data:` image is no file: looked up as one it would be found missing and painted as its alt text, where editmd shows it
 	test('a data: URL is sized from its own bytes and is never missing', () => {
 		const base64 = `data:image/gif;base64,${Buffer.from(gifHeader(12, 34)).toString('base64')}`
 		const svg =
