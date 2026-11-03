@@ -91,6 +91,16 @@ describe('copiedText', () => {
 		]).toEqual(['a \\* b **c**\n', 'x[^1] y\n', '<b>h</b> c\n'])
 	})
 
+	// an HTML Block inside a list item paints no selectable text, so the item's own text is all the window can select
+	test('an HTML Block in a list item is no painted text, so a selection taking it in is not placed', () => {
+		expect(copiedText('- a\n\n  <div>x</div>\n', 'a<div>x</div>')).toBe('a<div>x</div>')
+	})
+
+	// an entity CommonMark does not know stays literal text, which the copy still traces back
+	test('an unknown entity is text as written, and its Block still copies as markdown', () => {
+		expect(copiedText('a &foo; **b**\n', 'a &foo; b')).toBe('a &foo; **b**\n')
+	})
+
 	// editmd's serializer writes a hard break as `\` and decodes `&amp;`; the port copies the source as written
 	test('a hard break and an entity copy as written, where editmd’s serializer rewrites them', () => {
 		expect([

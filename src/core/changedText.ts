@@ -1,5 +1,6 @@
 import { markdownToMdast, type MdastNode } from 'satteri'
 import { commonEnds, diff } from './diff.ts'
+import { paintedFootnote } from './footnotes.ts'
 
 /**
  * a stretch of a Block's painted text, as the `index`th occurrence of `text` in it (counting from 0); `whole` when it
@@ -27,6 +28,9 @@ function kindOf(node: MdastNode | undefined): string {
  */
 type Piece = { text: string; marks: string; at?: number }
 
+/** what parts a link mark's URL from its title */
+const TITLE_MARK = '\u0002'
+
 /** the mark an inline node puts on its text, as ProseMirror's marks: strong, emphasis, strike, code, a link */
 function markOf(node: MdastNode): string | null {
 	switch (node.type) {
@@ -35,8 +39,9 @@ function markOf(node: MdastNode): string | null {
 		case 'delete':
 		case 'inlineCode':
 			return node.type
+		// a title is part of the link mark, as ProseMirror's link mark has it among its attributes
 		case 'link':
-			return `link:${node.url}`
+			return node.title ? `link:${node.url}${TITLE_MARK}${node.title}` : `link:${node.url}`
 		case 'linkReference':
 			return `reference:${node.identifier}`
 		default:
@@ -71,7 +76,7 @@ function pieces(node: MdastNode, marks = ''): Piece[] {
 		case 'footnoteReference':
 			return [
 				{
-					text: `[${node.label ?? node.identifier}]`,
+					text: paintedFootnote(node.label ?? node.identifier),
 					marks: inside,
 					at: node.position?.start.offset
 				}
@@ -171,9 +176,10 @@ const linkMarkOf = (marks: string) =>
 
 /**
  * each link of the Block `source` as a run of its painted text, in order: what editmd turns the pointer to a hand over
- * while ⌘ is held (style.css:178-181). stretches next to each other in one link are one run
+ * while ⌘ is held (style.css:178-181), with the link's `title`, its tooltip, when it has one. stretches next to each
+ * other in one link are one run
  */
-export function linkRunsOf(source: string): ChangedRun[] {
+export function linkRunsOf(source: string): (ChangedRun & { title?: string })[] {
 	const [node] = topLevel(source)
 	if (!node) return []
 	const list = pieces(node)
@@ -187,10 +193,31 @@ export function linkRunsOf(source: string): ChangedRun[] {
 		else if (link !== null) spans.push({ link, from: at, to: at + piece.text.length })
 		at += piece.text.length
 	}
-	return spans.map(({ from, to }) => {
+	return spans.map(({ link, from, to }) => {
 		const linked = text.slice(from, to)
-		return { text: linked, index: occurrence(text, linked, from) }
+		const run = { text: linked, index: occurrence(text, linked, from) }
+		const title = link.split(TITLE_MARK)[1]
+		return title ? { ...run, title } : run
 	})
+}
+
+/**
+ * each inline code span of the Block `source` as a run of its painted text, in order: what editmd draws its 1px
+ * border around (style.css:185-191)
+ */
+export function codeRunsOf(source: string): ChangedRun[] {
+	const [node] = topLevel(source)
+	if (!node) return []
+	const list = pieces(node)
+	const text = textOf(list)
+	const runs: ChangedRun[] = []
+	let at = 0
+	for (const piece of list) {
+		if (piece.marks.split('|').includes('inlineCode'))
+			runs.push({ text: piece.text, index: occurrence(text, piece.text, at) })
+		at += piece.text.length
+	}
+	return runs
 }
 
 /** a node's text as ProseMirror's `textContent` reads it: every text run joined, a hard break a line, an atom nothing */

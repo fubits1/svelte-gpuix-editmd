@@ -1,6 +1,6 @@
 import type { MdastNode } from 'satteri'
 import { parsedWithOffsets } from '../engine/blocks.ts'
-import { footnoteMark } from './footnotes.ts'
+import { paintedFootnote } from './footnotes.ts'
 
 /**
  * one character the window paints: the source it comes from (`start` to `end`), the leaf node it paints from and
@@ -70,7 +70,8 @@ function paintedOf(text: string): {
 		for (let index = 0; index < value.length; index++) {
 			const unit = value[index]!
 			const entity = ENTITY.exec(text.slice(at, end))?.[0]
-			if (entity) {
+			// an entity CommonMark does not know stays in the value as written
+			if (entity && !value.startsWith(entity, index)) {
 				paint(unit, at, (at += entity.length), node, parents)
 			} else if (unit === '\n') {
 				const lineEnd = text.indexOf('\n', at)
@@ -129,9 +130,7 @@ function paintedOf(text: string): {
 				return true
 			case 'footnoteReference': {
 				const [start, end] = [startOf(node), endOf(node)]
-				const label = node.label ?? node.identifier
-				const mark = footnoteMark({ start, end, label, identifier: node.identifier })
-				for (const character of mark.replace(/\\(.)/g, '$1'))
+				for (const character of paintedFootnote(node.label ?? node.identifier))
 					paint(character, start, end, node, parents)
 				return true
 			}

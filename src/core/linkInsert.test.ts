@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { insertLink, linkAtSelection, urlFromClipboard } from './linkInsert.ts'
+import { insertLink, linkAt, linkAtSelection, urlFromClipboard } from './linkInsert.ts'
 
 describe('insertLink: the URL goes in at the end of the Block as its own link text', () => {
 	test.each([
@@ -48,6 +48,32 @@ describe('insertLink: the URL goes in at the end of the Block as its own link te
 
 // editmd's Add Link at the field's selection (editor.ts:374-399), learnt through the sentinel probe in core/fieldSelection.ts;
 // measured in editmd's own editor
+// editmd titles the sheet Edit Link, prefills the link's URL and offers Remove Link when its caret is in a link
+// (EditorWindowController.swift:117-128, editor.ts:362-372 `linkAtSelection` reads the link mark's href)
+describe('linkAt', () => {
+	test('the URL of the link a caret is in: inline, autolink, bare URL or reference; null outside one', () => {
+		const definitions = '[d]: https://ref.example'
+		expect([
+			linkAt('see [docs](https://a.example "T") here', 6),
+			linkAt('see <https://b.example> here', 8),
+			linkAt('see https://c.example here', 10),
+			linkAt('see [docs][d] here', 6, definitions),
+			linkAt('see [docs](https://a.example) here', 1),
+			// at the link's first character editmd's caret is in the link: its `nodeAfter` carries the mark (editor.ts:369)
+			linkAt('see [docs](https://a.example) here', 4),
+			linkAt('see [docs](https://a.example) here', 29)
+		]).toEqual([
+			'https://a.example',
+			'https://b.example',
+			'https://c.example',
+			'https://ref.example',
+			null,
+			'https://a.example',
+			null
+		])
+	})
+})
+
 describe('linkAtSelection', () => {
 	const at = (source: string, selected: string, from = 0) => {
 		const start = source.indexOf(selected, from)
@@ -71,6 +97,45 @@ describe('linkAtSelection', () => {
 		expect(linkAtSelection(source, { start: 7, end: 7 }, 'https://a.example')).toBe(
 			'see [docs](https://a.example) here'
 		)
+	})
+
+	// editmd's caret at a link's first character is in the link (editor.ts:369, 382): Edit Link and Remove Link act on it
+	test('a caret at a link’s first character edits or removes that link', () => {
+		const source = 'see [docs](https://old.example) here'
+		expect([
+			linkAtSelection(source, { start: 4, end: 4 }, 'https://a.example'),
+			linkAtSelection(source, { start: 4, end: 4 }, '')
+		]).toEqual(['see [docs](https://a.example) here', 'see docs here'])
+	})
+
+	// a reference link is a link mark to editmd: Edit Link marks its text with only the new href, and a selection over
+	// it toggles the mark off; the definition stays (run in editmd's own editor). `definitions` are the Document's
+	// definition lines, which the Block alone does not hold
+	test('a reference link takes the new URL as an inline link at a caret, and its link off over a selection', () => {
+		const definitions = '[d]: https://old.example'
+		expect([
+			linkAtSelection('see [docs][d] here', { start: 7, end: 7 }, 'https://a.example', definitions),
+			linkAtSelection(
+				'see [docs][d] here',
+				at('see [docs][d] here', 'docs'),
+				'https://a.example',
+				definitions
+			),
+			linkAtSelection('see [d] here', { start: 5, end: 5 }, 'https://a.example', definitions)
+		]).toEqual([
+			'see [docs](https://a.example) here',
+			'see docs here',
+			'see [d](https://a.example) here'
+		])
+	})
+
+	// inline code takes a link mark round its text: the whole span inside the link, or the span split round a part
+	// of it (run in editmd's own editor)
+	test('a selection in inline code links the code: the whole span, or its selected part split out', () => {
+		expect([
+			linkAtSelection('see `code` here', at('see `code` here', 'code'), 'https://a.example'),
+			linkAtSelection('see `code` here', at('see `code` here', 'od'), 'https://a.example')
+		]).toEqual(['see [`code`](https://a.example) here', 'see `c`[`od`](https://a.example)`e` here'])
 	})
 
 	// editmd's Edit Link puts a new link mark of only the href on the link's range (editor.ts:388-390,

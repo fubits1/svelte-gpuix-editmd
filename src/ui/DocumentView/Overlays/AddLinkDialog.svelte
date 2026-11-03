@@ -1,24 +1,29 @@
 <!--
   @component
-  Format > Link…'s Add Link sheet, editmd's NSAlert (EditorWindowController.swift:115-150) drawn as the port's other
-  alerts are: the title "Add Link", the text "Enter the URL for the selected text.", a 320px URL field with the
-  "https://" placeholder, prefilled by the caller, and Add (the default, Return) right of Cancel (Escape). AppKit chrome
-  in editmd, so it does not zoom; render it inside `Portal`, so it paints over the Document.
+  Format > Link…'s sheet, editmd's NSAlert with an accessory field (EditorWindowController.swift:115-150) on the port's
+  Alert: the title "Add Link", the text "Enter the URL for the selected text.", a 320px URL field with the "https://"
+  placeholder, prefilled by the caller, and Add (the default, Return) right of Cancel (Escape). With the caret in a link
+  it is editmd's Edit Link: Update in place of Add, and Remove Link, which hands Add an empty URL as editmd's does. AppKit
+  chrome in editmd, so it does not zoom; render it inside `Portal`, so it paints over the Document.
 -->
 <script lang="ts">
-	import { on_window_key, type ShadowNode } from 'gpuix-svelte'
+	import { focused_element, type ShadowNode } from 'gpuix-svelte'
 	import { untrack } from 'svelte'
 	import { keysOnceFocused } from '../../../app/fieldKeys.ts'
 	import { useTheme } from '../../../app/theme.svelte.ts'
+	import Alert from './Alert.svelte'
 
 	let {
 		url: initialUrl,
+		edit,
 		onadd,
 		close
 	}: {
-		/** what the field starts with: the pasteboard's URL, or '' */
+		/** what the field starts with: the link's URL for Edit Link, else the pasteboard's URL, or '' */
 		url: string
-		/** Add, with the typed URL */
+		/** the caret is in a link: editmd's Edit Link, with Update and Remove Link */
+		edit: boolean
+		/** Add or Update with the typed URL, Remove Link with '' */
 		onadd: (url: string) => void
 		/** Cancel or Escape */
 		close: () => void
@@ -38,91 +43,66 @@
 	}
 
 	/**
-	 * Return presses Add, the default button: through the field's `onsubmit` while it has focus, which keeps the key
-	 * from the window listener, and through the window listener otherwise (as SaveAsDialog measured)
+	 * the field has the keys, so it shows AppKit's focus ring (e-link-dialog-source.png); transient UI (ADR-0011). read
+	 * from native on a poll, as the find field's: an autofocused field reports no focus event and gpuix has no
+	 * focus-change event (FindBar.svelte)
 	 */
-	$effect(() =>
-		on_window_key('keydown', (event) => {
-			if (event.key === 'enter') onadd(url)
-			else if (event.key === 'escape') close()
-		})
-	)
+	let fieldFocused = $state(false)
+
+	/** how often the field's focus is read, as the find field's */
+	const FOCUS_POLL_MS = 100
+
+	function trackFocus(node: ShadowNode) {
+		const poll = setInterval(() => {
+			fieldFocused = focused_element()?.nativeId === node.nativeId
+		}, FOCUS_POLL_MS)
+		return () => clearInterval(poll)
+	}
+
+	/** NSAlert paints its first button (Add or Update) rightmost, the second left of it, a third (Remove Link) leftmost */
+	const buttons = $derived([
+		...(edit
+			? [{ label: 'Remove Link', testid: 'add-link-remove', onclick: () => onadd('') }]
+			: []),
+		{ label: 'Cancel', testid: 'add-link-cancel', onclick: close },
+		{
+			label: edit ? 'Update' : 'Add',
+			testid: 'add-link-add',
+			onclick: () => onadd(url),
+			primary: true
+		}
+	])
 </script>
 
-<!-- the backdrop takes every click beside the sheet, so the sheet is modal as editmd's is -->
-<div class="add-link-backdrop">
-	<div class="add-link" testid="add-link" role="alertdialog" aria-label="Add Link">
-		<text class="add-link-title" testid="add-link-title">Add Link</text>
-		<text class="add-link-message" testid="add-link-message"
-			>Enter the URL for the selected text.</text
-		>
-		<input
-			class="add-link-url"
-			testid="add-link-url"
-			autofocus
-			placeholder="https://"
-			value={url}
-			theme={theme().chromeTextTheme}
-			onchange={(event) => (url = event.value ?? '')}
-			onsubmit={() => onadd(url)}
-			{@attach selectPrefill}
-		/>
-		<!-- NSAlert paints its first button (Add) rightmost -->
-		<div class="add-link-buttons">
-			<div
-				class="add-link-button"
-				testid="add-link-cancel"
-				role="button"
-				tabindex={0}
-				onclick={close}
-			>
-				<text testid="add-link-cancel-label">Cancel</text>
-			</div>
-			<div
-				class="add-link-button add-link-primary"
-				testid="add-link-add"
-				role="button"
-				tabindex={0}
-				onclick={() => onadd(url)}
-			>
-				<text testid="add-link-add-label">Add</text>
-			</div>
-		</div>
-	</div>
-</div>
+<!--
+  Return presses the default button: through the field's `onsubmit` while it has focus, which keeps the key from the
+  window listener, and through the alert's window listener otherwise (as SaveAsDialog measured)
+-->
+<Alert
+	testid="add-link"
+	notice
+	title={edit ? 'Edit Link' : 'Add Link'}
+	message="Enter the URL for the selected text."
+	{buttons}
+	ondefault={() => onadd(url)}
+	oncancel={close}
+>
+	<input
+		class={['add-link-url', fieldFocused && 'add-link-url-focused']}
+		testid="add-link-url"
+		autofocus
+		placeholder="https://"
+		value={url}
+		theme={theme().chromeTextTheme}
+		onchange={(event) => (url = event.value ?? '')}
+		onsubmit={() => onadd(url)}
+		{@attach selectPrefill}
+		{@attach trackFocus}
+	/>
+</Alert>
 
 <style>
-	.add-link-backdrop {
-		position: absolute;
-		top: 0;
-		right: 0;
-		bottom: 0;
-		left: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-	.add-link {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		width: 380px;
-		padding: 20px;
-		border-width: 1px;
-		border-color: var(--border);
-		border-radius: 10px;
-		background-color: var(--surface);
-		color: var(--text);
-	}
-	.add-link-title {
-		font-size: 15px;
-		font-weight: 600;
-	}
-	.add-link-message {
-		font-size: 13px;
-		color: var(--muted);
-	}
-	/* editmd's accessory field is 320 by 24 */
+	/* editmd's accessory field is 320 by 24, a rounded bezel in the text background */
 	.add-link-url {
 		width: 320px;
 		height: 24px;
@@ -133,24 +113,9 @@
 		background-color: var(--background);
 		font-size: 13px;
 	}
-	.add-link-buttons {
-		display: flex;
-		flex-direction: row;
-		justify-content: flex-end;
-		gap: 8px;
-		font-size: 13px;
-	}
-	.add-link-button {
-		padding: 4px 14px;
-		border-width: 1px;
-		border-color: var(--border);
-		border-radius: 6px;
-		background-color: var(--background);
-		cursor: pointer;
-	}
-	.add-link-primary {
-		border-color: var(--accent);
-		background-color: var(--accent);
-		color: var(--background);
+	/* AppKit's 3pt focus ring round the field while it has the keys, an outline that takes no room, as the find field's */
+	.add-link-url-focused {
+		outline-width: 3px;
+		outline-color: var(--focus-ring);
 	}
 </style>

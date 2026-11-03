@@ -18,7 +18,6 @@
 		window_size
 	} from 'gpuix-svelte'
 	import Portal from 'gpuix-svelte/components/Portal.svelte'
-	import Tooltip from 'gpuix-svelte/components/Tooltip.svelte'
 	import { onDestroy, untrack } from 'svelte'
 	import { SvelteMap } from 'svelte/reactivity'
 	import { spaceAbove, spaceAroundDeletions } from '../app/blockSpacing.ts'
@@ -27,7 +26,8 @@
 	import { commandFor } from '../app/shortcuts.ts'
 	import { headingThemeFor, NO_FILL, plainFieldThemeFor } from '../app/palette.ts'
 	import { provideCommandHeld, useTheme } from '../app/theme.svelte.ts'
-	import { type ChangedRun, linkRunsOf } from '../core/changedText.ts'
+	import { CODE_BORDER_RADIUS, codeBorderBox } from '../app/codeBorders.ts'
+	import { type ChangedRun, codeRunsOf, linkRunsOf } from '../core/changedText.ts'
 	import { type Deletion, deletionSlot } from '../core/document.ts'
 	import type { Row } from '../core/dropTarget.ts'
 	import type { Block } from '../engine/blocks.ts'
@@ -35,16 +35,17 @@
 	import Content from './DocumentView/Content.svelte'
 	import DeletedLine from './DocumentView/DeletedLine.svelte'
 	import GapLines from './DocumentView/GapLines.svelte'
+	import { provideRowTracker } from './DocumentView/NestedBlocks.svelte'
 	import { CODE_LABEL_TOP, NO_FIND, PREVIEW_GAP } from './DocumentView/DocumentView.model.ts'
 	import { documentController, type RevealPlace } from './DocumentView/controller.svelte.ts'
 	import { dropFiles } from './DocumentView/fileDrop.ts'
 	import AddLinkDialog from './DocumentView/Overlays/AddLinkDialog.svelte'
 	import Alert from './DocumentView/Overlays/Alert.svelte'
 	import CommandPalette from './DocumentView/Overlays/CommandPalette.svelte'
-	import ConfirmLinkDialog from './DocumentView/Overlays/ConfirmLinkDialog.svelte'
 	import OpenRecentDialog from './DocumentView/Overlays/OpenRecentDialog.svelte'
 	import SaveAsDialog from './DocumentView/Overlays/SaveAsDialog.svelte'
 	import MermaidBlock from './DocumentView/Views/MermaidBlock.svelte'
+	import PointerTip from './PointerTip.svelte'
 
 	let {
 		autofocus = true
@@ -184,33 +185,39 @@
 	}
 
 	/**
+	 * the rows of the Blocks inside quotes and lists by the Document offset each Block starts at, for scrolling a followed
+	 * link's heading among them (NestedBlocks reports them); nothing renders from it
+	 */
+	const rowNodes = new SvelteMap<number, ShadowNode>()
+
+	provideRowTracker((start, node) => {
+		rowNodes.set(start, node)
+		return () => {
+			if (rowNodes.get(start) === node) rowNodes.delete(start)
+		}
+	})
+
+	/**
 	 * scroll the nearest scrolling ancestor (App's Scroller) so `node`'s top meets its top, as a browser's
-	 * scrollIntoView does; GPUI clamps the offset, so for a Block near the end the page grows the room it lacks
-	 * (`revealRoom`) and the scroll is made again. GPUI's own
+	 * scrollIntoView does, and `smooth`ly as its `behavior: "smooth"` (`animateScroll`). GPUI clamps the offset at the
+	 * page's end, so for a Block near the end the room the scroll lacks, measured from the painted page before it starts,
+	 * goes below the page first (`revealRoom`): the taller page paints with the scroll's first step. GPUI's own
 	 * `scroll_into_view` left the Block where it was (measured headlessly, with the Block three levels below the
 	 * Scroller's column), so the offset is set on the first ancestor that reports one
 	 */
-	function scrollToTop(node: ShadowNode, top?: number): void {
+	function scrollToTop(node: ShadowNode, top?: number, smooth = false): void {
 		const scrolling = scrollingAncestorOf(node)
 		if (!scrolling) return
-		const { native, id, offset, viewport, target } = scrolling
-		const [x, y] = offset
-		const wanted = (y ?? 0) - ((top ?? target.y) - viewport.y)
-		native.scrollTo(id, x ?? 0, wanted)
-		// GPUI clamps at the page's end: the room it fell short by goes below the page, then the scroll is made again
-		setTimeout(() => {
-			const reached = native.getScrollOffset(id)?.[1]
-			if (reached === undefined || reached - wanted <= 1) return
-			reveal = {
-				generation: documentController.documentGeneration,
-				room: revealRoom + reached - wanted
-			}
-			setTimeout(() => native.scrollTo(id, x ?? 0, wanted), REVEAL_SETTLE_MS)
-		}, REVEAL_SETTLE_MS)
+		const { native, id, offset, viewport, target, content } = scrolling
+		const [x = 0, from = 0] = offset
+		const distance = (top ?? target.y) - viewport.y
+		const lacking = distance - (content.y + content.height - (viewport.y + viewport.height))
+		if (lacking > 0) {
+			reveal = { generation: documentController.documentGeneration, room: revealRoom + lacking }
+		}
+		if (smooth) animateScroll(native, id, x, from, from - distance)
+		else native.scrollTo(id, x, from - distance)
 	}
-
-	/** how long a scroll or a taller page takes to paint before the next step reads or uses it */
-	const REVEAL_SETTLE_MS = 32
 
 	/**
 	 * scroll the nearest scrolling ancestor so `node`'s top meets the middle of what it shows, as editmd's `reveal`
@@ -221,56 +228,76 @@
 	 * window coordinates, puts a point inside the node there instead of its top (a changed run's)
 	 */
 	function scrollToMiddle(node: ShadowNode, top?: number): void {
-		clearTimeout(smoothScroll)
 		const scrolling = scrollingAncestorOf(node)
 		if (!scrolling) return
 		const { native, id, offset, viewport, target } = scrolling
 		const [x = 0, from = 0] = offset
 		const shownMiddle = viewport.y + viewport.height / 2
-		const wanted = Math.min(0, from - ((top ?? target.y) - shownMiddle))
+		animateScroll(native, id, x, from, Math.min(0, from - ((top ?? target.y) - shownMiddle)))
+	}
+
+	/**
+	 * a browser's smooth scroll from offset `from` to `to` of the scroller `id`: a step a frame over SMOOTH_SCROLL_MS,
+	 * easing in and out, a new one taking over from where the last one got to
+	 */
+	function animateScroll(
+		native: NonNullable<ReturnType<typeof get_native>>,
+		id: number,
+		x: number,
+		from: number,
+		to: number
+	): void {
+		clearTimeout(smoothScroll)
 		const started = Date.now()
 		const step = () => {
 			const progress = Math.min(1, (Date.now() - started) / SMOOTH_SCROLL_MS)
 			const eased = (1 - Math.cos(Math.PI * progress)) / 2
-			native.scrollTo(id, x, from + (wanted - from) * eased)
+			native.scrollTo(id, x, from + (to - from) * eased)
 			if (progress < 1) smoothScroll = setTimeout(step, FRAME_MS)
 		}
 		smoothScroll = setTimeout(step, FRAME_MS)
 	}
 
-	/** how long a revealed change takes to scroll into the middle, about a browser's smooth `scrollIntoView` */
+	/** how long a smooth scroll takes, about a browser's smooth `scrollIntoView` */
 	const SMOOTH_SCROLL_MS = 300
 	/** one step of that scroll, a frame at 60Hz */
 	const FRAME_MS = 16
-	/** the smooth scroll's next step, cleared by the next reveal and when the view goes */
+	/** the smooth scroll's next step, cleared by the next one and when the view goes */
 	let smoothScroll: ReturnType<typeof setTimeout> | undefined
 
-	/** the first ancestor of `node` that reports a scroll offset, with its viewport and `node`'s painted box */
+	/**
+	 * the first ancestor of `node` that reports a scroll offset, with its viewport, the painted box of what it scrolls
+	 * (its child on the way to `node`) and `node`'s painted box
+	 */
 	function scrollingAncestorOf(node: ShadowNode) {
 		const native = get_native()
 		const target = node.nativeId === null ? null : native?.getElementBounds(node.nativeId)
 		if (!native || !target) return null
+		let content = target
 		for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
 			if (ancestor.nativeId === null) continue
 			const offset = native.getScrollOffset(ancestor.nativeId)
-			const viewport = native.getElementBounds(ancestor.nativeId)
-			if (!offset || !viewport) continue
-			return { native, id: ancestor.nativeId, offset, viewport, target }
+			const box = native.getElementBounds(ancestor.nativeId)
+			if (offset && box)
+				return { native, id: ancestor.nativeId, offset, viewport: box, target, content }
+			if (box) content = box
 		}
 		return null
 	}
 
 	/**
-	 * scrolls Block `index` to the top, as a followed link does, or to the middle, as an Agent's revealed change; a
-	 * revealed change of `run`, a changed run, puts that run's painted top there, as editmd's `reveal` scrolls to the
-	 * change's own position (`coordsAtPos`, highlights.ts:133-141), however deep in a tall Block it is
+	 * scrolls Block `index` to the top, smoothly, as a followed link does, or to the middle, as an Agent's revealed
+	 * change. a link to a heading inside the Block, `inside` its Document offset, puts that heading's own row at the top,
+	 * as editmd's `scrollIntoView` takes the heading itself (main.ts:39-41); a revealed change of `inside`, a changed run,
+	 * puts that run's painted top in the middle, as editmd's `reveal` scrolls to the change's own position (`coordsAtPos`,
+	 * highlights.ts:133-141), however deep in a tall Block it is
 	 */
-	function revealBlock(index: number, place: RevealPlace = 'top', run?: ChangedRun): void {
+	function revealBlock(index: number, place: RevealPlace, inside?: ChangedRun | number): void {
 		const node = blockNodes.get(index)
 		if (!node) return
-		const runTop = run === undefined ? undefined : runRectIn(node, run)?.y
-		if (place === 'middle') scrollToMiddle(node, runTop)
-		else scrollToTop(node, runTop)
+		if (typeof inside === 'number') scrollToTop(rowNodes.get(inside) ?? node, undefined, true)
+		else if (place === 'top') scrollToTop(node, undefined, true)
+		else scrollToMiddle(node, inside === undefined ? undefined : runRectIn(node, inside)?.y)
 	}
 
 	/** one `highlight` wash the last frame painted, as native reports it */
@@ -309,43 +336,9 @@
 			})
 	}
 
-	/** a changed run's underline, editmd's inset 2px shadow, and how often its painted boxes are read */
+	/** a changed run's underline, editmd's inset 2px shadow, and how often the runs' painted boxes are read */
 	const UNDERLINE_PX = 2
-	const UNDERLINE_POLL_MS = 100
-
-	/** gpuix Tooltip's own hover delay, which a highlighted Block's tip waits out too */
-	const TIP_DELAY_MS = 300
-
-	/**
-	 * whose tooltip shows, once the pointer has rested on it: a highlighted Block (`block-<index>`); transient UI
-	 * (ADR-0011). a Deletion line keeps its own (DeletedLine)
-	 */
-	let tipped = $state<string | null>(null)
-	/** whose tip waits out the delay; GPUI may report the next one's enter before this one's leave */
-	let pendingTip: string | null = null
-	let tipTimer: ReturnType<typeof setTimeout> | undefined
-
-	/**
-	 * the pointer on a highlighted Block: its tip shows after the delay. the Block, not a Tooltip
-	 * around it, takes the hover: Tooltip's wrapper shrinks a full-width Block to its content (45px of 784)
-	 */
-	function enterTip(key: string): void {
-		clearTimeout(tipTimer)
-		pendingTip = key
-		tipTimer = setTimeout(() => {
-			pendingTip = null
-			tipped = key
-		}, TIP_DELAY_MS)
-	}
-
-	/** only `key`'s own wait and tip end, so a leave that comes after the next one's enter keeps that one */
-	function leaveTip(key: string): void {
-		if (pendingTip === key) {
-			clearTimeout(tipTimer)
-			pendingTip = null
-		}
-		if (tipped === key) tipped = null
-	}
+	const RUN_POLL_MS = 100
 
 	/**
 	 * the Deletion lines by the index of the Block they paint above (the Blocks' count for after the last), each with
@@ -363,10 +356,7 @@
 	/** the space class of a margin token, null for none */
 	const spaceClassOf = (margin: string | null) => margin && `space-${margin}`
 
-	onDestroy(() => {
-		clearTimeout(tipTimer)
-		clearTimeout(smoothScroll)
-	})
+	onDestroy(() => clearTimeout(smoothScroll))
 
 	// an Active block shows its field instead, which has no node here, so it is not scrolled
 	$effect(() => documentController.onRevealBlock(revealBlock))
@@ -538,10 +528,26 @@
 	 * pointer to a hand over. the render source carries the definitions a reference link needs to parse as one
 	 */
 	const linkRuns = $derived.by(() => {
-		const byBlock = new SvelteMap<number, ChangedRun[]>()
+		const byBlock = new SvelteMap<number, ReturnType<typeof linkRunsOf>>()
 		documentController.blocks.forEach((block, index) => {
 			if (!block.links) return
 			const runs = linkRunsOf(documentController.renderSourceOf(block))
+			if (runs.length > 0) byBlock.set(index, runs)
+		})
+		return byBlock
+	})
+
+	/**
+	 * each Block holding an inline code span with its spans as runs of its painted text (`codeRunsOf`), by index: what
+	 * editmd draws its border around. a Block whose text has no backtick holds none, so it is never parsed for them
+	 */
+	const codeRuns = $derived.by(() => {
+		const byBlock = new SvelteMap<number, ChangedRun[]>()
+		documentController.blocks.forEach((block, index) => {
+			const source = documentController.text.slice(block.start, block.end)
+			if (!source.includes('`')) return
+			// its own text, where the render source writes an empty link and inline HTML as code
+			const runs = codeRunsOf(source)
 			if (runs.length > 0) byBlock.set(index, runs)
 		})
 		return byBlock
@@ -559,9 +565,10 @@
 	/**
 	 * the Blocks that wash runs of their own, by index: the runs Agents' changes mark (`changedRunsOf`), each in editmd's
 	 * `.agent-change` (style.css:468-472) of its own Agent's colour over exactly that occurrence of the run's text, the
-	 * others transparent (measured headless: `activeIndex` washes the nth occurrence only), and the links, transparent,
-	 * so their painted boxes say where a hand shows. editmd also underlines a changed run, which a `highlight` cannot
-	 * draw (HighlightSpec has no underline), so `runUnderlines` draws it from the washes' painted boxes
+	 * others transparent (measured headless: `activeIndex` washes the nth occurrence only), and the links and code
+	 * spans, transparent, so their painted boxes say where a hand shows and where a code border goes. editmd also
+	 * underlines a changed run, which a `highlight` cannot draw (HighlightSpec has no underline), so `runUnderlines`
+	 * draws it from the washes' painted boxes, as `codeBorders` draws the borders
 	 */
 	const blockWashes = $derived.by(() => {
 		const marked = new SvelteMap<number, HighlightSpec[]>()
@@ -572,7 +579,9 @@
 					.flatMap(({ runs, agentClass }) =>
 						runs.map((run) => washOf(run, theme().palette[`${agentClass}-change`]))
 					),
-				...(linkRuns.get(index) ?? []).map((run) => washOf(run, NO_FILL))
+				...[...(linkRuns.get(index) ?? []), ...(codeRuns.get(index) ?? [])].map((run) =>
+					washOf(run, NO_FILL)
+				)
 			]
 			if (specs.length > 0) marked.set(index, specs)
 		})
@@ -586,24 +595,44 @@
 	 */
 	let handOver = $state<number | null>(null)
 
+	/** whether one of `wash`'s painted boxes holds the window point (`x`, `y`) */
+	const washHolds = (wash: PaintedWash, x: number, y: number) =>
+		wash.rects.some(
+			(rect) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+		)
+
+	/** the link run of Block `index` painted under the window point (`x`, `y`) in `washes`, undefined for none */
+	function linkRunAt(index: number, x: number, y: number, washes: readonly PaintedWash[]) {
+		const node = blockNodes.get(index)
+		const runs = linkRuns.get(index)
+		if (!node || !runs) return undefined
+		for (const { text, occurrence, wash } of washedRunsIn(node, washes)) {
+			const run = runs.find((each) => each.text === text && each.index === occurrence)
+			if (run && washHolds(wash, x, y)) return run
+		}
+		return undefined
+	}
+
 	/** the Block with a link painted under the window point (`x`, `y`), null for none */
 	function linkBlockAt(x: number, y: number): number | null {
 		if (linkRuns.size === 0) return null
 		const washes = get_native()?.getPaintedHighlights() ?? []
-		for (const [index, runs] of linkRuns) {
-			const node = blockNodes.get(index)
-			if (!node) continue
-			const under = washedRunsIn(node, washes).some(
-				({ text, occurrence, wash }) =>
-					runs.some((run) => run.text === text && run.index === occurrence) &&
-					wash.rects.some(
-						(rect) =>
-							x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
-					)
-			)
-			if (under) return index
-		}
+		for (const index of linkRuns.keys()) if (linkRunAt(index, x, y, washes)) return index
 		return null
+	}
+
+	/**
+	 * the tip a painted Block shows: editmd titles a highlight "<name>, <time>", anywhere over a Block marked whole and
+	 * only over the runs of one marked by its changed runs (highlights.ts:184-186), and a titled link with its title over
+	 * that link (links.ts:174), the innermost title as a browser shows it
+	 */
+	function blockTipOf(index: number, agentClass: string | null, tooltip: string | null) {
+		const runsOnly = agentClass === null && underlineColours.has(index)
+		if (!runsOnly && !linkRuns.get(index)?.some((run) => run.title)) return tooltip
+		return (x: number, y: number) => {
+			const title = linkRunAt(index, x, y, get_native()?.getPaintedHighlights() ?? [])?.title
+			return title ?? (runsOnly && !onChangedRun(index, x, y) ? null : tooltip)
+		}
 	}
 
 	/** a move of the pointer over the page: whether ⌘ is held with it, and which link it is on */
@@ -632,6 +661,20 @@
 		return byBlock
 	})
 
+	/**
+	 * whether the window point (`x`, `y`) is on one of the runs an Agent changed in Block `index`, as painted: editmd
+	 * titles each `.agent-change` run (highlights.ts:184-186), so its native tip shows only over the run
+	 */
+	function onChangedRun(index: number, x: number, y: number): boolean {
+		const node = blockNodes.get(index)
+		const colours = underlineColours.get(index)
+		if (!node || !colours) return false
+		const washes = get_native()?.getPaintedHighlights() ?? []
+		return washedRunsIn(node, washes).some(
+			({ text, occurrence, wash }) => colours.has(runKey(text, occurrence)) && washHolds(wash, x, y)
+		)
+	}
+
 	/** a changed run's underline: where it paints in its Block, in logical px from the Block's box, and its colour */
 	type Underline = {
 		key: string
@@ -649,38 +692,66 @@
 	 */
 	let runUnderlines = $state.raw<readonly Underline[]>([])
 
-	/** reads where the runs' washes painted, and keeps the underlines when they moved */
-	function measureUnderlines(): void {
+	/** one row of a code span's border: its box in logical px from its Block's box (`codeBorderBox`) */
+	type CodeBorder = {
+		key: string
+		index: number
+		x: number
+		y: number
+		width: number
+		height: number
+	}
+
+	/** the code spans' borders as last measured, read back from the paint as the underlines are; transient UI (ADR-0011) */
+	let codeBorders = $state.raw<readonly CodeBorder[]>([])
+
+	/** reads where the runs' washes painted, and keeps the underlines and code borders when they moved */
+	function measureRuns(): void {
 		const native = get_native()
 		const washes = native?.getPaintedHighlights() ?? []
 		const thickness = theme().scaled(UNDERLINE_PX)
-		const next: Underline[] = []
-		for (const [index, colours] of underlineColours) {
+		const lines: Underline[] = []
+		const borders: CodeBorder[] = []
+		for (const index of new Set([...underlineColours.keys(), ...codeRuns.keys()])) {
 			const node = blockNodes.get(index)
 			const box = node?.nativeId == null ? null : native?.getElementBounds(node.nativeId)
 			if (!node || !box) continue
+			const colours = underlineColours.get(index)
+			// each code span takes one wash, though Find's active match can wash the same place again
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local to one measurement
+			const unbordered = new Set(
+				(codeRuns.get(index) ?? []).map((run) => runKey(run.text, run.index))
+			)
 			for (const { text, occurrence, wash } of washedRunsIn(node, washes)) {
-				const colour = colours.get(runKey(text, occurrence))
-				if (colour === undefined) continue
-				for (const rect of wash.rects)
-					next.push({
-						key: `${index}-${next.length}`,
-						index,
-						x: rect.x - box.x,
-						y: rect.y + rect.height - thickness - box.y,
-						width: rect.width,
-						colour
-					})
+				const colour = colours?.get(runKey(text, occurrence))
+				const code = unbordered.delete(runKey(text, occurrence))
+				for (const rect of wash.rects) {
+					if (colour !== undefined)
+						lines.push({
+							key: `${index}-${lines.length}`,
+							index,
+							x: rect.x - box.x,
+							y: rect.y + rect.height - thickness - box.y,
+							width: rect.width,
+							colour
+						})
+					if (code)
+						borders.push({ key: `${index}-${borders.length}`, index, ...codeBorderBox(rect, box) })
+				}
 			}
 		}
-		if (JSON.stringify(next) !== JSON.stringify(runUnderlines)) runUnderlines = next
+		if (JSON.stringify(lines) !== JSON.stringify(runUnderlines)) runUnderlines = lines
+		if (JSON.stringify(borders) !== JSON.stringify(codeBorders)) codeBorders = borders
 	}
 
-	// gpuix has no paint event, so the runs' boxes are read on a poll while any run is marked, as Find reads its matches
+	/**
+	 * gpuix has no paint event, so the runs' boxes are read on a poll while any run is marked or any code span painted,
+	 * as Find reads its matches
+	 */
 	$effect(() => {
-		if (underlineColours.size === 0) return
-		untrack(measureUnderlines)
-		const poll = setInterval(measureUnderlines, UNDERLINE_POLL_MS)
+		if (underlineColours.size === 0 && codeRuns.size === 0) return
+		untrack(measureRuns)
+		const poll = setInterval(measureRuns, RUN_POLL_MS)
 		return () => clearInterval(poll)
 	})
 
@@ -732,9 +803,6 @@
 	$effect(() => findController.start())
 </script>
 
-<!-- a Tooltip's trigger for a tip the Block's own hover opens: nothing, so the Tooltip is only the point it hangs from -->
-{#snippet noTrigger()}{/snippet}
-
 <!-- the Deletion lines above the Block at `slot` (after the last Block when `slot` is their count) -->
 {#snippet deletionLines(slot: number, spaceClass: string | null)}
 	<div class={['deletions', spaceClass]}>
@@ -783,6 +851,9 @@
 				documentController.tabInField(event.key, event.modifiers)
 			)
 				event.preventDefault()
+		}}
+		onkeyup={(event) => {
+			if (event.key === 'backspace') documentController.backspaceUp()
 		}}></textarea>
 {/snippet}
 
@@ -916,61 +987,67 @@
 							</div>
 						{/if}
 					{:else}
-						<!--
-						  task lists open from their item text, so a checkbox click only ticks. the Block takes a drop as
-						  the page does: GPUI would hand a drop on it to its click (measured headless), opening it
-						-->
-						<div
-							class={['block', spaceClass, agentClass !== null && `agent ${agentClass}`]}
-							testid={`block-${index}`}
-							highlight={blockHighlight(index)}
-							style:cursor={cmdHeld && handOver === index ? 'pointer' : 'text'}
-							hitbox={block.tasks ? null : 'self'}
-							onmousedown={block.tasks
-								? null
-								: (event) => documentController.pressBlock(event.x, event.y)}
-							onclick={block.tasks
-								? null
-								: (event) =>
-										documentController.clickBlock(index, {
-											cmd: event.modifiers?.cmd === true,
-											x: event.x,
-											y: event.y
-										})}
-							onfiledrop={dropFiles}
-							onmouseenter={tooltip === null ? null : () => enterTip(`block-${index}`)}
-							onmouseleave={tooltip === null ? null : () => leaveTip(`block-${index}`)}
-							{@attach (node: ShadowNode) => trackBlock(index, node)}
+						<!-- a highlight's or a titled link's native tip at the pointer (`blockTipOf`) -->
+						<PointerTip
+							text={blockTipOf(index, agentClass, tooltip)}
+							testid={`block-tooltip-${index}`}
 						>
-							<Content {block} {index} testKey={`${index}`} />
-							<!-- children an Agent took away after a list's or quote's last row -->
-							<GapLines place={{ index }} />
-							<!-- a measure left from runs since cleared paints nothing: only a run-marked Block draws underlines -->
-							{#each underlineColours.has(index) ? runUnderlines.filter((line) => line.index === index) : [] as line (line.key)}
+							{#snippet children(pointer)}
+								<!--
+								  task lists open from their item text, so a checkbox click only ticks. the Block takes a drop
+								  as the page does: GPUI would hand a drop on it to its click (measured headless), opening it
+								-->
 								<div
-									class="run-underline"
-									testid={`run-underline-${line.key}`}
-									style:left={`${line.x}px`}
-									style:top={`${line.y}px`}
-									style:width={`${line.width}px`}
-									style:height={`${theme().scaled(UNDERLINE_PX)}px`}
-									style:background-color={line.colour}
-								></div>
-							{/each}
-							<!-- editmd titles a highlight "<name>, <time>"; the tip hangs below the Block's bottom-left corner -->
-							{#if tooltip !== null}
-								<div class="block-tip">
-									<Tooltip
-										content={tooltip}
-										open={tipped === `block-${index}`}
-										side="bottom"
-										align="start"
-										testid={`block-tooltip-${index}`}
-										children={noTrigger}
-									/>
+									class={['block', spaceClass, agentClass !== null && `agent ${agentClass}`]}
+									testid={`block-${index}`}
+									highlight={blockHighlight(index)}
+									style:cursor={cmdHeld && handOver === index ? 'pointer' : 'text'}
+									hitbox={block.tasks ? null : 'self'}
+									onmousedown={block.tasks
+										? null
+										: (event) => documentController.pressBlock(event.x, event.y)}
+									onclick={block.tasks
+										? null
+										: (event) =>
+												documentController.clickBlock(index, {
+													cmd: event.modifiers?.cmd === true,
+													x: event.x,
+													y: event.y
+												})}
+									onfiledrop={dropFiles}
+									{...pointer}
+									{@attach (node: ShadowNode) => trackBlock(index, node)}
+								>
+									<Content {block} {index} testKey={`${index}`} />
+									<!-- children an Agent took away after a list's or quote's last row -->
+									<GapLines place={{ index }} />
+									<!-- a measure left from runs since cleared paints nothing: only a run-marked Block draws underlines -->
+									{#each underlineColours.has(index) ? runUnderlines.filter((line) => line.index === index) : [] as line (line.key)}
+										<div
+											class="run-underline"
+											testid={`run-underline-${line.key}`}
+											style:left={`${line.x}px`}
+											style:top={`${line.y}px`}
+											style:width={`${line.width}px`}
+											style:height={`${theme().scaled(UNDERLINE_PX)}px`}
+											style:background-color={line.colour}
+										></div>
+									{/each}
+									<!-- editmd's inline code border over native's pill, which has none; only a Block with code spans draws one -->
+									{#each codeRuns.has(index) ? codeBorders.filter((border) => border.index === index) : [] as border (border.key)}
+										<div
+											class="code-border"
+											testid={`code-border-${border.key}`}
+											style:left={`${border.x}px`}
+											style:top={`${border.y}px`}
+											style:width={`${border.width}px`}
+											style:height={`${border.height}px`}
+											style:border-radius={`${theme().scaled(CODE_BORDER_RADIUS)}px`}
+										></div>
+									{/each}
 								</div>
-							{/if}
-						</div>
+							{/snippet}
+						</PointerTip>
 					{/if}
 				{/each}
 				{#if deletionsBySlot.has(paintedBlocks.length)}
@@ -991,7 +1068,7 @@
 				class={['block', spaceClassOf(spaceAbove(paintedBlocks.at(-1), FIRST_BLOCK))]}
 				testid="empty-hint"
 				hitbox="self"
-				onclick={() => documentController.startWriting()}
+				onclick={() => documentController.clickHint()}
 			>
 				<markdown testid="empty-hint-text" source="Start writing…" theme={hintTheme}></markdown>
 			</div>
@@ -1007,11 +1084,31 @@
 {/if}
 
 {#if documentController.overlay?.kind === 'confirmLink'}
+	<!--
+	  editmd's question before a link of another scheme opens in whichever app claims it, its own NSAlert in its words
+	  (LinkOpener.swift:25-30): Open first, so Return presses it
+	-->
 	<Portal>
-		<ConfirmLinkDialog
-			url={documentController.overlay.url}
-			onopen={() => documentController.openConfirmedLink()}
-			close={() => documentController.closeOverlay()}
+		<Alert
+			testid="confirm-link"
+			notice
+			title="Open this link?"
+			message={`It opens in another app:\n\n${documentController.overlay.url}`}
+			buttons={[
+				{
+					label: 'Cancel',
+					testid: 'confirm-link-cancel',
+					onclick: () => documentController.closeOverlay()
+				},
+				{
+					label: 'Open',
+					testid: 'confirm-link-open',
+					onclick: () => documentController.openConfirmedLink(),
+					primary: true
+				}
+			]}
+			ondefault={() => documentController.openConfirmedLink()}
+			oncancel={() => documentController.closeOverlay()}
 		/>
 	</Portal>
 {:else if documentController.overlay?.kind === 'saveAs'}
@@ -1167,6 +1264,7 @@
 	<Portal>
 		<Alert
 			testid="save-notice"
+			notice
 			title="Saved in a Different Encoding"
 			message={documentController.overlay.message}
 			buttons={[
@@ -1186,6 +1284,7 @@
 	<Portal>
 		<AddLinkDialog
 			url={documentController.overlay.url}
+			edit={documentController.overlay.edit}
 			onadd={(url) => documentController.addLink(url)}
 			close={() => {
 				documentController.closeOverlay()
@@ -1235,6 +1334,13 @@
 		position: absolute;
 		pointer-events: none;
 	}
+	/* `border: 1px solid color-mix(in srgb, var(--border) 60%, transparent)` (style.css:189); its box from `codeBorders` */
+	.code-border {
+		position: absolute;
+		pointer-events: none;
+		border-width: 1px;
+		border-color: var(--code-border);
+	}
 	/* out of the flow, where the first Block's text starts, so the field mounted over it keeps its own place */
 	.field-hint {
 		position: absolute;
@@ -1242,14 +1348,6 @@
 		left: var(--size-page-padding-x);
 		right: var(--size-page-padding-x);
 		pointer-events: none;
-	}
-	/* a 0×0 point at the Block's bottom-left corner, out of its flow, that its tooltip hangs from */
-	.block-tip {
-		position: absolute;
-		left: 0;
-		bottom: 0;
-		width: 0;
-		height: 0;
 	}
 	.space-block-bottom {
 		margin-top: var(--size-block-bottom);

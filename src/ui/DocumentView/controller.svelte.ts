@@ -60,11 +60,17 @@ import { imageSize, type Size } from '../../core/imageSize.ts'
 import { linkDestination } from '../../core/linkDestination.ts'
 import { firstTextOffset, formatBlock } from '../../core/formatBlock.ts'
 import { caretAfterTyping, INPUT_RULE_KINDS, inputRuleKind } from '../../core/inputRules.ts'
-import { linkAtSelection } from '../../core/linkInsert.ts'
+import { linkAt, linkAtSelection } from '../../core/linkInsert.ts'
 import { mergeText, textEdits } from '../../core/merge.ts'
 import { linkAction, type LinkTarget } from '../../core/linkPolicy.ts'
 import { labelDetail, labelText, type SaveLabel } from '../../core/persistence.ts'
-import { type ReturnEdit, returnEdit } from '../../core/returnKey.ts'
+import {
+	backspaceEdit,
+	joinedBlocks,
+	type ReturnEdit,
+	returnAfterTyping,
+	returnEdit
+} from '../../core/returnKey.ts'
 import { saveAsPath } from '../../core/saveAsPath.ts'
 import { pressTab, type TabEffects, tabAction, tableCellStep } from '../../core/tabKey.ts'
 import { type Block, type BlockKind, blockKindOf } from '../../engine/blocks.ts'
@@ -244,9 +250,9 @@ export type Overlay =
 	| { kind: 'menu'; index: number }
 	/**
 	 * Format > Link…'s Add Link sheet (EditorWindowController.swift:115-150): `url` prefills its field, the
-	 * pasteboard's text when it is a web or mail address
+	 * pasteboard's text when it is a web or mail address; `edit` is its Edit Link, the caret in a link whose URL `url` is
 	 */
-	| { kind: 'addLink'; url: string }
+	| { kind: 'addLink'; url: string; edit: boolean }
 
 /** what a menu click carries: a menu bar item, or a Help search match (a MenuEntry) */
 export type MenuChoice = { command: BarCommand | null; enabled: boolean; path?: string }
@@ -369,8 +375,19 @@ export class DocumentController {
 	#session: EditSession | null = null
 	/** the Edit session Return opened for a new Block (`openEditAfter`), which `activeIsNew` asks after */
 	#newBlockSession: EditSession | null = null
-	/** Return was pressed in the open Block field (`pressReturn`): the field's next report is read as its newline */
-	#returnPressed = false
+	/**
+	 * Return was pressed in the open Block field (`pressReturn`) and its newline has not come back yet: `base` is the
+	 * field's text when it was pressed, `extra` the Returns pressed since, whose newlines are made here. it holds until a
+	 * report brings the newline, however many reports of keys typed behind it come first. `shiftAt` is where the user's
+	 * own Shift-Return put its newline in `base`, whose hard break waits for the newline sent after it
+	 * (`#breakAfterTyping`), else null; nothing renders from it
+	 */
+	#pendingReturn: { base: string; extra: number; shiftAt: number | null } | null = null
+	/**
+	 * the open field lost text since Backspace last went up: a Backspace whose key-up finds none took nothing, so it
+	 * was pressed at the field's start (`keyUpInField`); nothing renders from it
+	 */
+	#deleted = false
 	/**
 	 * what the open field shows right now, which a Format command or Add Link rewrites; `activeSource` only holds what
 	 * it started with
@@ -429,8 +446,12 @@ export class DocumentController {
 	 * click, which GPUI delivers right after it, carries the modifiers that decide whether it is followed
 	 */
 	#clickedLink: string | null = null
-	/** set by the view, which alone holds the Blocks' nodes to scroll; `run` is a changed run's text to scroll to */
-	#revealBlock: ((index: number, place: RevealPlace, run?: ChangedRun) => void) | null = null
+	/**
+	 * set by the view, which alone holds the Blocks' nodes to scroll; `inside` is a changed run's text to scroll to, or
+	 * the Document offset where a heading inside the Block starts, whose own row goes to the top
+	 */
+	#revealBlock: ((index: number, place: RevealPlace, inside?: ChangedRun | number) => void) | null =
+		null
 	/**
 	 * the registrars the exit handler has gone to, so each takes it once however often the window rebinds; nothing
 	 * renders from it, so it is no SvelteSet
@@ -1038,6 +1059,8 @@ export class DocumentController {
 
 	openBlock(index: number): void {
 		this.#dropEmptyPair()
+		this.#pendingReturn = null
+		this.#deleted = false
 		this.#session?.close()
 		this.#session = this.#document.openEdit(index)
 		this.activeIndex = index
@@ -1051,8 +1074,8 @@ export class DocumentController {
 	/**
 	 * a click on an empty Document's "Start writing…" hint: an Edit session as Block 0, so the view shows its field
 	 * before any Block exists, and the first keystroke makes the first Block. a session over the whole text is exactly
-	 * that, since the text is empty or blank lines only; with any text, front matter included (whose body has no field
-	 * of its own to open: the hint's click does nothing there), or in Source mode, it does nothing
+	 * that, since the text is empty or blank lines only; with any text (front matter only: `clickHint`), or in Source
+	 * mode, it does nothing
 	 */
 	startWriting(): void {
 		if (this.#document.text.trim() !== '' || this.sourceMode) return
@@ -1063,6 +1086,16 @@ export class DocumentController {
 		this.activeKind = 'paragraph'
 		this.activeSource = this.#field = this.#fieldOf(this.#session.source, false)
 		this.#sessionEnd = this.#session.end
+	}
+
+	/**
+	 * a click on "Start writing…", which shows only outside Source mode: an empty Document's first field
+	 * (`startWriting`), or with front matter only a new Block's empty field after it (`#openTrailing`), as editmd's caret
+	 * goes into the empty body below the front matter
+	 */
+	clickHint(): void {
+		if (this.#document.text.trim() === '') this.startWriting()
+		else this.#openTrailing()
 	}
 
 	/** a <markdown> reported a click on the link to `href`; the Block's click that follows decides what it does */
@@ -1103,7 +1136,9 @@ export class DocumentController {
 	 * the view scrolls Block `index` into view when a link points at it (to the top) or the legend reveals an
 	 * Agent's change in it (to the middle); returns the unsubscribe
 	 */
-	onRevealBlock(reveal: (index: number, place: RevealPlace, run?: ChangedRun) => void): () => void {
+	onRevealBlock(
+		reveal: (index: number, place: RevealPlace, inside?: ChangedRun | number) => void
+	): () => void {
 		this.#revealBlock = reveal
 		return () => {
 			if (this.#revealBlock === reveal) this.#revealBlock = null
@@ -1118,7 +1153,7 @@ export class DocumentController {
 	#followLink(href: string): void {
 		const destination = linkDestination(href, this.blocks, this.folder)
 		if (destination.kind === 'block') {
-			this.#revealBlock?.(destination.index, 'top')
+			this.#revealBlock?.(destination.index, 'top', destination.at)
 			return
 		}
 		if (destination.kind === 'none') return
@@ -1206,6 +1241,7 @@ export class DocumentController {
 
 	closeEdit(): void {
 		this.#dropEmptyPair()
+		this.#pendingReturn = null
 		const index = this.activeIndex
 		const untouchedNew = this.activeIsNew
 		this.#session?.close()
@@ -1232,7 +1268,7 @@ export class DocumentController {
 	 * the open field reported `field`; while a probe reads its selection, the probe takes it instead. `revision` is the
 	 * `fieldRevision` the reporting field was mounted at: a field since mounted afresh (a probe that gave up sets the
 	 * field to its text again) is no longer the open one, so what it still reports, a late sentinel included, is dropped,
-	 * but for a key the field an outside change replaced took on its way out (`#typeLate`).
+	 * but for a key the field took on its way out, after an outside change or typing replaced it (`#typeLate`).
 	 * a newline Return or Shift-Return typed into a Block's field does what editmd's Enter does (`#typeReturn`)
 	 */
 	typeInActive(field: string, revision?: number): void {
@@ -1240,16 +1276,19 @@ export class DocumentController {
 			this.#typeLate(field, revision)
 			return
 		}
-		const returnPressed = this.#returnPressed
-		this.#returnPressed = false
 		if (this.#probing) {
 			this.#probeListener?.(field)
 			return
 		}
+		this.#deleted ||= field.length < this.#field.length
 		const caret = caretAfterTyping(this.#field, field)
 		this.#lastCaret = caret
 		const at = caret - 1
-		// a newline that lands while a command works on the field is kept as typed: only the user's own Return splits
+		const pending = this.#pendingReturn
+		// a newline that lands while a command works on the field is kept as typed: only the user's own Return splits.
+		// the field's last report is its text still: keys typed behind Return were written as typing, and a remount ends
+		// the pending Return
+		const moved = pending && returnAfterTyping(pending.base, this.#field, field)
 		const typedNewline =
 			!this.#fieldWork &&
 			!this.sourceMode &&
@@ -1257,14 +1296,27 @@ export class DocumentController {
 			field.length === this.#field.length + 1 &&
 			field[at] === '\n' &&
 			field.slice(0, at) + field.slice(caret) === this.#field
-		// Return reads the Block's kind from its text, so a field holding code alone hands it the fences too
-		if (typedNewline)
-			this.#typeReturn(
-				returnEdit(this.#sourceOf(field), at + this.#shift, !returnPressed),
-				field,
-				caret
-			)
-		else this.#typeField(field, caret)
+		// keys typed behind Return before its newline came back are typing until it does (`#typeAfterReturn`)
+		if (moved) this.#typeAfterReturn(pending!, moved)
+		// Return reads the Block's kind from its text, so a field holding code alone hands it the fences too; a newline
+		// with no Return pending is the user's own Shift-Return
+		else if (typedNewline) {
+			this.#pendingReturn = null
+			const edit = returnEdit(this.#sourceOf(field), at + this.#shift, !pending)
+			if (!pending && edit.kind === 'field') this.#breakAfterTyping(field, at)
+			else this.#typeReturn(edit, field, caret)
+		} else this.#typeField(field, caret)
+	}
+
+	/**
+	 * the user's own Shift-Return typed its newline at `at` in `field`. its hard break mounts the field afresh, and GPUI
+	 * destroys the old field with the reports of keys it took meanwhile still to come, so they would be lost: the
+	 * newline stays as typed until a newline sent after those keys comes back, which places them (`#typeAfterReturn`)
+	 */
+	#breakAfterTyping(field: string, at: number): void {
+		this.#writeField(field)
+		this.#pendingReturn = { base: field, extra: 0, shiftAt: at }
+		this.#sendKeys('shift-enter')
 	}
 
 	/**
@@ -1302,9 +1354,17 @@ export class DocumentController {
 	 * sends the field (`#fieldWork`) change no look
 	 */
 	#typeField(field: string, caret: number): void {
-		const deleted = field.length < this.#field.length
+		const before = this.#field
+		const deleted = field.length < before.length
 		this.#writeField(field)
 		if (this.#fieldWork || this.sourceMode || this.activeIndex === null) return
+		// Backspace at a list item's start joins it to the item above (`backspaceEdit`); code shows no items
+		const joined = this.activeKind === 'list' ? backspaceEdit(before, field) : null
+		if (joined) {
+			this.#replaceField(joined.field)
+			this.#putCaret(this.#field, joined.caret)
+			return
+		}
 		const source = this.#sourceOf(field)
 		const lost = deleted && INPUT_RULE_KINDS.has(this.activeKind)
 		const kind = inputRuleKind(source, caret + this.#shift) ?? (lost ? blockKindOf(source) : null)
@@ -1318,24 +1378,121 @@ export class DocumentController {
 	 * Return in the open Block field, which the field hands over as a submit (`onsubmit`) instead of typing its newline:
 	 * Shift-Return is sent to the field in its place, so the newline it types shows where the caret was (gpuix reports no
 	 * caret, gap G1), and the report that brings it is read as Return's (`typeInActive`). a newline the field reports
-	 * with no Return pressed came from the user's own Shift-Return
+	 * with no Return pressed came from the user's own Shift-Return. a Return pressed before the last one's newline came
+	 * back sends none of its own: the field would put both newlines after the keys typed between them
 	 */
 	pressReturn(): void {
-		this.#returnPressed = true
+		if (this.#pendingReturn) {
+			this.#pendingReturn.extra++
+			return
+		}
+		this.#pendingReturn = { base: this.#field, extra: 0, shiftAt: null }
 		this.#sendKeys('shift-enter')
+	}
+
+	/**
+	 * Return's newline came back after keys typed behind it (`returnAfterTyping`: `at` is where Return was pressed in
+	 * `base`, `typed` what came after it, `deleted` the characters Backspaces took before it), as fast typing delivers
+	 * them: Return is made at `at` as editmd's Enter, each Return pressed meanwhile at the caret the last one left, then
+	 * each Backspace at the caret as a person's there (`#backspaceAtCaret`), and `typed` goes in after them, as editmd
+	 * took the keys in order. one report cannot tell which Return the typing came between, so it goes after the last.
+	 * a Shift-Return's newline, already in `base` at `shiftAt`, is made its hard break there instead
+	 */
+	#typeAfterReturn(
+		{ base, extra, shiftAt }: { base: string; extra: number; shiftAt: number | null },
+		{ at, typed, deleted }: { at: number; typed: string; deleted: number }
+	): void {
+		this.#pendingReturn = null
+		if (shiftAt === null) this.#returnAt(`${base.slice(0, at)}\n${base.slice(at)}`, at)
+		else this.#returnAt(base, shiftAt, true)
+		for (let more = 0; more < extra; more++) {
+			const caret = this.#lastCaret!
+			this.#returnAt(`${this.#field.slice(0, caret)}\n${this.#field.slice(caret)}`, caret)
+		}
+		for (let gone = 0; gone < deleted; gone++) this.#backspaceAtCaret()
+		// the field still shows the keys before the newline; a Return made here remounts it but in code, whose field then
+		// lacks that newline until the next key rewrites it
+		if (typed !== '') this.#typeAtCaret(typed)
+	}
+
+	/**
+	 * Return in the open field, Shift-Return with `shift`, whose text `field` holds its newline at `at`; the caret is
+	 * left where it ends up
+	 */
+	#returnAt(field: string, at: number, shift = false): void {
+		this.#lastCaret = at + 1
+		this.#typeReturn(returnEdit(this.#sourceOf(field), at + this.#shift, shift), field, at + 1)
+	}
+
+	/**
+	 * a Backspace at the open field's caret, as the field reports one (`#typeField`); at the field's start it takes
+	 * nothing there and joins the Block onto the one above (`#joinBackward`)
+	 */
+	#backspaceAtCaret(): void {
+		const caret = this.#lastCaret!
+		if (caret === 0) {
+			this.#joinBackward()
+			return
+		}
+		this.#lastCaret = caret - 1
+		this.#typeField(this.#field.slice(0, caret - 1) + this.#field.slice(caret), caret - 1)
+	}
+
+	/** `typed` goes into the open field at its caret, the field shown afresh with the caret after it */
+	#typeAtCaret(typed: string): void {
+		const at = this.#lastCaret!
+		this.#replaceField(this.#sourceOf(this.#field.slice(0, at) + typed + this.#field.slice(at)))
+		this.#putCaret(this.#field, at + typed.length)
+	}
+
+	/**
+	 * Backspace went up in the open Block field. a Backspace at the field's start takes nothing, so no change reports it,
+	 * and GPUI hands the view no key-down for Backspace (measured headless): its key-up, with no text lost since the last
+	 * Backspace went up, is a Backspace at the start, which joins the Block onto the one above (`#joinBackward`)
+	 */
+	backspaceUp(): void {
+		if (!this.#deleted) this.#joinBackward()
+		this.#deleted = false
+	}
+
+	/**
+	 * Backspace at the start of the open Block, as editmd's joinBackward (`joinedBlocks`): its text goes on the end of the
+	 * Block above, whose field opens with the caret where the two meet; a new Block's empty field goes with its blank
+	 * line. where editmd leaves both Blocks as they are (code above, a list or code here) nothing happens
+	 */
+	#joinBackward(): void {
+		const index = this.activeIndex!
+		const previous = this.#document.blocks[index - 1]
+		const joined = previous && joinedBlocks(this.sliceOf(previous), this.#sourceOf(this.#field))
+		if (!joined) return
+		const text = this.#document.text
+		const before = text.slice(0, previous!.start)
+		const after = text.slice(this.#session!.end)
+		// closed, a new Block's empty field takes its blank line out, which `after` never held
+		this.closeEdit()
+		const whole = this.#document.openSourceEdit()
+		whole.update(before + joined.source + after)
+		whole.close()
+		this.openBlock(index - 1)
+		this.#remountField(this.#field)
+		this.#sync()
+		this.#putCaret(this.#field, joined.caret)
 	}
 
 	/**
 	 * Return typed into the open Block field, which reported `field` with its newline, as editmd's Enter does
 	 * (`returnEdit`): the newline stays as typed, the caret at `caret` after it (`#typeField`), the field's text is
-	 * rewritten with the caret put after the change, or the Block splits at the caret (`#splitField`)
+	 * rewritten with the caret put after the change, or the Block splits at the caret (`#splitField`). keys the field
+	 * takes after `field` on its way out go onto the one that replaces it, as typed (`#typeLate`)
 	 */
 	#typeReturn(edit: ReturnEdit, field: string, caret: number): void {
+		const revision = this.fieldRevision
 		if (edit.kind === 'newline') this.#typeField(field, caret)
 		else if (edit.kind === 'field') {
 			this.#replaceField(edit.field)
 			this.#putCaret(edit.field, edit.caret)
 		} else this.#splitField(edit.head, edit.tail)
+		this.#replaced = { session: this.#session!, revision, shown: field }
 	}
 
 	/**
@@ -1559,6 +1716,8 @@ export class DocumentController {
 	 * session left as it is; remounted, since an unchanged `value` prop would not reach the field
 	 */
 	#remountField(field: string): void {
+		// a newline still to come back from the old field never lands in this one
+		this.#pendingReturn = null
 		this.activeSource = field
 		this.#field = field
 		this.#lastCaret = field.length
@@ -2285,14 +2444,22 @@ export class DocumentController {
 			this.openBlock(index)
 			return at
 		}
+		this.#openTrailing()
+		return 0
+	}
+
+	/**
+	 * a new Block's empty field after the last Block, where editmd's caret sits in the paragraph Milkdown's `trailing`
+	 * plugin keeps there (web/src/editor.ts:482), as Return's does (`openEditAfter`); closed untouched, it goes again
+	 */
+	#openTrailing(): void {
 		this.#session?.close()
-		this.#session = this.#document.openEditAfter(blocks.length - 1)
+		this.#session = this.#document.openEditAfter(this.#document.blocks.length - 1)
 		this.#newBlockSession = this.#session
 		this.activeKind = 'paragraph'
 		this.activeSource = this.#field = this.#fieldOf('', false)
 		this.#lastCaret = 0
 		this.#sync()
-		return 0
 	}
 
 	/**
@@ -2413,12 +2580,34 @@ export class DocumentController {
 
 	/**
 	 * Format > Link… (⌘K): editmd's Add Link sheet, its field prefilled with the pasteboard's URL
-	 * (EditorWindowController.swift:115-150). editmd disables it in Source mode with the rest of Format
-	 * (`validateMenuItem`), so it opens nothing there
+	 * (EditorWindowController.swift:115-150), or its Edit Link, prefilled with the link's own, while the caret is in a
+	 * link: with no field open at editmd's caret there (`#linkAtLoadCaret`); an open field's caret is read only on Add
+	 * (gap G1), so it stays Add Link. editmd disables it in Source mode with the rest of Format (`validateMenuItem`), so
+	 * it opens nothing there
 	 */
 	#showAddLink(): void {
 		if (this.sourceMode) return
-		this.#showOverlay({ kind: 'addLink', url: this.#readClipboardUrl() ?? '' })
+		const current = this.activeIndex === null ? this.#linkAtLoadCaret() : null
+		this.#showOverlay({
+			kind: 'addLink',
+			url: current ?? this.#readClipboardUrl() ?? '',
+			edit: current !== null
+		})
+	}
+
+	/**
+	 * the URL of the link at the caret `#openAtLoadCaret` opens the field at (`linkAt`), null for none: the end of the
+	 * last place's text, else editmd's load caret in the first Block holding text
+	 */
+	#linkAtLoadCaret(): string | null {
+		const last = this.#lastPlaceIndex()
+		const blocks = this.#document.blocks
+		const index = last ?? blocks.findIndex((block) => firstTextOffset(this.sliceOf(block)) !== null)
+		const block = blocks[index]
+		if (!block) return null
+		const source = this.sliceOf(block)
+		const at = last === null ? firstTextOffset(source) : source.length
+		return linkAt(source, at ?? 0, this.#definitions)
 	}
 
 	/**
@@ -2440,7 +2629,12 @@ export class DocumentController {
 			}
 			const at = this.#openAtLoadCaret()
 			if (at === null) return
-			const source = linkAtSelection(this.#sourceOf(this.#field), { start: at, end: at }, url)
+			const source = linkAtSelection(
+				this.#sourceOf(this.#field),
+				{ start: at, end: at },
+				url,
+				this.#definitions
+			)
 			if (source !== null) this.#replaceField(source)
 			else this.closeEdit()
 		})
@@ -2457,14 +2651,19 @@ export class DocumentController {
 		const unlinking = url.trim() === ''
 		const whole = this.#sourceOf(this.#field)
 		const anywhere = { start: 0, end: unlinking ? whole.length : 0 }
-		if (linkAtSelection(whole, anywhere, url) === null) return
+		if (linkAtSelection(whole, anywhere, url, this.#definitions) === null) return
 		void this.#onField(async () => {
 			this.#cutUndoStep()
 			const range = await this.readSelection()
 			if (!range) return
 			const before = this.#sourceOf(this.#field)
 			const end = range.end + this.#shift
-			const source = linkAtSelection(before, { start: range.start + this.#shift, end }, url)
+			const source = linkAtSelection(
+				before,
+				{ start: range.start + this.#shift, end },
+				url,
+				this.#definitions
+			)
 			if (source === null) {
 				await this.#settleProbe(range)
 				return
@@ -2717,7 +2916,7 @@ export class DocumentController {
 		this.overlay = null
 		this.activeIndex = null
 		this.activeIsNew = false
-		this.#returnPressed = false
+		this.#pendingReturn = null
 		this.sourceMode = false
 		// a fresh cache per Document, so reopening a file picks up images changed in between
 		this.#imageSizes = new ImageSizes()

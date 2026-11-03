@@ -16,17 +16,31 @@ export type Direction = 'next' | 'previous'
 /**
  * the matches the washes paint for `query`, in paint order, which is native's `activeIndex` order; null while
  * the washes still show an earlier query, since the paint lags the query by a frame. a match split across
- * runs paints a wash per run, each shorter than the query, so pieces add up until they spell it
+ * runs paints a wash per run, each shorter than the query, so pieces add up until they spell it. a wash of one of the
+ * `foreign` texts, which other highlights paint after Find's at every occurrence (a Block's own runs), counts only
+ * where it finishes or goes on with a match, and a place washed twice counts once
  */
-export function matchesFrom(washes: readonly Wash[], query: string): Match[] | null {
+export function matchesFrom(
+	washes: readonly Wash[],
+	query: string,
+	foreign: ReadonlySet<string> = new Set()
+): Match[] | null {
 	if (query.length === 0) return []
 	const needle = query.toLowerCase()
 	const matches: Match[] = []
+	const places = new Set<string>()
 	let spelled = ''
 	let first: Match | null = null
 	for (const { elementId, text, start, end } of washes) {
+		const place = `${elementId}:${start}:${end}:${text}`
+		const piece = text.slice(start, end)
+		const going = spelled + piece.toLowerCase()
+		if (places.has(place)) continue
+		if (foreign.has(piece) && going !== needle && (spelled === '' || !needle.startsWith(going)))
+			continue
+		places.add(place)
 		first ??= { elementId, start }
-		spelled += text.slice(start, end).toLowerCase()
+		spelled = going
 		if (!needle.startsWith(spelled)) return null
 		if (spelled.length < needle.length) continue
 		matches.push(first)

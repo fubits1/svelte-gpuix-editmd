@@ -50,11 +50,40 @@ const BASE: Record<Appearance, BaseColours> = {
 
 /**
  * AppKit's colours editmd paints its window chrome in, read in Swift on this macOS as sRGB: systemRed for Find's
- * no-match count and Not Saved (EditorWindowController.swift:301, 358), secondaryLabelColor for Saving… and Saved
+ * no-match count and Not Saved (EditorWindowController.swift:301, 358), secondaryLabelColor for Saving… and Saved.
+ * `focus-ring` is keyboardFocusIndicatorColor, which follows the Mac's accent colour, so the theme asks AppKit for it
+ * at launch (host/focusRing.ts); these are this Mac's, with its purple accent, for when that fails. the alert's
+ * colours are read as raw bytes from editmd's NSAlert pictures in light and dark (f-save-now): the page under it is
+ * black at 20% over it in both (white paints #cccccc, #1e1f22 paints #17191a), the box and its push buttons solid greys
  */
-const APPKIT: Record<Appearance, Record<'system-red' | 'secondary-label', string>> = {
-	light: { 'system-red': '#ff383c', 'secondary-label': '#0000007f' },
-	dark: { 'system-red': '#ff4245', 'secondary-label': '#ffffff8c' }
+const APPKIT: Record<
+	Appearance,
+	Record<
+		| 'system-red'
+		| 'secondary-label'
+		| 'focus-ring'
+		| 'alert-dim'
+		| 'alert-surface'
+		| 'alert-button',
+		string
+	>
+> = {
+	light: {
+		'system-red': '#ff383c',
+		'secondary-label': '#0000007f',
+		'focus-ring': '#8426857f',
+		'alert-dim': '#00000033',
+		'alert-surface': '#ededed',
+		'alert-button': '#dbdbdb'
+	},
+	dark: {
+		'system-red': '#ff4245',
+		'secondary-label': '#ffffff8c',
+		'focus-ring': '#dc78de7f',
+		'alert-dim': '#00000033',
+		'alert-surface': '#313334',
+		'alert-button': '#414344'
+	}
 }
 
 /** editmd's Agent colours by slot, assigned in the order Agents first edit the file */
@@ -84,6 +113,9 @@ const HOVER_ALPHA = alphaHex(0.08)
 /** editmd's `--selection`, the accent at 22%, baked in as TINT_ALPHA is */
 const SELECTION_ALPHA = alphaHex(0.22)
 
+/** editmd's inline code border, the border colour at 60%, baked in as TINT_ALPHA is */
+const CODE_BORDER_ALPHA = alphaHex(0.6)
+
 /** every colour token the views read through `var(--token)` */
 export function paletteFor(appearance: Appearance): Palette {
 	const palette: Palette = { ...BASE[appearance], ...APPKIT[appearance] }
@@ -97,6 +129,8 @@ export function paletteFor(appearance: Appearance): Palette {
 	palette['legend-hover'] = `${BASE[appearance].text}${HOVER_ALPHA}`
 	// editmd's `--selection: color-mix(in srgb, var(--accent) 22%, transparent)`, the open front matter's focus ring
 	palette.selection = `${BASE[appearance].accent}${SELECTION_ALPHA}`
+	// editmd's inline code `border: 1px solid color-mix(in srgb, var(--border) 60%, transparent)` (style.css:189)
+	palette['code-border'] = `${BASE[appearance].border}${CODE_BORDER_ALPHA}`
 	/**
 	 * gpuix's Tooltip paints its tip in these, else in its own `#313244` and `#cdd6f4` whatever the appearance; editmd's
 	 * tooltips are the system's, which the surface and the text colour come close to

@@ -200,9 +200,10 @@ describe('parseBlocks', () => {
 			'![a pic](img/a.png) ![b](https://example.com/b.png "B")\n\nText with ![inline](c.png) image.\n'
 		)
 
+		// a title is the image's tooltip, as editmd's `img.title` (remote.ts:77-78)
 		expect(images?.images).toEqual([
 			{ src: 'img/a.png', alt: 'a pic' },
-			{ src: 'https://example.com/b.png', alt: 'b' }
+			{ src: 'https://example.com/b.png', alt: 'b', title: 'B' }
 		])
 		expect(mixed?.images).toBeUndefined()
 	})

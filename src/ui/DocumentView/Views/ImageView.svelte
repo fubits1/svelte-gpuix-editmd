@@ -6,13 +6,13 @@
   as WebKit paints a broken image small, instead of GPUI's load error atop the fixed box. ImageBlock and MixedParagraphBlock paint each of their images here.
 -->
 <script lang="ts">
-	import Tooltip from 'gpuix-svelte/components/Tooltip.svelte'
 	import { useTheme } from '../../../app/theme.svelte.ts'
 	import type { Image } from '../../../engine/blocks.ts'
 	import { fitToWidth, type Size } from '../../../core/imageSize.ts'
 	import { resolveImageSource } from '../../../core/imageSource.ts'
 	import { documentController } from '../controller.svelte.ts'
 	import { dropFiles } from '../fileDrop.ts'
+	import PointerTip from '../../PointerTip.svelte'
 
 	let {
 		image,
@@ -103,48 +103,58 @@
 	}
 </script>
 
-<!-- an image of unknown size keeps the fixed box across the column, in a row of images too -->
-<div
-	class={[
-		'frame',
-		naturalSize === null &&
-			!fileMissing &&
-			(source.kind === 'local' || documentController.remoteImagesAllowed) &&
-			'fill'
-	]}
->
-	{#if fileMissing}
-		<text class="blocked" testid={`image-missing-${testIdSuffix}`}>{image.alt}</text>
-	{:else if source.kind === 'local' || documentController.remoteImagesAllowed}
-		<img
-			class={['image', naturalSize === null && 'fixed']}
-			testid={`image-${testIdSuffix}`}
-			src={source.kind === 'local' ? source.path : (source.path ?? source.url)}
-			alt={image.alt}
-			style={naturalSize && styleOf(naturalSize)}
-			style:margin-bottom={inline ? `${theme().scaled(BELOW_BASELINE)}px` : null}
-			objectfit="contain"
-			onclick={href === undefined ? null : () => documentController.linkClicked(href)}
-			onfiledrop={href === undefined ? null : dropFiles}
-		/>
-	{:else}
-		<!--
-		  editmd's `.remote-image`: a picture icon, then the alt text, titled with the src attribute as written
-		  (remote.ts:68 `title = src`), not the URL it resolves to. the box takes no clicks of its own, so it is a
-		  decorative trigger and the Tooltip needs nothing more
-		-->
-		<Tooltip content={image.src} testid={`remote-image-tooltip-${testIdSuffix}`}>
-			<div class="remote" testid={`remote-image-${testIdSuffix}`}>
-				<svg class="remote-icon" source={pictureIcon(theme().palette.muted)}></svg>
-				<text
-					class="remote-alt"
-					testid={`image-blocked-${testIdSuffix}`}
-					aria-description={image.src}>{image.alt}</text
-				>
-			</div>
-		</Tooltip>
-	{/if}
-</div>
+<!--
+  an image's title is a native tip at the pointer, as editmd sets `img.title` (remote.ts:77-78), heard on the frame:
+  the handlers on the <img> itself showed no tip (measured headless); a blocked image's own tip, its src, is innermost
+-->
+<PointerTip text={image.title ?? null} testid={`image-tooltip-${testIdSuffix}`}>
+	{#snippet children(pointer)}
+		<!-- an image of unknown size keeps the fixed box across the column, in a row of images too -->
+		<div
+			class={[
+				'frame',
+				naturalSize === null &&
+					!fileMissing &&
+					(source.kind === 'local' || documentController.remoteImagesAllowed) &&
+					'fill'
+			]}
+			{...pointer}
+		>
+			{#if fileMissing}
+				<text class="blocked" testid={`image-missing-${testIdSuffix}`}>{image.alt}</text>
+			{:else if source.kind === 'local' || documentController.remoteImagesAllowed}
+				<img
+					class={['image', naturalSize === null && 'fixed']}
+					testid={`image-${testIdSuffix}`}
+					src={source.kind === 'local' ? source.path : (source.path ?? source.url)}
+					alt={image.alt}
+					style={naturalSize && styleOf(naturalSize)}
+					style:margin-bottom={inline ? `${theme().scaled(BELOW_BASELINE)}px` : null}
+					objectfit="contain"
+					onclick={href === undefined ? null : () => documentController.linkClicked(href)}
+					onfiledrop={href === undefined ? null : dropFiles}
+				/>
+			{:else}
+				<!--
+				  editmd's `.remote-image`: a picture icon, then the alt text, titled with the src attribute as written
+				  (remote.ts:68 `title = src`), not the URL it resolves to, a native tip at the pointer
+				-->
+				<PointerTip text={image.src} testid={`remote-image-tooltip-${testIdSuffix}`}>
+					{#snippet children(remotePointer)}
+						<div class="remote" testid={`remote-image-${testIdSuffix}`} {...remotePointer}>
+							<svg class="remote-icon" source={pictureIcon(theme().palette.muted)}></svg>
+							<text
+								class="remote-alt"
+								testid={`image-blocked-${testIdSuffix}`}
+								aria-description={image.src}>{image.alt}</text
+							>
+						</div>
+					{/snippet}
+				</PointerTip>
+			{/if}
+		</div>
+	{/snippet}
+</PointerTip>
 
 <style>
 	/* in a paragraph's row it keeps its own width, never more than the column's */

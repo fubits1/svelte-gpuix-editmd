@@ -169,6 +169,13 @@ describe('imageSize', () => {
 		expect(imageSize(bmp)).toEqual({ width: 320, height: 200 })
 	})
 
+	// a file cut short in its header: its first directory would lie past its end
+	test('a TIFF whose first directory lies past its data has no size', () => {
+		const data = new Uint8Array(8)
+		data.set([0x49, 0x49, 0x2a, 0x00, 0xff, 0x00, 0x00, 0x00])
+		expect(imageSize(data)).toBeNull()
+	})
+
 	test('TIFF: ImageWidth and ImageLength from the first directory, either byte order', () => {
 		const tiff = (littleEndian: boolean) => {
 			const data = new Uint8Array(8 + 2 + 2 * 12)

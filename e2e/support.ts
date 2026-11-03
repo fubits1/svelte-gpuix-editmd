@@ -1,9 +1,11 @@
 /**
  * what every end-to-end scenario shares: checks that print like test.ts, waiting on a condition,
- * and the app launched on one file with its support folder (sockets, Open Recent) kept in `folder`
+ * the app launched on one file with its support folder (sockets, Open Recent) kept in `folder`, the keys typed into
+ * it and the file ⌘S saves
  */
 
 import { type ChildProcess, spawnSync } from 'node:child_process'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { type App, launch } from 'gpuix-svelte/automation'
 
@@ -88,6 +90,60 @@ export async function editBlock(app: App, index: number, source: string): Promis
 }
 
 export const press = (app: App, keys: string) => app.getByTestId('block-0').press(keys)
+
+/**
+ * a window on `text` in `folder`/`name`.md: an existing file's Block `block` clicked open, or an empty file's own
+ * field
+ */
+export async function openOn(
+	folder: string,
+	name: string,
+	text: string,
+	block: number
+): Promise<{ app: Editor; file: string }> {
+	const file = join(folder, `${name}.md`)
+	writeFileSync(file, text)
+	if (text !== '') {
+		const app = await openEditor(file, folder)
+		await app.getByTestId(`block-${block}`).click()
+		await app.getByTestId('block-editor').waitFor()
+		return { app, file }
+	}
+	const app = await launch({
+		entry: 'standalone.ts',
+		args: [file],
+		env: { EDITMD_GPUIX_SUPPORT: join(folder, 'support'), ...agentsIn(folder) }
+	})
+	const field = app.getByTestId('block-editor')
+	await field.waitFor({ timeoutMs: 10_000 })
+	await field.click()
+	return { app, file }
+}
+
+export const keystrokes = (app: App, keys: string) => app.call('keystrokes', { keys })
+
+/** one call per key, two frames apart as automation waits, and a pause for a remounted field's caret */
+export async function typeEach(app: App, keys: string[]): Promise<void> {
+	for (const key of keys) {
+		await keystrokes(app, key)
+		await pause(60)
+	}
+}
+
+/** Escape and ⌘S: the file once it differs from `before`, or as it stands after 4s, and whether a field is still open */
+export async function saveAfterEscape(
+	app: App,
+	file: string,
+	before: string
+): Promise<[string, boolean]> {
+	await pause(300)
+	await keystrokes(app, 'escape')
+	await pause(200)
+	const open = (await app.getByTestId('block-editor').count()) > 0
+	await press(app, 'cmd-s')
+	await reaches(() => readFileSync(file, 'utf8') !== before, 4000)
+	return [readFileSync(file, 'utf8'), open]
+}
 
 /** the in-window menu bar's titles, which paint before the document */
 const MENU_TITLES = ['File', 'Edit', 'Format', 'View', 'Window', 'Help']

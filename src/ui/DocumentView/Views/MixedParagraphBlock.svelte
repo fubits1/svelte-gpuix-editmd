@@ -36,12 +36,12 @@
 		let images = 0
 		return (block.segments ?? []).flatMap((segment): Part[] => {
 			if (segment.kind === 'image') {
-				const { src, alt, href } = segment
+				const { src, alt, href, title } = segment
 				return [
 					{
 						kind: 'image',
 						start: segment.start,
-						image: { src, alt, href },
+						image: { src, alt, href, title },
 						testIdSuffix: `${testKey}-${images++}`
 					}
 				]

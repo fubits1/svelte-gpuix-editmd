@@ -12,6 +12,11 @@ describe('inserted Blocks', () => {
 
 	// editmd's table goes into the list item its caret is in, indented to the item's text (measured in editmd's own
 	// editor: Table at the end of `- a\n- b`)
+	// a list whose items the parser took but whose marker line this one does not see stays unindented
+	test('a Block with no item marker line takes the inserted Block at its own indent', () => {
+		expect(underLastItem('text', '| x |')).toBe('text\n| x |')
+	})
+
 	test('a Table inserted at the end of a list goes under its last item', () => {
 		expect([underLastItem('- a\n- b', TABLE), underLastItem('1. a\n  - b', '| x |')]).toEqual([
 			'- a\n- b\n  |   |   |   |\n  | - | - | - |\n  |   |   |   |\n  |   |   |   |',

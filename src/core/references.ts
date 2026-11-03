@@ -62,6 +62,27 @@ function textOf(source: string, reference: Reference): string {
 	return inner.slice(0, -(reference.label.length + 3))
 }
 
+/**
+ * every reference link (images left out) of the Block `source`, read with the Document's definition lines
+ * `definitions` after it, which a reference needs to be one: its span in `source`, its text as written and the URL
+ * its definition gives it
+ */
+export function linkReferencesOf(
+	source: string,
+	definitions: string
+): { start: number; end: number; text: string; url: string }[] {
+	const text = definitions === '' ? source : `${source}\n\n${definitions}`
+	const { targets, references } = referencesIn(text)
+	return references
+		.filter((reference) => !reference.image && reference.end <= source.length)
+		.map((reference) => ({
+			start: reference.start,
+			end: reference.end,
+			text: textOf(text.slice(reference.start, reference.end), reference),
+			url: targets.get(reference.identifier)?.url ?? ''
+		}))
+}
+
 /** where the span [start, end) of `before` sits in `after`, or null when an edit touched it */
 function mapped(edits: readonly TextEdit[], start: number, end: number): number | null {
 	let shift = 0

@@ -3,8 +3,22 @@
   The Blocks inside a quote or a list item, one under the other, each painted through Content as a top-level Block is,
   since editmd's style.css applies to every element of `.markdown-body`, and spaced as their margins collapse there. A
   list item hands its text paragraphs to `paragraph`, which paints them as its row's text, with no margin (`li > p`);
-  a paragraph with images paints its images through Content, as at the top level.
+  a paragraph with images paints its images through Content, as at the top level. Each Block's row reports itself by the
+  Document offset its Block starts at to the row tracker its page provides (`provideRowTracker`).
 -->
+<script module lang="ts">
+	import type { ShadowNode } from 'gpuix-svelte'
+	import { createContext } from 'svelte'
+
+	/** takes a nested Block's row by the Document offset its Block starts at; returns the release */
+	type TrackRow = (start: number, node: ShadowNode) => () => void
+
+	/** the page's row tracker, which scrolls a followed link's heading inside a quote or a list to its own row */
+	const [useRowTracker, setRowTracker] = createContext<TrackRow>()
+
+	export const provideRowTracker = setRowTracker
+</script>
+
 <script lang="ts">
 	import type { Snippet } from 'svelte'
 	import { spaceAbove, spaceInItem } from '../../app/blockSpacing.ts'
@@ -27,6 +41,8 @@
 		/** a list item's text paragraph, painted as the item's text; a quote's paint as top-level ones */
 		paragraph?: Snippet<[Block]>
 	} = $props()
+
+	const trackRow = useRowTracker()
 </script>
 
 <div class="nested">
@@ -42,7 +58,11 @@
 		{#if row}
 			<GapLines place={{ start: block.start, end: block.end }} />
 		{/if}
-		<div class="child" style:margin-top={margin && `var(--size-${margin})`}>
+		<div
+			class="child"
+			style:margin-top={margin && `var(--size-${margin})`}
+			{@attach (node: ShadowNode) => trackRow(block.start, node)}
+		>
 			{#if paragraph && block.kind === 'paragraph' && !block.images && !block.segments}
 				{@render paragraph(block)}
 			{:else if row}

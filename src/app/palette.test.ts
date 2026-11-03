@@ -93,6 +93,14 @@ describe('paletteFor', () => {
 	)
 
 	test.each(['light', 'dark'] as const)(
+		'%s has editmd’s inline code border, the border colour at 60% alpha',
+		(appearance) => {
+			// `border: 1px solid color-mix(in srgb, var(--border) 60%, transparent)` (style.css:189); 60% of 255 is 153, 0x99
+			expect(paletteFor(appearance)['code-border']).toBe(`${EDITMD[appearance].border}99`)
+		}
+	)
+
+	test.each(['light', 'dark'] as const)(
 		'%s paints the scrollbar thumb in `faint` and a hovered one in `muted`, quiet greys like the system’s overlay scroller',
 		(appearance) => {
 			const palette = paletteFor(appearance)
@@ -336,6 +344,26 @@ describe('linkThemeFor', () => {
 			{ ...dark, textMuted: `${EDITMD.dark.accent}59` },
 			EDITMD.dark.accent,
 			`${EDITMD.light.accent}59`
+		])
+	})
+})
+
+// read as raw bytes from editmd's NSAlert pictures (f-save-now-source.png in dark and in light, 2x): the page under
+// the alert, white in light and #1e1f22 in dark, paints #cccccc and #17191a, black at 20% over either; the box and
+// its push buttons are solid greys; the ring is AppKit's, read in Swift
+describe('alert tokens', () => {
+	test('editmd’s dimmed page, alert box and push buttons in light and dark', () => {
+		const [light, dark] = [paletteFor('light'), paletteFor('dark')]
+		expect(
+			[light, dark].map((palette) => [
+				palette['alert-dim'],
+				palette['alert-surface'],
+				palette['alert-button'],
+				palette['focus-ring']
+			])
+		).toEqual([
+			['#00000033', '#ededed', '#dbdbdb', '#8426857f'],
+			['#00000033', '#313334', '#414344', '#dc78de7f']
 		])
 	})
 })

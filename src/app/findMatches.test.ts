@@ -35,6 +35,32 @@ describe('matchesFrom', () => {
 		expect(matchesFrom([wash(9, 'Be bold', 3, 2)], 'be')).toBeNull()
 	})
 
+	/**
+	 * a Block's own washes (its code spans' runs) follow Find's in the paint and wash every occurrence of their text, so
+	 * they repeat a place Find washed or wash one Find did not: neither is a match (measured headless)
+	 */
+	test('a foreign wash counts only where it finishes or goes on with a match, and a place washed again once', () => {
+		const text = 'a code b and code'
+		const findCode = [wash(9, text, 2, 4), wash(9, text, 13, 4)]
+		const ownCode = [wash(9, text, 2, 4), wash(9, text, 13, 4)]
+		const foreign = new Set(['code'])
+
+		expect([
+			matchesFrom([...findCode, ...ownCode], 'code', foreign),
+			matchesFrom([wash(9, text, 0, 8), ...ownCode], 'a code b', foreign),
+			matchesFrom([wash(9, text, 0, 3), ...ownCode], 'a c', foreign),
+			matchesFrom([wash(3, 'say ', 0, 4), wash(4, 'code', 0, 4), ...ownCode], 'say code', foreign)
+		]).toEqual([
+			[
+				{ elementId: 9, start: 2 },
+				{ elementId: 9, start: 13 }
+			],
+			[{ elementId: 9, start: 0 }],
+			[{ elementId: 9, start: 0 }],
+			[{ elementId: 3, start: 0 }]
+		])
+	})
+
 	test('no wash is no match, and an empty query has none', () => {
 		expect(matchesFrom([], 'be')).toEqual([])
 		expect(matchesFrom([wash(9, 'Be', 0, 2)], '')).toEqual([])

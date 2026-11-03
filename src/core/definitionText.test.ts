@@ -4,6 +4,10 @@ import { definitionText } from './definitionText.ts'
 // what editmd's editor paints for a definition line (links.ts:133-136), run in its own editor:
 // the label as written, the destination with its escapes and entities decoded, the title in double quotes
 describe('definitionText', () => {
+	test('a line that defines nothing paints as written', () => {
+		expect(definitionText('[a]: not a definition <')).toBe('[a]: not a definition <')
+	})
+
 	test.each([
 		['[docs]: https://example.com/docs "Docs"', '[docs]: https://example.com/docs "Docs"'],
 		["[Docs]:   <https://example.com/a b>   'Single'", '[Docs]: https://example.com/a b "Single"'],

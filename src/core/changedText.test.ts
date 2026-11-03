@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { blockChange, describedText, linkRunsOf, runOffset } from './changedText.ts'
+import { blockChange, codeRunsOf, describedText, linkRunsOf, runOffset } from './changedText.ts'
 
 const changedText = (before: string, after: string) => blockChange(before, after)?.runs ?? null
 
@@ -82,7 +82,7 @@ describe('changedText', () => {
 		])
 	})
 
-	// an image paints no text, a hard break is a line of its own, a footnote reference paints its label in brackets,
+	// an image paints no text, a hard break is a line of its own, a footnote reference paints its label raised,
 	// and a reference link carries the definition it names as its mark
 	test('images, hard breaks, footnote references and reference links compare as they paint', () => {
 		expect([
@@ -99,7 +99,8 @@ describe('changedText', () => {
 				{ text: 'ONE', index: 0 },
 				{ text: 'TWO', index: 0 }
 			],
-			[{ text: '2', index: 0 }],
+			// the page paints `[^2]` as `²` (footnoteMark), which the run must be found in
+			[{ text: '²', index: 0 }],
 			[{ text: 'docs', index: 0 }]
 		])
 	})
@@ -173,6 +174,42 @@ describe('changedText', () => {
 				{ text: 't', index: 0 },
 				{ text: 'https://a.example', index: 0 }
 			],
+			[]
+		])
+	})
+
+	// editmd's link carries its title as the `title` attribute, a native tooltip (links.ts:174)
+	test('a link with a title names it on its run', () => {
+		expect(linkRunsOf('[a](u "T") and [b](v)')).toEqual([
+			{ text: 'a', index: 0, title: 'T' },
+			{ text: 'b', index: 0 }
+		])
+	})
+
+	// editmd borders each inline code span (style.css:185-191), which native <markdown> cannot, so the view needs each
+	// span's painted text to find its rects; an empty link or inline HTML that native paints as code is no code span
+	test('each inline code span’s painted text, as a run of the Block’s painted text', () => {
+		expect([
+			codeRunsOf('a `code` b'),
+			codeRunsOf('`x` and x and `x`'),
+			codeRunsOf('- one `a`\n- two **`b`**'),
+			codeRunsOf('> q `c`'),
+			codeRunsOf('| h |\n| - |\n| `d` |'),
+			codeRunsOf('a [](u) <b>h</b> c'),
+			codeRunsOf('```js\nx\n```')
+		]).toEqual([
+			[{ text: 'code', index: 0 }],
+			[
+				{ text: 'x', index: 0 },
+				{ text: 'x', index: 2 }
+			],
+			[
+				{ text: 'a', index: 0 },
+				{ text: 'b', index: 0 }
+			],
+			[{ text: 'c', index: 0 }],
+			[{ text: 'd', index: 0 }],
+			[],
 			[]
 		])
 	})

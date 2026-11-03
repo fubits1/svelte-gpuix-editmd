@@ -23,6 +23,10 @@ export function footnoteMark(reference: FootnoteReference): string {
 		.join('')
 }
 
+/** the text a footnote reference labelled `label` paints, its `footnoteMark` with the escapes rendered away */
+export const paintedFootnote = (label: string): string =>
+	footnoteMark({ start: 0, end: 0, label, identifier: label }).replace(/\\(.)/g, '$1')
+
 /** a definition's content as markdown of its own: continuation lines are indented four spaces under `[^label]:` */
 export function footnoteContent(content: string): string {
 	return content.replace(/\n {1,4}/g, '\n')

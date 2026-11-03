@@ -1,4 +1,5 @@
 import { type BlockKind, blockKindOf } from '../engine/blocks.ts'
+import { linkReferencesOf } from './references.ts'
 import { tableCells } from './tableCells.ts'
 
 /** Blocks with no text to hold a link */
@@ -75,19 +76,21 @@ const LINKS =
  * is; in code, which takes no links, the URL goes in as text. `range` is the selection in `source`, learnt by
  * the sentinel probe (core/fieldSelection.ts). an empty URL takes the link off at the caret or across the
  * selection, as editmd's Add with nothing in the field does (EditorWindowController.swift:133-134, editor.ts:380-385);
- * null when that changes nothing
+ * null when that changes nothing. `definitions` are the Document's definition lines, which make a reference link one
  */
 export function linkAtSelection(
 	source: string,
 	range: { start: number; end: number },
-	url: string
+	url: string,
+	definitions = ''
 ): string | null {
 	const href = url.trim()
 	const { start, end } = range
-	if (href === '') return unlinked(source, start, end)
+	const references = linkReferencesOf(source, definitions)
+	if (href === '') return unlinked(source, start, end, references)
 	// editmd's link toggles as a mark (toggleLinkCommand is toggleMark): a selection holding a link loses it
 	if (start < end) {
-		const toggled = unlinked(source, start, end)
+		const toggled = unlinked(source, start, end, references)
 		if (toggled !== null) return toggled
 	}
 	const kind = blockKindOf(source)
@@ -105,19 +108,47 @@ export function linkAtSelection(
 		for (const link of source.matchAll(LINKS)) {
 			const from = link.index
 			const to = from + link[0].length
-			if (start <= from || start >= to) continue
+			if (start < from || start >= to) continue
 			// editmd's Edit Link puts a mark of only the new href on the link (editor.ts:388-390): its title goes
 			const text = link[4] === undefined ? link[1] : linkTextOf(link[4])
 			return `${source.slice(0, from)}[${text}](${destinationOf(href)})${source.slice(to)}`
 		}
+		const reference = references.find((each) => start >= each.start && start < each.end)
+		if (reference) {
+			return `${source.slice(0, reference.start)}[${reference.text}](${destinationOf(href)})${source.slice(reference.end)}`
+		}
 		return `${source.slice(0, start)}${linkOf(href)}${source.slice(start)}`
 	}
+	const code = codeSpanAround(source, start, end)
+	if (code) return linkedInCode(source, code, start, end, href)
 	const selected = source.slice(start, end)
 	const link =
 		selected === href && AUTOLINKABLE.test(href)
 			? `<${href}>`
 			: `[${linkTextOf(selected)}](${destinationOf(href)})`
 	return `${source.slice(0, start)}${link}${source.slice(end)}`
+}
+
+/**
+ * the URL of the link the caret `at` is in, as editmd's sheet prefills an Edit Link with the link mark's href
+ * (EditorWindowController.swift:117-128, editor.ts:362-372): an inline link's destination as it reads, an autolink's
+ * or a bare URL's address, a reference link's definition URL (`definitions`, the Document's definition lines); null
+ * when the caret is in none
+ */
+export function linkAt(source: string, at: number, definitions = ''): string | null {
+	// editmd's caret at a link's first character is in it: the text after it carries the mark (editor.ts:369)
+	const inside = (from: number, to: number) => at >= from && at < to
+	for (const link of source.matchAll(LINKS)) {
+		if (!inside(link.index, link.index + link[0].length)) continue
+		if (link[4] !== undefined) return link[4]
+		return link[2]!.replace(/^<([\s\S]*)>$/, '$1').replace(/\\(.)/g, '$1')
+	}
+	for (const bare of source.matchAll(BARE_URL)) {
+		if (inside(bare.index, bare.index + bare[0].length)) return bare[0]
+	}
+	return (
+		linkReferencesOf(source, definitions).find(({ start, end }) => inside(start, end))?.url ?? null
+	)
 }
 
 /** what opens a line before its text: indentation, quote marks, a list marker, a task box, heading marks */
@@ -158,24 +189,70 @@ const BARE_URL = /(?<![\w<(\\/])https?:\/\/[^\s<]*[^\s<?!.,:*_~'")\]]/gi
 
 /**
  * `source` with the links at a caret `start === end`, or across `[start, end)`, written as their text alone; null when
- * no link is there. a URL left as text gets its colon escaped, as editmd's serializer writes it, or GFM links it again
+ * no link is there. a URL left as text gets its colon escaped, as editmd's serializer writes it, or GFM links it again.
+ * `references` are the Block's reference links (`linkReferencesOf`), which a regular expression cannot tell
  */
-function unlinked(source: string, start: number, end: number): string | null {
-	const links = [...source.matchAll(LINKS), ...source.matchAll(BARE_URL)].sort(
-		(a, b) => a.index - b.index
-	)
+function unlinked(
+	source: string,
+	start: number,
+	end: number,
+	references: readonly { start: number; end: number; text: string }[]
+): string | null {
+	const links = [
+		...[...source.matchAll(LINKS), ...source.matchAll(BARE_URL)].map((link) => ({
+			from: link.index,
+			to: link.index + link[0].length,
+			text: link[1] ?? (link[4] ?? link[0]).replace(/^(https?):/i, '$1\\:')
+		})),
+		...references.map(({ start: from, end: to, text }) => ({ from, to, text }))
+	].sort((a, b) => a.from - b.from)
 	let out = ''
 	let at = 0
-	for (const link of links) {
-		const from = link.index
-		const to = from + link[0].length
-		const reached = start === end ? start > from && start < to : start < to && end > from
+	for (const { from, to, text } of links) {
+		const reached = start === end ? start >= from && start < to : start < to && end > from
 		if (from < at || !reached) continue
-		out +=
-			source.slice(at, from) + (link[1] ?? (link[4] ?? link[0]).replace(/^(https?):/i, '$1\\:'))
+		out += source.slice(at, from) + text
 		at = to
 	}
 	return at === 0 ? null : out + source.slice(at)
+}
+
+/** an inline code span: its backtick run, the run again closing it, and the code between them */
+const CODE_SPAN = /(?<!`)(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g
+
+/** the code span whose code holds all of `[start, end)`, with where it and its code start and end; null for none */
+function codeSpanAround(source: string, start: number, end: number) {
+	for (const span of source.matchAll(CODE_SPAN)) {
+		const ticks = span[1]!
+		const codeStart = span.index + ticks.length
+		const codeEnd = codeStart + span[2]!.length
+		if (codeStart <= start && end <= codeEnd) {
+			return { from: span.index, to: codeEnd + ticks.length, codeStart, codeEnd, ticks }
+		}
+	}
+	return null
+}
+
+/**
+ * a selection in inline code linked as editmd's link mark on code text: the selected code becomes the link's text,
+ * still code, and the rest of the span stays code on either side of it (run in editmd's own editor)
+ */
+function linkedInCode(
+	source: string,
+	code: NonNullable<ReturnType<typeof codeSpanAround>>,
+	start: number,
+	end: number,
+	href: string
+): string {
+	const { ticks } = code
+	const inCode = (text: string) => (text === '' ? '' : `${ticks}${text}${ticks}`)
+	return (
+		source.slice(0, code.from) +
+		inCode(source.slice(code.codeStart, start)) +
+		`[${inCode(source.slice(start, end))}](${destinationOf(href)})` +
+		inCode(source.slice(end, code.codeEnd)) +
+		source.slice(code.to)
+	)
 }
 
 /**

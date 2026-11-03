@@ -11,6 +11,11 @@ import { caretAfterTyping, inputRuleKind } from './inputRules.ts'
 const kindAfter = (field: string) => inputRuleKind(field, field.length)
 
 describe('inputRuleKind', () => {
+	// `---` typed above `title: a` and its closing `---` makes front matter, which editmd edits as source, no input rule
+	test('a rule’s text that makes a kind no input rule turns the Block into is no input rule', () => {
+		expect(inputRuleKind('---\ntitle: a\n---', 3)).toBeNull()
+	})
+
 	test('each of editmd’s rules makes its kind as its space or newline is typed', () => {
 		expect(
 			['# ', '### ', '> ', '- ', '* ', '1. ', '```js\n', '```\n', '---'].map(kindAfter)

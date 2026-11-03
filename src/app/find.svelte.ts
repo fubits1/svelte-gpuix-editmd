@@ -151,8 +151,8 @@ class FindController {
 
 	/**
 	 * the texts the view washes with highlights of its own (an Agent's changed runs, which paint every occurrence of
-	 * their text, transparent but the one): native lists those washes with Find's, so they are left out of its matches,
-	 * unless one spells part of the query, which a stale Find wash could
+	 * their text, transparent but the one): native lists those washes with Find's, so `matchesFrom` counts one only
+	 * where it finishes or goes on with a match
 	 */
 	setForeignTexts(texts: Iterable<string>): void {
 		this.#foreignTexts = new Set(texts)
@@ -199,12 +199,7 @@ class FindController {
 			this.active = 0
 			return
 		}
-		const needle = query.toLowerCase()
-		const washes = this.#readWashes().filter(({ text, start, end }) => {
-			const piece = text.slice(start, end)
-			return !this.#foreignTexts.has(piece) || needle.includes(piece.toLowerCase())
-		})
-		const matches = matchesFrom(washes, query)
+		const matches = matchesFrom(this.#readWashes(), query, this.#foreignTexts)
 		if (!matches) return
 		if (matches.length === 0 && this.#skipEmpty) {
 			this.#skipEmpty = false

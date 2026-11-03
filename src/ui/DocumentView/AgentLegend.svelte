@@ -29,46 +29,12 @@
 
 <script lang="ts">
 	import type { GpuixEvent, ShadowNode } from 'gpuix-svelte'
-	import Tooltip from 'gpuix-svelte/components/Tooltip.svelte'
-	import { onDestroy } from 'svelte'
 	import { keysOnceFocused } from '../../app/fieldKeys.ts'
 	import { useTheme } from '../../app/theme.svelte.ts'
+	import PointerTip from '../PointerTip.svelte'
 	import { documentController } from './controller.svelte.ts'
 
 	const theme = useTheme()
-
-	/** gpuix Tooltip's own hover delay, which a name's tip waits out too */
-	const TIP_DELAY_MS = 300
-
-	/**
-	 * whose tip shows: a row's name (`name-<index>`), the minimized pill (`pill`) or one of its dots (`dot-<index>`);
-	 * transient UI (ADR-0011). each takes the hover itself, as a Tooltip around a name would stop it growing across
-	 * the row (its wrapper shrinks to content), and one around a dot would pull it out of the pill's row
-	 */
-	let tipped = $state<string | null>(null)
-	/** whose tip waits out the delay; GPUI may report the next one's enter before this one's leave */
-	let pendingTip: string | null = null
-	let tipTimer: ReturnType<typeof setTimeout> | undefined
-
-	function enterTip(key: string): void {
-		clearTimeout(tipTimer)
-		pendingTip = key
-		tipTimer = setTimeout(() => {
-			pendingTip = null
-			tipped = key
-		}, TIP_DELAY_MS)
-	}
-
-	/** only `key`'s own wait and tip end, so a leave that comes after the next one's enter keeps that one */
-	function leaveTip(key: string): void {
-		if (pendingTip === key) {
-			clearTimeout(tipTimer)
-			pendingTip = null
-		}
-		if (tipped === key) tipped = null
-	}
-
-	onDestroy(() => clearTimeout(tipTimer))
 
 	/** editmd's name title (highlights.ts:284, 295): Outside edit, with no Agent to rename, only reveals */
 	const nameTitle = (id: string) =>
@@ -113,9 +79,10 @@
 	}
 </script>
 
-<!-- a Tooltip's trigger for a tip the name's own hover opens: nothing, so the Tooltip is only the point it hangs from -->
-{#snippet noTrigger()}{/snippet}
-
+<!--
+  every legend title is a native tip at the pointer (highlights.ts:253, 257, 274, 284, 295, 300); a dot's sits inside
+  the pill's, and only the innermost shows
+-->
 <div
 	class={['legend', 'legend-shadow', documentController.legendMinimized && 'legend-minimized']}
 	testid="legend"
@@ -123,62 +90,47 @@
 	aria-label="Agents"
 >
 	{#if documentController.legendMinimized}
-		<div
-			class="pill"
-			testid="legend-pill"
-			role="button"
-			tabindex={0}
-			aria-label="Show agents"
-			hitbox="self"
-			onclick={() => documentController.minimizeLegend(false)}
-			onmouseenter={() => enterTip('pill')}
-			onmouseleave={() => leaveTip('pill')}
-		>
-			<!-- editmd's `pill.title = "Show agents"` (highlights.ts:253); the tip hangs left of the legend -->
-			<div class="tip-point">
-				<Tooltip
-					content="Show agents"
-					open={tipped === 'pill'}
-					side="left"
-					align="start"
-					testid="legend-pill-tooltip"
-					children={noTrigger}
-				/>
-			</div>
-			{#each documentController.agents as agent, index (agent.id)}
-				<!--
-				  editmd's `dot.title = agent.name` (highlights.ts:257): a dot hears the pointer itself, so it takes its own
-				  clicks too, which show the rows as the pill's do
-				-->
+		<!-- editmd's `pill.title = "Show agents"` (highlights.ts:253) -->
+		<PointerTip text="Show agents" testid="legend-pill-tooltip">
+			{#snippet children(pillPointer)}
 				<div
-					class={['dot', dotClass(agent.slot)]}
-					testid={`legend-pill-dot-${index}`}
-					aria-label={agent.name}
+					class="pill"
+					testid="legend-pill"
+					role="button"
+					tabindex={0}
+					aria-label="Show agents"
+					hitbox="self"
 					onclick={() => documentController.minimizeLegend(false)}
-					onmouseenter={() => enterTip(`dot-${index}`)}
-					onmouseleave={() => leaveTip(`dot-${index}`)}
+					{...pillPointer}
 				>
-					<div class="tip-point">
-						<Tooltip
-							content={agent.name}
-							open={tipped === `dot-${index}`}
-							side="top"
-							align="start"
-							testid={`legend-pill-dot-tooltip-${index}`}
-							children={noTrigger}
-						/>
-					</div>
+					{#each documentController.agents as agent, index (agent.id)}
+						<!--
+						  editmd's `dot.title = agent.name` (highlights.ts:257): a dot hears the pointer itself, so it takes
+						  its own clicks too, which show the rows as the pill's do
+						-->
+						<PointerTip text={agent.name} testid={`legend-pill-dot-tooltip-${index}`}>
+							{#snippet children(dotPointer)}
+								<div
+									class={['dot', dotClass(agent.slot)]}
+									testid={`legend-pill-dot-${index}`}
+									aria-label={agent.name}
+									onclick={() => documentController.minimizeLegend(false)}
+									{...dotPointer}
+								></div>
+							{/snippet}
+						</PointerTip>
+					{/each}
+					<text class="pill-count" testid="legend-pill-count">{total}</text>
 				</div>
-			{/each}
-			<text class="pill-count" testid="legend-pill-count">{total}</text>
-		</div>
+			{/snippet}
+		</PointerTip>
 	{:else}
 		<div class="header">
 			<!-- editmd's "Agents", painted uppercase by its `text-transform`, which GPUI text lacks -->
 			<text testid="legend-header">AGENTS</text>
 			<!-- editmd's `title = "Minimize"` (highlights.ts:274) -->
-			<Tooltip content="Minimize" testid="legend-minimize-tooltip">
-				{#snippet children(hover)}
+			<PointerTip text="Minimize" testid="legend-minimize-tooltip">
+				{#snippet children(pointer)}
 					<div
 						class="minimize"
 						role="button"
@@ -186,12 +138,12 @@
 						aria-label="Minimize"
 						hitbox="self"
 						onclick={() => documentController.minimizeLegend(true)}
-						{...hover}
+						{...pointer}
 					>
 						<text testid="legend-minimize">–</text>
 					</div>
 				{/snippet}
-			</Tooltip>
+			</PointerTip>
 		</div>
 		{#each documentController.agents as agent, index (agent.id)}
 			<div class="row" testid={`legend-row-${index}`}>
@@ -212,42 +164,31 @@
 						{@attach selectName}
 					/>
 				{:else}
-					<div
-						class="name"
-						testid={`legend-name-${index}`}
-						role="button"
-						tabindex={0}
-						aria-label={nameTitle(agent.id)}
-						hitbox="self"
-						onclick={(event) => clickName(event, agent.id, agent.name)}
-						onmouseenter={() => enterTip(`name-${index}`)}
-						onmouseleave={() => leaveTip(`name-${index}`)}
-					>
-						<div class={['dot', dotClass(agent.slot)]} testid={`legend-dot-${index}`}></div>
-						<text class="name-text" testid={`legend-name-text-${index}`}>{agent.name}</text>
-						<text class="count" testid={`legend-count-${index}`}>{agent.count}</text>
-						<!--
-						  a 0×0 point at the name's top-left corner; the tip shows left of the legend, level with its row,
-						  so it never covers the rows below, whose names it would keep from the pointer
-						-->
-						<div class="name-tip">
-							<Tooltip
-								content={nameTitle(agent.id)}
-								open={tipped === `name-${index}`}
-								side="left"
-								align="start"
-								testid={`legend-name-tooltip-${index}`}
-								children={noTrigger}
-							/>
-						</div>
-					</div>
+					<PointerTip text={nameTitle(agent.id)} testid={`legend-name-tooltip-${index}`}>
+						{#snippet children(pointer)}
+							<div
+								class="name"
+								testid={`legend-name-${index}`}
+								role="button"
+								tabindex={0}
+								aria-label={nameTitle(agent.id)}
+								hitbox="self"
+								onclick={(event) => clickName(event, agent.id, agent.name)}
+								{...pointer}
+							>
+								<div class={['dot', dotClass(agent.slot)]} testid={`legend-dot-${index}`}></div>
+								<text class="name-text" testid={`legend-name-text-${index}`}>{agent.name}</text>
+								<text class="count" testid={`legend-count-${index}`}>{agent.count}</text>
+							</div>
+						{/snippet}
+					</PointerTip>
 				{/if}
 				<!-- editmd's `title = \`Clear ${agent.name}'s highlights\`` (highlights.ts:300) -->
-				<Tooltip
-					content={`Clear ${agent.name}'s highlights`}
+				<PointerTip
+					text={`Clear ${agent.name}'s highlights`}
 					testid={`legend-clear-tooltip-${index}`}
 				>
-					{#snippet children(hover)}
+					{#snippet children(pointer)}
 						<div
 							class="clear"
 							role="button"
@@ -255,12 +196,12 @@
 							aria-label={`Clear ${agent.name}'s highlights`}
 							hitbox="self"
 							onclick={() => documentController.clearHighlights(agent.id)}
-							{...hover}
+							{...pointer}
 						>
 							<text testid={`legend-clear-${index}`}>×</text>
 						</div>
 					{/snippet}
-				</Tooltip>
+				</PointerTip>
 			</div>
 		{/each}
 		{#if documentController.agents.length > 1}
@@ -351,21 +292,6 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-	.name-tip {
-		position: absolute;
-		left: 0;
-		top: 0;
-		width: 0;
-		height: 0;
-	}
-	/* a 0×0 point at the pill's or a dot's top-left corner, out of its flow, that its tip hangs from */
-	.tip-point {
-		position: absolute;
-		left: 0;
-		top: 0;
-		width: 0;
-		height: 0;
 	}
 	.count {
 		padding-left: var(--size-legend-count-gap);

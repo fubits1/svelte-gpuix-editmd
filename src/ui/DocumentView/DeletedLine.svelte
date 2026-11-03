@@ -5,9 +5,8 @@
   top-level Blocks for a Deletion, and between the rows of a list or quote for children taken away.
 -->
 <script lang="ts">
-	import Tooltip from 'gpuix-svelte/components/Tooltip.svelte'
-	import { onDestroy } from 'svelte'
 	import { useTheme } from '../../app/theme.svelte.ts'
+	import PointerTip from '../PointerTip.svelte'
 
 	let {
 		colour,
@@ -24,25 +23,6 @@
 	} = $props()
 
 	const theme = useTheme()
-
-	/** gpuix Tooltip's own hover delay, which the line's tip waits out too */
-	const TIP_DELAY_MS = 300
-
-	/** the tip shows once the pointer has rested on the line; transient UI (ADR-0011) */
-	let tipOpen = $state(false)
-	let tipTimer: ReturnType<typeof setTimeout> | undefined
-
-	function enterTip(): void {
-		clearTimeout(tipTimer)
-		tipTimer = setTimeout(() => (tipOpen = true), TIP_DELAY_MS)
-	}
-
-	function leaveTip(): void {
-		clearTimeout(tipTimer)
-		tipOpen = false
-	}
-
-	onDestroy(() => clearTimeout(tipTimer))
 
 	/**
 	 * the line's dashes, `border-top: 2px dashed` (style.css:494-498), which gpuix cannot draw as a border
@@ -65,37 +45,28 @@
 	})
 </script>
 
-<!-- a Tooltip's trigger for a tip the line's own hover opens: nothing, so the Tooltip is only the point it hangs from -->
-{#snippet noTrigger()}{/snippet}
-
-<div
-	class="deleted"
-	{testid}
-	role="separator"
-	aria-label={tooltip}
-	style:color={`var(--${colour})`}
-	onmouseenter={enterTip}
-	onmouseleave={leaveTip}
->
-	{#each { length: dashes.count }, part (part)}
-		<svg
-			class="dashes"
-			style:width={`${dashes.width}px`}
-			style:height={`${dashes.thickness}px`}
-			source={dashes.source}
-		></svg>
-	{/each}
-	<div class="tip">
-		<Tooltip
-			content={tooltip}
-			open={tipOpen}
-			side="bottom"
-			align="start"
-			testid={tooltipTestid}
-			children={noTrigger}
-		/>
-	</div>
-</div>
+<!-- editmd's line is titled, a native tip at the pointer (highlights.ts:214-219) -->
+<PointerTip text={tooltip} testid={tooltipTestid}>
+	{#snippet children(pointer)}
+		<div
+			class="deleted"
+			{testid}
+			role="separator"
+			aria-label={tooltip}
+			style:color={`var(--${colour})`}
+			{...pointer}
+		>
+			{#each { length: dashes.count }, part (part)}
+				<svg
+					class="dashes"
+					style:width={`${dashes.width}px`}
+					style:height={`${dashes.thickness}px`}
+					source={dashes.source}
+				></svg>
+			{/each}
+		</div>
+	{/snippet}
+</PointerTip>
 
 <style>
 	/*
@@ -110,13 +81,5 @@
 	}
 	.dashes {
 		flex-shrink: 0;
-	}
-	/* a 0×0 point at the line's bottom-left corner, out of its flow, that its tooltip hangs from */
-	.tip {
-		position: absolute;
-		left: 0;
-		bottom: 0;
-		width: 0;
-		height: 0;
 	}
 </style>

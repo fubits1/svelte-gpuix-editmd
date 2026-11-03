@@ -1,6 +1,7 @@
 /**
- * macOS's title bar: gpuix's `height` is the content's, below it (`height: 600` opened a 628px frame),
- * where editmd's 940 is the whole frame's
+ * macOS's title bar: gpuix's `height` is the content's, below it, where editmd's 940 is the whole frame's. measured
+ * on gpuix-svelte 0.3.0 in a real window from the window server's list: content 834 gave an 862 frame and 835 an 864
+ * one, so the bar is 28 and the frame comes out an even height, an odd one of editmd's (863 on a 923 screen) one taller
  */
 export const TITLE_BAR = 28
 

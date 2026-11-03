@@ -5,12 +5,12 @@
 -->
 <script lang="ts">
 	import Scroller from 'gpuix-svelte/components/Scroller.svelte'
-	import Tooltip from 'gpuix-svelte/components/Tooltip.svelte'
 	import { findController } from './src/app/find.svelte.ts'
 	import { provideTheme, type ThemeController, themeController } from './src/app/theme.svelte.ts'
 	import DocumentView from './src/ui/DocumentView.svelte'
 	import FindBar from './src/ui/FindBar.svelte'
 	import MenuBar from './src/ui/MenuBar.svelte'
+	import PointerTip from './src/ui/PointerTip.svelte'
 	import { documentController } from './src/ui/DocumentView/controller.svelte.ts'
 
 	let {
@@ -36,15 +36,6 @@
 	})
 </script>
 
-<!-- the label itself is the Tooltip's trigger; it has no listener of its own, so the Tooltip's wrapper takes the hover -->
-{#snippet statusLabel()}
-	<text
-		class={['status', documentController.statusFailed && 'status-failed']}
-		testid="save-status"
-		motion={statusMotion}>{documentController.statusText}</text
-	>
-{/snippet}
-
 <div class="window" testid="window">
 	<!-- editmd's menu bar, which gpuix's native bar cannot hold (gap G2), across the top above the find bar -->
 	<MenuBar />
@@ -66,18 +57,22 @@
 				<DocumentView />
 			</div>
 		</Scroller>
-		<!-- its text stays while it fades out, so it goes once the fade is over; a failed save's reason is its tooltip -->
+		<!--
+		  its text stays while it fades out, so it goes once the fade is over; a failed save's reason is the label's
+		  native tip at the pointer (EditorWindowController.swift:360), which the corner box hears for the label
+		-->
 		{#if documentController.statusText}
-			<div class="status-corner">
-				<Tooltip
-					content={documentController.statusDetail ?? ''}
-					open={documentController.statusDetail === null ? false : null}
-					side="bottom"
-					align="end"
-					testid="save-status-tooltip"
-					children={statusLabel}
-				/>
-			</div>
+			<PointerTip text={documentController.statusDetail} testid="save-status-tooltip">
+				{#snippet children(pointer)}
+					<div class="status-corner" hitbox="self" {...pointer}>
+						<text
+							class={['status', documentController.statusFailed && 'status-failed']}
+							testid="save-status"
+							motion={statusMotion}>{documentController.statusText}</text
+						>
+					</div>
+				{/snippet}
+			</PointerTip>
 		{/if}
 	</div>
 </div>

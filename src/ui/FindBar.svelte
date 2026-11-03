@@ -5,7 +5,7 @@
   and window chrome, so it does not zoom. State lives in `findController`.
 -->
 <script lang="ts">
-	import type { ShadowNode } from 'gpuix-svelte'
+	import { focused_element, type ShadowNode } from 'gpuix-svelte'
 	import { untrack } from 'svelte'
 	import { keysOnceFocused } from '../app/fieldKeys.ts'
 	import { findController } from '../app/find.svelte.ts'
@@ -65,12 +65,44 @@
 		if (untrack(() => findController.takeSelectQuery())) void keysOnceFocused(node, 'cmd-a')
 	}
 
+	/**
+	 * the field has the keys, so its bezel shows NSSearchField's focus ring (find-bar-source.png; it becomes first
+	 * responder in EditorWindowController.swift:295-298); transient UI (ADR-0011). `focus-visible` is keyboard-only,
+	 * where AppKit rings the field however it took the keys
+	 */
+	let fieldFocused = $state(false)
+
+	/** the field mounted now, whose focus the ring follows; nothing renders from it */
+	let fieldNode: ShadowNode | null = null
+
+	function trackField(node: ShadowNode) {
+		fieldNode = node
+		return () => {
+			if (fieldNode === node) fieldNode = null
+		}
+	}
+
+	/** how often the field's focus is read, as Find reads its matches */
+	const FOCUS_POLL_MS = 100
+
+	/**
+	 * the field's focus read from native: an autofocused field reports no focus event (measured headless: native held
+	 * the field focused, no `focus` reached it), and gpuix has no focus-change event to listen to, so the bar polls
+	 * while it shows
+	 */
+	$effect(() => {
+		const poll = setInterval(() => {
+			fieldFocused = fieldNode !== null && focused_element()?.nativeId === fieldNode.nativeId
+		}, FOCUS_POLL_MS)
+		return () => clearInterval(poll)
+	})
+
 	const CLEAR_GLYPH = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path fill-rule="evenodd" d="M6 0A6 6 0 1 1 6 12A6 6 0 1 1 6 0Z${crossOutline()}"/></svg>`
 </script>
 
 <div class="find-bar" testid="find-bar">
 	<!-- editmd's NSSearchField: the magnifier inside its left edge, the text, and its clear button while it holds text -->
-	<div class="find-field-box" testid="find-field-box">
+	<div class={['find-field-box', fieldFocused && 'find-field-focused']} testid="find-field-box">
 		<svg class="find-glyph" testid="find-magnifier" source={magnifierGlyph(theme().palette.muted)}
 		></svg>
 		<!-- Cmd-F and Shift-Enter mount a fresh field: autofocus focuses it, and it shows `fieldSource` -->
@@ -89,6 +121,7 @@
 				onkeydown={(event) => {
 					if (event.key === 'escape') findController.close()
 				}}
+				{@attach trackField}
 				{@attach selectQuery}></textarea>
 		{/key}
 		{#if findController.query !== ''}
@@ -167,6 +200,14 @@
 		border-color: var(--border);
 		border-radius: var(--size-find-control-radius);
 		background-color: var(--background);
+	}
+	/*
+	 * NSSearchField's focus ring round the bezel: 3pt in editmd's picture (7 device rows at 2x, the outer two blended),
+	 * in AppKit's focus ring colour, an outline outside the box that takes no room
+	 */
+	.find-field-focused {
+		outline-width: 3px;
+		outline-color: var(--focus-ring);
 	}
 	.find-field {
 		flex-grow: 1;

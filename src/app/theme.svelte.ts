@@ -1,6 +1,7 @@
 import { type GpuixTheme, set_css_vars } from 'gpuix-svelte'
 import { getContext, setContext, untrack } from 'svelte'
 import { type Appearance, readSystemAppearance, systemAppearance } from '../host/appearance.ts'
+import { readFocusRing } from '../host/focusRing.ts'
 import { readScrollerStyle, type ScrollerStyle } from '../host/scrollerStyle.ts'
 import {
 	mermaidPaletteFor,
@@ -30,6 +31,11 @@ export type ThemeOptions = {
 	 * also answer synchronously
 	 */
 	readScrollerStyle?: () => ScrollerStyle | Promise<ScrollerStyle>
+	/**
+	 * AppKit's focus ring colour in the appearance shown, as `#rrggbbaa`, null when it cannot be read: `readFocusRing`
+	 * (osascript) by default, read as the window starts and whenever the appearance changes
+	 */
+	readFocusRing?: () => string | null | Promise<string | null>
 }
 
 /**
@@ -70,17 +76,25 @@ export class ThemeController {
 	#scrollingEnds: ReturnType<typeof setTimeout> | undefined = undefined
 	/** the page's scrollbar thumb shows: always in the legacy style, in the overlay style while the page scrolls */
 	scrollerShown = $derived(this.scrollerStyle === 'legacy' || this.#scrolling)
+	#readFocusRing: () => string | null | Promise<string | null>
+	/**
+	 * the focus ring AppKit draws in the appearance shown, which follows the Mac's accent colour; null until read, or
+	 * when the read fails, leaving the palette's `focus-ring`
+	 */
+	focusRing = $state<string | null>(null)
 
 	constructor({
 		readAppearance,
 		initialAppearance,
 		pollInterval = 2000,
-		readScrollerStyle: scrollerReader = readScrollerStyle
+		readScrollerStyle: scrollerReader = readScrollerStyle,
+		readFocusRing: ringReader = readFocusRing
 	}: ThemeOptions = {}) {
 		this.#readAppearance = readAppearance ?? readSystemAppearance
 		this.#pollInterval = pollInterval
 		this.appearance = initialAppearance?.() ?? firstAnswerOf(readAppearance)
 		this.#readScrollerStyle = scrollerReader
+		this.#readFocusRing = ringReader
 	}
 
 	/** the page scrolled: an overlay scroller shows now and hides SCROLLER_LINGER_MS after the last scroll */
@@ -123,7 +137,8 @@ export class ThemeController {
 			set_css_vars({
 				...this.palette,
 				...this.sizeTokens,
-				...(this.scrollerShown ? {} : HIDDEN_THUMB)
+				...(this.scrollerShown ? {} : HIDDEN_THUMB),
+				...(this.focusRing === null ? {} : { 'focus-ring': this.focusRing })
 			})
 		// at once, before the first paint resolves any var(); untracked, so a caller's $effect does not restart on a change
 		untrack(apply)
@@ -139,6 +154,21 @@ export class ThemeController {
 			},
 			() => {}
 		)
+		/**
+		 * AppKit's ring for the appearance shown: a reader that throws, rejects or answers null leaves the palette's, and
+		 * an answer for an appearance since left is dropped
+		 */
+		const readRing = () => {
+			const askedFor = this.appearance
+			const keep = (ring: string | null) => {
+				if (!stopped && this.appearance === askedFor) this.focusRing = ring
+			}
+			return new Promise<string | null>((resolve) => resolve(this.#readFocusRing())).then(
+				keep,
+				() => keep(null)
+			)
+		}
+		void readRing()
 		const poll = setInterval(() => {
 			// one read at a time: a slow `defaults` skips the ticks it overlaps instead of stacking spawns
 			if (reading) return
@@ -149,7 +179,11 @@ export class ThemeController {
 					(appearance) => {
 						// an answer that lands after stop() belongs to a window that is gone
 						// an unchanged answer is no change to $state, so the steady poll repaints nothing
-						if (!stopped) this.appearance = appearance
+						if (stopped || appearance === this.appearance) return
+						this.appearance = appearance
+						// the ring read for the last appearance is that one's, so it goes until the new one is read
+						this.focusRing = null
+						void readRing()
 					},
 					() => {}
 				)

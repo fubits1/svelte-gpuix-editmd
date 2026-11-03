@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { readJxa, type Run } from './jxa.ts'
 
 /**
  * how macOS shows scroll bars, as AppKit's `NSScroller.preferredScrollerStyle` says: `overlay` only while the view
@@ -12,23 +12,9 @@ export function scrollerStyleFrom(output: string): ScrollerStyle {
 	return output.trim() === '0' ? 'legacy' : 'overlay'
 }
 
-/** runs a program and hands back what it printed, as node's `execFile` does */
-type Run = (
-	file: string,
-	args: readonly string[],
-	done: (error: Error | null, stdout: string) => void
-) => void
-
-const run: Run = (file, args, done) =>
-	execFile(file, args, { encoding: 'utf8' }, (error, stdout) => done(error, stdout))
-
-/** the system's scroller style, asked of AppKit through osascript (about 40ms, so never on the window's thread) */
-export function readScrollerStyle(runner: Run = run): Promise<ScrollerStyle> {
-	return new Promise((resolve) => {
-		runner(
-			'osascript',
-			['-l', 'JavaScript', '-e', "ObjC.import('AppKit'); $.NSScroller.preferredScrollerStyle"],
-			(error, stdout) => resolve(scrollerStyleFrom(error ? '' : stdout))
-		)
-	})
+/** the system's scroller style, asked of AppKit */
+export async function readScrollerStyle(runner?: Run): Promise<ScrollerStyle> {
+	return scrollerStyleFrom(
+		await readJxa("ObjC.import('AppKit'); $.NSScroller.preferredScrollerStyle", runner)
+	)
 }

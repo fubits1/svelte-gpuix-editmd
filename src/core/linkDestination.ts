@@ -3,8 +3,8 @@ import { findSlug } from './anchors.ts'
 import { linkBase } from './fileUrls.ts'
 
 export type LinkDestination =
-	/** a place in this Document: the Block to scroll to */
-	| { kind: 'block'; index: number }
+	/** a place in this Document: the Block to scroll to, and for a heading inside it where that heading starts */
+	| { kind: 'block'; index: number; at?: number }
 	/** somewhere else, as an absolute URL for `linkAction` */
 	| { kind: 'url'; href: string }
 	/** a relative link in an untitled Document, which editmd's LinkPolicy ignores with a beep (LinkPolicy.swift:17-18) */
@@ -12,8 +12,6 @@ export type LinkDestination =
 	| { kind: 'none' }
 
 const NONE: LinkDestination = { kind: 'none' }
-
-const toBlock = (index: number): LinkDestination => (index < 0 ? NONE : { kind: 'block', index })
 
 /** the schemes editmd's page keeps a link's href for (Milkdown preset-commonmark `sanitize-href.ts` SAFE_PROTOCOLS) */
 const SAFE_SCHEMES = new Set(['http', 'https', 'mailto', 'tel', 'ftp'])
@@ -56,14 +54,23 @@ export function linkDestination(
 
 	if (href.startsWith('#')) {
 		// editmd's page takes every heading as a target (main.ts:39), those inside quotes and lists too
-		const headings = blocks.flatMap((block, index) =>
-			[block.heading?.slug ?? [], block.anchors ?? []].flat().map((slug) => ({ index, slug }))
+		const headings = blocks.flatMap(
+			(block, index): { index: number; slug: string; at?: number }[] => [
+				...(block.heading ? [{ index, slug: block.heading.slug }] : []),
+				...(block.anchors ?? []).map(({ slug, start }) => ({ index, slug, at: start }))
+			]
 		)
-		const found = findSlug(
-			href,
-			headings.map(({ slug }) => slug)
-		)
-		return toBlock(headings[found]?.index ?? -1)
+		const found =
+			headings[
+				findSlug(
+					href,
+					headings.map(({ slug }) => slug)
+				)
+			]
+		if (!found) return NONE
+		return found.at === undefined
+			? { kind: 'block', index: found.index }
+			: { kind: 'block', index: found.index, at: found.at }
 	}
 
 	const base = linkBase(folder)

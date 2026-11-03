@@ -13,15 +13,16 @@ describe('linkDestination', () => {
 	})
 
 	// editmd's page takes every h1-h6 as a target (main.ts:39), those inside quotes and lists too
-	test('a #fragment finds a heading inside a quote or a list, in the Block that holds it', () => {
+	// editmd scrolls the heading itself to the top (main.ts:40-42), so a nested one names where it starts
+	test('a #fragment finds a heading inside a quote or a list, in the Block that holds it, at its own offset', () => {
 		const nested = parseBlocks('intro\n\n> ## Quoted\n\n- item\n\n  ### Listed\n\n## Quoted\n')
 		expect([
 			linkDestination('#quoted', nested, null),
 			linkDestination('#listed', nested, null),
 			linkDestination('#quoted-1', nested, null)
 		]).toEqual([
-			{ kind: 'block', index: 1 },
-			{ kind: 'block', index: 2 },
+			{ kind: 'block', index: 1, at: 9 },
+			{ kind: 'block', index: 2, at: 30 },
 			{ kind: 'block', index: 3 }
 		])
 	})

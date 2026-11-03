@@ -6,6 +6,7 @@ import {
 	click_at,
 	click_test_id,
 	drag_select,
+	drain,
 	drop_files,
 	find,
 	find_all,
@@ -344,6 +345,213 @@ check(
 	'Return between `one` and ` two` 600ms after typing ` two` splits the Block, and one ⌘Z takes the split back whole',
 	[blocksAfterSplit, documentController.text, documentController.blocks.length],
 	[2, 'one two\n', 1]
+)
+
+/**
+ * `keys` typed into Block 0's field of `source` (an empty Document's own field for ''), from its end, then Escape: the
+ * Document's text, its Blocks' kinds, and whether a field is left open. one key per call when `batch` is false, as a
+ * person types slowly; else every key in one call, which the field takes whole before the controller hears any of it,
+ * as fast typing does in a window, so Return's newline (`pressReturn`) lands after the keys typed behind it
+ */
+async function typeKeys(
+	source: string,
+	keys: string[],
+	batch: boolean
+): Promise<[string, string[], boolean]> {
+	documentController.load(source)
+	settle()
+	if (source !== '') click_test_id('block-0')
+	for (const each of batch ? [keys.join(' ')] : keys) {
+		type(each)
+		// a field mounted afresh gets its caret back by keys once it is painted (`#putCaret`)
+		await wait(40)
+	}
+	press('escape')
+	settle()
+	return [
+		documentController.text,
+		documentController.blocks.map((block) => block.kind),
+		find_test_id('block-editor') !== null
+	]
+}
+
+/** editmd's Enter and Backspace (kit harness editmd-keys.test.mjs): what each key sequence leaves, typed both ways */
+const keyCases: [string, string, string[], [string, string[], boolean]][] = [
+	[
+		'Return at a paragraph’s end, then `next`, makes a new paragraph holding `next`',
+		'Hello world\n',
+		['enter', 'n', 'e', 'x', 't'],
+		['Hello world\n\nnext\n', ['paragraph', 'paragraph'], false]
+	],
+	[
+		'Return at a heading’s end, then `body`, makes a paragraph below the heading',
+		'# Title\n',
+		['enter', 'b', 'o', 'd', 'y'],
+		['# Title\n\nbody\n', ['heading', 'paragraph'], false]
+	],
+	[
+		'Return between `one` and `two`, then `x`, splits the paragraph and types at the second one’s start',
+		'onetwo\n',
+		['left', 'left', 'left', 'enter', 'x'],
+		['one\n\nxtwo\n', ['paragraph', 'paragraph'], false]
+	],
+	[
+		'Shift-Return, then `two`, is a hard break before `two`',
+		'one\n',
+		['shift-enter', 't', 'w', 'o'],
+		['one\\\ntwo\n', ['paragraph'], false]
+	],
+	[
+		'Return at a list item’s end, then `two`, adds an item holding `two`',
+		'- one\n',
+		['enter', 't', 'w', 'o'],
+		['- one\n- two\n', ['list'], false]
+	],
+	[
+		'Return, Backspace, `!` at a list item’s end: the new bullet goes and `!` is the item’s own paragraph (joinBackward)',
+		'- one\n- two\n',
+		['enter', 'backspace', '!'],
+		['- one\n- two\n\n  !\n', ['list'], false]
+	],
+	[
+		'Return twice at a list item’s end, then `p`, leaves the list and `p` is a paragraph after it',
+		'- one\n- two\n',
+		['enter', 'enter', 'p'],
+		['- one\n- two\n\np\n', ['list', 'paragraph'], false]
+	],
+	[
+		'Return at a quote’s end, then `r`, starts a new paragraph in the quote holding `r` (splitBlock)',
+		'> q\n',
+		['enter', 'r'],
+		['> q\n>\n> r\n', ['blockquote'], false]
+	],
+	[
+		'Return twice at a quote’s end, then `p`, leaves the quote and `p` is a paragraph after it',
+		'> q\n',
+		['enter', 'enter', 'p'],
+		['> q\n\np\n', ['blockquote', 'paragraph'], false]
+	],
+	[
+		'Return in a code block, then `b`, keeps the newline in the code',
+		'```\na\n```\n',
+		['enter', 'b'],
+		['```\na\nb\n```\n', ['code'], false]
+	],
+	[
+		'in an empty Document, `hi`, Return, `next` makes two paragraphs',
+		'',
+		['h', 'i', 'enter', 'n', 'e', 'x', 't'],
+		['hi\n\nnext\n', ['paragraph', 'paragraph'], false]
+	]
+]
+for (const [label, source, keys, expected] of keyCases) {
+	check(`${label}, one key at a time`, await typeKeys(source, keys, false), expected)
+	check(
+		`${label}, all keys in one batch as fast typing delivers them`,
+		await typeKeys(source, keys, true),
+		expected
+	)
+}
+check(
+	'Return, Backspace, `!` at a paragraph’s end in one batch: Backspace in the new paragraph joins it back (joinBackward), `!` after `Hello`',
+	await typeKeys('Hello\n', ['enter', 'backspace', '!'], true),
+	['Hello!\n', ['paragraph'], false]
+)
+
+/**
+ * Shift-Return, then `more`, in one batch as a window delivers it: the field takes every key first, then each of its
+ * reports is followed by the batch Svelte ships to GPUI, as a window's microtasks run between events, so a field
+ * mounted afresh for the hard break would be destroyed with its reports of `more` still to come
+ */
+documentController.load('Hello world\n')
+settle()
+click_test_id('block-0')
+await wait(40)
+{
+	const typeInActive = documentController.typeInActive.bind(documentController)
+	documentController.typeInActive = (field, revision) => {
+		typeInActive(field, revision)
+		settle()
+	}
+	get_native()?.simulateKeystrokes('shift-enter m o r e')
+	drain()
+	documentController.typeInActive = typeInActive
+}
+pump()
+await wait(40)
+press('escape')
+settle()
+check(
+	'Shift-Return, then `more`, in one batch reported key by key as a window does, is a hard break before `more`',
+	documentController.text,
+	'Hello world\\\nmore\n'
+)
+
+/**
+ * Backspace at the start of Block 1's field of `source`, as a person presses it (key down, then up, which is all a
+ * Backspace that changes nothing reports), then `after` typed: the Document's text and its Blocks' kinds after Escape.
+ * with `batch`, `after` is typed while Backspace is still down, so the controller hears both before its key-up, as
+ * fast typing rolls one key into the next (a keystrokes batch carries no key-up)
+ */
+async function backspaceAtStart(
+	source: string,
+	after: string,
+	batch: boolean
+): Promise<[string, string[]]> {
+	documentController.load(source)
+	settle()
+	click_test_id('block-1')
+	type('cmd-up')
+	await wait(40)
+	const native = get_native()
+	native?.simulateKeyDown('backspace')
+	if (batch && after !== '') native?.simulateKeystrokes(after)
+	native?.simulateKeyUp('backspace')
+	pump()
+	await wait(40)
+	if (!batch && after !== '') type(after)
+	await wait(40)
+	press('escape')
+	settle()
+	return [documentController.text, documentController.blocks.map((block) => block.kind)]
+}
+check(
+	'Backspace at a paragraph’s start joins it onto the paragraph above, the caret where they meet: `X` typed then goes between them, after the key-up and while Backspace is still down',
+	[
+		await backspaceAtStart('one\n\ntwo\n', 'X', false),
+		await backspaceAtStart('one\n\ntwo\n', 'X', true)
+	],
+	[
+		['oneXtwo\n', ['paragraph']],
+		['oneXtwo\n', ['paragraph']]
+	]
+)
+check(
+	'Backspace at a paragraph’s start after a heading joins its text onto the heading',
+	await backspaceAtStart('# Title\n\ntwo\n', '', false),
+	['# Titletwo\n', ['heading']]
+)
+check(
+	'Backspace at a paragraph’s start after a code block leaves both as they are',
+	await backspaceAtStart('```\na\n```\n\ntwo\n', '', false),
+	['```\na\n```\n\ntwo\n', ['code', 'paragraph']]
+)
+documentController.load('one\n')
+settle()
+click_test_id('block-0')
+type('enter')
+await wait(40)
+get_native()?.simulateKeyDown('backspace')
+get_native()?.simulateKeyUp('backspace')
+pump()
+await wait(40)
+type('x')
+press('escape')
+settle()
+check(
+	'Return at a paragraph’s end, then Backspace in the new empty paragraph, takes it away: `x` goes on the first paragraph’s end',
+	documentController.text,
+	'onex\n'
 )
 
 const directory = mkdtempSync(join(tmpdir(), 'editmd-gpuix-ui-'))
@@ -1513,6 +1721,9 @@ press('escape')
 // the heading starts below the fold, so only following the link can bring it into view
 const laterBefore = bounds(find_test_id('block-32') ?? 0)
 clickLinkIn('block-0', 'cmd')
+// the scroll is smooth, as editmd's `scrollIntoView({ behavior: "smooth" })`, done in about 300ms
+await wait(400)
+settle()
 const laterBounds = bounds(find_test_id('block-32') ?? 0)
 check(
 	'Cmd-clicking a #fragment link scrolls its heading into view',
@@ -2002,6 +2213,36 @@ check(
 	[2, 2]
 )
 await app.unmount()
+
+/**
+ * AppKit's focus ring follows the Mac's accent colour (`keyboardFocusIndicatorColor`), so the theme asks for it as the
+ * window starts and again when the appearance changes, painting it over the palette's fallback; a read that fails
+ * keeps the fallback of the appearance shown
+ */
+let ringAppearance: Appearance = 'light'
+const ringAnswers: Record<Appearance, string | null> = { light: '#11223344', dark: null }
+const ringTheme = new ThemeController({
+	initialAppearance: () => 'light',
+	readAppearance: () => ringAppearance,
+	readScrollerStyle: () => 'overlay',
+	readFocusRing: () => ringAnswers[ringAppearance],
+	pollInterval: 50
+})
+app = mount_headless(App, { width: 800, height: 538, props: { theme: ringTheme } })
+documentController.load('Ring\n')
+press('cmd-f')
+await wait(250)
+const lightRing = find_test_id('find-field-box')?.style?.outlineColor
+ringAppearance = 'dark'
+await wait(300)
+const darkRing = find_test_id('find-field-box')?.style?.outlineColor
+press('escape')
+check(
+	'the find field’s ring is the focus ring AppKit answers, read again when the appearance changes; a failed read keeps the palette’s fallback',
+	[lightRing, darkRing],
+	['#11223344', paletteFor('dark')['focus-ring']]
+)
+await app.unmount()
 app = mount_headless(App, { width: 800, height: 538 })
 
 // View > Zoom (Cmd-=, Cmd--, Cmd-0) scales native text and the views' own lengths, as editmd's page zoom
@@ -2157,24 +2398,25 @@ check(
  * editmd's NSSearchField shows the focus ring while it has the keys (find-bar-source.png: 3pt round the field, measured
  * at 2x; EditorWindowController.swift:295-298 makes it first responder), and none once the page takes them
  */
-await wait(100)
-settle()
+// the bar reads the field's focus on a 100ms poll, so each look waits past one
+await wait(250)
 const ringOf = () => {
 	const style = find_test_id('find-field-box')?.style
 	return [style?.outlineWidth ?? 0, style?.outlineColor ?? null]
 }
 const focusedFindRing = ringOf()
 click_test_id('block-0')
+await wait(250)
 const blurredFindRing = ringOf()
 press('escape')
 press('cmd-f')
 await wait(100)
 settle()
 check(
-	'the focused find field shows a 3px accent focus ring round its box, and none once a Block takes the keys',
+	'the focused find field shows AppKit’s 3px focus ring round its box, and none once a Block takes the keys',
 	[focusedFindRing, blurredFindRing],
 	[
-		[3, themeController.palette.accent],
+		[3, themeController.focusRing ?? themeController.palette['focus-ring']],
 		[0, null]
 	]
 )
@@ -2240,12 +2482,23 @@ check(
 press('cmd-f')
 await wait(100)
 settle()
-const selectedQuery = get_native()?.getSelectedText() ?? null
+/**
+ * a field's selection is not the window's (`getSelectedText` reads painted text only, null here), so the paint tells
+ * it: the most frequent colour over the query's first 12px, past the field's background and text, is gpuix's own
+ * field selection wash (#3f436f, measured over a Block's field in the selection-color check)
+ */
+const queryBox = bounds(find_test_id('find-field') ?? 0)
+const queryInk = queryBox
+	? inkColour(snapshot(), { ...queryBox, width: 12 }, [
+			themeController.palette.background ?? '',
+			themeController.palette.text ?? ''
+		])
+	: null
 type('x')
 check(
-	'Cmd-F with a query selects it, so the next key replaces it',
-	[selectedQuery, findController.query],
-	['be', 'x']
+	`Cmd-F with a query selects it and paints the field’s selection wash over it, so the next key replaces it (ink ${queryInk})`,
+	[near(queryInk ?? '', '#3f436f', 16), findController.query],
+	[true, 'x']
 )
 type('q')
 await findState()
@@ -4036,12 +4289,18 @@ function tipOffsetFrom(point: { x: number; y: number }, tipId: string): [number,
 	return [miss(box.x - startX), miss(box.y - startY)]
 }
 
-/** the window point at the middle of the first painted box of the washed run `text` inside `testId`, null for none */
-function washPointIn(testId: string, text: string): { x: number; y: number } | null {
+/**
+ * the window point at the middle of the first painted box of the washed run `text` inside `testId`, or of its first
+ * washed run when `text` is left out; null for none
+ */
+function washPointIn(testId: string, text?: string): { x: number; y: number } | null {
 	const block = bounds(find_test_id(testId) ?? 0)
 	if (!block) return null
 	const rect = painted_highlights()
-		.filter((wash) => wash.active && wash.text.slice(wash.start, wash.end) === text)
+		.filter(
+			(wash) =>
+				wash.active && (text === undefined || wash.text.slice(wash.start, wash.end) === text)
+		)
 		.flatMap((wash) => wash.rects)
 		.find(
 			(each) =>
@@ -4066,7 +4325,8 @@ const outsideTime = outsideHighlight
 			timeZone: 'UTC'
 		})
 	: 'no highlight'
-const outsideTip = await tipAfterHover('block-2', 'block-tooltip-2-tip')
+// Outside edit changed a run of the Block's text, whose tip shows over that run (highlights.ts:184-186)
+const outsideTip = await tipAt(washPointIn('block-2') ?? { x: -1, y: -1 }, 'block-tooltip-2-tip')
 const plainTip = await tipAfterHover('block-1', 'block-tooltip-1-tip')
 check(
 	'hovering a highlighted Block shows editmd’s tooltip, the Agent’s name and the time of the change; a Block with no highlight shows none',
@@ -5392,7 +5652,7 @@ const lockedAnyway = find_test_id('save-locked-anyway')
 const cancelBox = bounds(lockedCancel ?? 0)
 const anywayBox = bounds(lockedAnyway ?? 0)
 check(
-	'the locked-file alert is editmd’s NSAlert: 260px wide, radius 26, a caution icon, the message in the title’s colour, Cancel ringed 3px in the accent with the other button’s fill, the buttons equal and side by side',
+	'the locked-file alert is editmd’s NSAlert: 260px wide, radius 26, a caution icon, the message in the title’s colour, Cancel in AppKit’s 3px focus ring with the other button’s fill, the buttons equal and side by side',
 	[
 		lockedBox?.width,
 		lockedStyle?.borderTopLeftRadius ?? lockedStyle?.borderRadius,
@@ -5401,8 +5661,9 @@ check(
 		lockedCancel?.style?.outlineWidth,
 		lockedCancel?.style?.outlineColor,
 		lockedCancel?.style?.backgroundColor === lockedAnyway?.style?.backgroundColor,
+		// GPUI snaps each box to the 2x display's half-pixel grid, so equal within a pixel
 		cancelBox && anywayBox
-			? [cancelBox.width === anywayBox.width, cancelBox.y === anywayBox.y]
+			? [Math.abs(cancelBox.width - anywayBox.width) <= 1, cancelBox.y === anywayBox.y]
 			: null
 	],
 	[
@@ -5411,9 +5672,32 @@ check(
 		true,
 		themeController.palette.text,
 		3,
-		themeController.palette.accent,
+		themeController.focusRing ?? themeController.palette['focus-ring'],
 		true,
 		[true, true]
+	]
+)
+/**
+ * editmd's alert darkens the page behind it, its box is AppKit's lighter grey with no border, and both push buttons
+ * take AppKit's control fill (f-save-now-source.png: the page #28292d under it painted #1e2123, the box #404244, each
+ * button the box plus about 10% white)
+ */
+const lockedBackdrop = find_test_id('save-locked-backdrop')?.style
+check(
+	'the alert darkens the page behind it, its box is the alert surface with no border, and both its buttons the alert button fill',
+	[
+		lockedBackdrop?.backgroundColor,
+		lockedStyle?.backgroundColor,
+		lockedStyle?.borderWidth ?? lockedStyle?.borderTopWidth ?? 0,
+		lockedCancel?.style?.backgroundColor,
+		lockedAnyway?.style?.backgroundColor
+	],
+	[
+		themeController.palette['alert-dim'],
+		themeController.palette['alert-surface'],
+		0,
+		themeController.palette['alert-button'],
+		themeController.palette['alert-button']
 	]
 )
 const saveAlertBeforeReturn = find_test_id('save-locked') !== null
@@ -9127,12 +9411,15 @@ documentController.load(
 settle()
 await wait(100)
 clickLinkIn('block-0', 'cmd')
-// the scroll, the room it lacked and the scroll again each paint in a frame of their own
-for (let frame = 0; frame < 10; frame++) {
+// the smooth scroll, the room it lacked and the scroll again each paint in frames of their own: waited out until the
+// heading stays put for five frames in a row, six seconds at most
+let endHeading = bounds(find_test_id('block-31') ?? 0)
+for (let frame = 0, still = 0; still < 5 && frame < 150; frame++) {
 	await wait(40)
-	settle()
+	const now = bounds(find_test_id('block-31') ?? 0)
+	still = now?.y === endHeading?.y ? still + 1 : 0
+	endHeading = now
 }
-const endHeading = bounds(find_test_id('block-31') ?? 0)
 const barBottom = (() => {
 	const bar = bounds(find_test_id('menu-bar') ?? 0)
 	return bar ? bar.y + bar.height : 0
@@ -9144,6 +9431,221 @@ check(
 )
 documentController.load('', r9Options)
 settle()
+
+/**
+ * a `#heading` link to a heading inside a quote scrolls that heading's own row to the window's top, as editmd's
+ * `scrollIntoView` takes the heading itself (main.ts:39-41), and smoothly (`behavior: "smooth"`): one frame after the
+ * click the heading is on its way, below where it ends
+ */
+const quotedLines = Array.from({ length: 40 }, (_line, n) => `> Quoted line ${n + 1}.`).join(
+	'\n>\n'
+)
+documentController.load(
+	`[deep](#deep-heading)\n\n${quotedLines}\n>\n> ## Deep heading\n>\n> Under it.\n\n${filler.join('\n\n')}\n`,
+	r9Options
+)
+settle()
+await wait(100)
+settle()
+const deepTop = () => bounds(find_test_id('markdown-1.40') ?? 0)?.y ?? Number.NaN
+const deepBefore = deepTop()
+clickLinkIn('block-0', 'cmd')
+await wait(30)
+settle()
+const deepOneFrame = deepTop()
+for (let frame = 0; frame < 15; frame++) {
+	await wait(40)
+	settle()
+}
+const deepAfter = deepTop()
+check(
+	`⌘-clicking a #heading link to a heading deep in a quote scrolls the heading’s own row to the window’s top, smoothly (before ${deepBefore}, one frame in ${deepOneFrame}, after ${deepAfter}, page top ${barBottom})`,
+	[Math.abs(deepAfter - barBottom) <= 1, deepBefore > deepOneFrame && deepOneFrame > deepAfter + 1],
+	[true, true]
+)
+press('escape')
+
+/**
+ * Add Link with the caret inside a reference link (e-link-dialog): the definition elsewhere in the Document makes
+ * `[docs][d]` a link, so the link takes the new URL, written inline, as editmd's Edit Link does (editor.ts:387-392)
+ */
+documentController.load('see [docs][d] here\n\n[d]: https://ref.example\n', r9Options)
+settle()
+click_test_id('block-0')
+type('cmd-left right right right right right right')
+menuClipboardUrl = 'https://a.example'
+press('cmd-k')
+settle()
+press('enter')
+await fieldIdle()
+press('escape')
+menuClipboardUrl = null
+check(
+	'Add Link with the caret inside a reference link gives the link the new URL, written inline, its definition kept',
+	documentController.text,
+	'see [docs](https://a.example) here\n\n[d]: https://ref.example\n'
+)
+
+/**
+ * with no field open and editmd's load caret in a link, ⌘K is editmd's Edit Link (EditorWindowController.swift:117-128):
+ * titled Edit Link, its field holding the link's URL rather than the pasteboard's, Update in place of Add, and Remove
+ * Link, which takes the link off its text
+ */
+documentController.load('[docs](https://a.example) x\n', r9Options)
+settle()
+menuClipboardUrl = 'https://clip.example'
+press('cmd-k')
+settle()
+const editLinkShown = [
+	textOf('add-link-title'),
+	propOf('add-link-url', 'value'),
+	textOf('add-link-add-label'),
+	textOf('add-link-remove-label')
+]
+clickIfPresent('add-link-remove')
+await fieldIdle()
+press('escape')
+menuClipboardUrl = null
+check(
+	'with no field open and the load caret in a link, ⌘K shows Edit Link with the link’s URL, Update and Remove Link, and Remove Link takes the link off',
+	[editLinkShown, documentController.text],
+	[['Edit Link', 'https://a.example', 'Update', 'Remove Link'], 'docs x\n']
+)
+
+/** an alert's width, radius and surface, the dim behind it, whether it has an icon, and its default button's fill and ring */
+function alertLook(testId: string, defaultId: string) {
+	const style = find_test_id(testId)?.style
+	const key = find_test_id(defaultId)?.style
+	return [
+		bounds(find_test_id(testId) ?? 0)?.width,
+		style?.borderTopLeftRadius ?? style?.borderRadius,
+		style?.backgroundColor,
+		find_test_id(`${testId}-backdrop`)?.style?.backgroundColor,
+		find_test_id(`${testId}-icon`) !== null,
+		key?.backgroundColor,
+		key?.outlineWidth ?? 0
+	]
+}
+const focusRingColour = themeController.focusRing ?? themeController.palette['focus-ring']
+
+/**
+ * Add Link is editmd's own NSAlert with an accessory field (e-link-dialog-source.png, at 2x): the alert's radius and
+ * surface over the dimmed page, no icon, Add filled in the accent with no ring, the box 350pt wide round its 320pt
+ * field, which holds AppKit's 3pt focus ring while it has the keys
+ */
+documentController.load('See\n', r9Options)
+settle()
+press('cmd-k')
+// the field's ring follows its focus, read on a 100ms poll
+await wait(250)
+settle()
+const addLinkLook = alertLook('add-link', 'add-link-add')
+const urlField = find_test_id('add-link-url')?.style
+const urlRing = [urlField?.outlineWidth, urlField?.outlineColor]
+press('escape')
+settle()
+check(
+	'Add Link is the alert over the dimmed page, 350px round its field, no icon, Add filled in the accent with no ring, and the URL field ringed while it has the keys',
+	[addLinkLook, urlRing],
+	[
+		[
+			350,
+			26,
+			themeController.palette['alert-surface'],
+			themeController.palette['alert-dim'],
+			false,
+			themeController.palette.accent,
+			0
+		],
+		[3, focusRingColour]
+	]
+)
+
+/**
+ * "Open this link?" is editmd's own NSAlert (LinkOpener.swift:25-30, e-link-policy-source.png): the alert's box over the
+ * dimmed page, no icon, Open filled in the accent with no ring and Cancel, the key view, ringed; Return is Open
+ */
+documentController.load('[x](ftp://example.com/x)\n', r9Options)
+settle()
+menuRuns.length = 0
+clickLinkIn('block-0', 'cmd')
+settle()
+const questionLook = alertLook('confirm-link', 'confirm-link-open')
+const questionCancel = find_test_id('confirm-link-cancel')?.style
+const cancelRing = [questionCancel?.outlineWidth, questionCancel?.outlineColor]
+press('enter')
+settle()
+check(
+	'“Open this link?” is the alert over the dimmed page, no icon, Open filled in the accent with no ring, Cancel ringed, and Return opens the link',
+	[
+		questionLook,
+		cancelRing,
+		menuRuns.filter(([command]) => command === 'open'),
+		find_test_id('confirm-link')
+	],
+	[
+		[
+			260,
+			26,
+			themeController.palette['alert-surface'],
+			themeController.palette['alert-dim'],
+			false,
+			themeController.palette.accent,
+			0
+		],
+		[3, focusRingColour],
+		[['open', ['ftp://example.com/x']]],
+		null
+	]
+)
+
+/**
+ * a link's title and an image's are native tips at the pointer, as editmd's page titles its `a` (links.ts:174) and
+ * `img` (remote.ts:77-78): over the titled link only, and over a titled image, in a paragraph of images or one mixing
+ * text and images
+ */
+writeFileSync(join(r9Directory, 'titled.png'), png(120, 60))
+const titlesPath = join(r9Directory, 'titles.md')
+writeFileSync(
+	titlesPath,
+	'See [docs](https://a.example "Docs title") and more words here.\n\n![pic](titled.png "Pic title")\n\nText ![pic](titled.png "Mixed title") after.\n'
+)
+documentController.open(titlesPath, r9Options)
+settle()
+await wait(300)
+settle()
+const titledLinkPoint = washPointIn('block-0')
+const linkTitleTip = await tipAt(titledLinkPoint ?? { x: -1, y: -1 }, 'block-tooltip-0-tip')
+const offLinkTip = await tipAt(
+	titledLinkPoint ? { x: titledLinkPoint.x + 120, y: titledLinkPoint.y } : { x: -1, y: -1 },
+	'block-tooltip-0-tip'
+)
+const imageTitleTip = await tipAfterHover('image-1-0', 'image-tooltip-1-0-tip')
+const mixedTitleTip = await tipAfterHover('image-2-0', 'image-tooltip-2-0-tip')
+mouse_move({ x: 5, y: 500 })
+check(
+	'hovering a titled link shows its title and none off the link, and a titled image shows its title, alone or among text',
+	[linkTitleTip, offLinkTip, imageTitleTip, mixedTitleTip],
+	['Docs title', null, 'Pic title', 'Mixed title']
+)
+
+/**
+ * a Document of front matter only: a click on its "Start writing…" puts the caret in the empty body after the front
+ * matter, as editmd's does, so a field opens there and typing makes the body's first Block
+ */
+documentController.load('---\ntitle: a\n---\n', r9Options)
+settle()
+clickIfPresent('empty-hint')
+settle()
+const bodyFieldOpen = find_test_id('block-editor') !== null
+type('x')
+press('escape')
+settle()
+check(
+	'clicking “Start writing…” below front matter opens a field after it, and typing x writes the body’s first Block',
+	[bodyFieldOpen, documentController.text],
+	[true, '---\ntitle: a\n---\n\nx\n']
+)
 
 // Find marks only the current match, in the strong mark colour, the others unwashed
 documentController.load('be one be two be\n', r9Options)
@@ -9919,6 +10421,152 @@ check(
 	[[[`agent-row-${documentController.text.indexOf('new')}`, ...etaColours()]], null]
 )
 
+/**
+ * editmd's inline code `border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); border-radius: 5px`
+ * (style.css:185-191), which native's pill lacks: each painted box with its bounds, border width, colour and radius
+ */
+const codeBorders = () =>
+	find_all((node) => node.testId?.startsWith('code-border-') === true).map((node) => {
+		const box = bounds(node)
+		const style = node.style
+		return {
+			box: box ? [box.x, box.y, box.width, box.height] : [],
+			width: style?.borderLeftWidth ?? style?.borderWidth,
+			colour: style?.borderColor,
+			radius: style?.borderTopLeftRadius ?? style?.borderRadius
+		}
+	})
+/** the borders' boxes, each length shown as native's pill's where it is within half a pixel of it */
+const codeBorderBoxes = (pills: number[][]) =>
+	codeBorders().map(({ box }, index) => nearly(box, pills[index] ?? []))
+/** waits out the poll that reads the code spans' painted boxes */
+async function codeBordersSettle() {
+	settle()
+	await wait(250)
+	settle()
+}
+
+// an Agent's changed run and Find's matches in a Block with a code span keep working beside its border
+await mergeByEta('code-run', 'The `code` fox jumps.\n', 'The `code` fox leaps.\n')
+await codeBordersSettle()
+const codeRunUnderlines = find_all(
+	(node) => node.testId?.startsWith('run-underline-') === true
+).length
+check(
+	'a Block with a code span that an Agent changed keeps its run’s underline and the code span’s border',
+	[codeRunUnderlines, codeBorders().length],
+	[1, 1]
+)
+documentController.load('a `code` b and code\n', parityOptions)
+await codeBordersSettle()
+const codeFindCounts: number[] = []
+for (const query of ['code', 'a code b']) {
+	findController.typeInField(query)
+	await codeBordersSettle()
+	codeFindCounts.push(findController.matches.length)
+}
+findController.typeInField('')
+await codeBordersSettle()
+check(
+	'Find in a Block with a code span counts the code span’s text once: `code` twice, `a code b` once',
+	codeFindCounts,
+	[2, 1]
+)
+
+/** a fresh 538px-high window `width` wide in `appearance`, its theme returned so a check can zoom it */
+async function codeBorderWindow(appearance: Appearance, width = 800) {
+	await app.unmount()
+	const theme = new ThemeController({
+		readAppearance: () => appearance,
+		pollInterval: 60_000,
+		readScrollerStyle: () => 'overlay'
+	})
+	app = mount_headless(App, { width, height: 538, props: { theme } })
+	return theme
+}
+
+// native's pills as painted headless at 2x, read from the surface colour's pixels
+const plainPill = [82.5, 74, 44, 22.5]
+const lightCodeTheme = await codeBorderWindow('light')
+documentController.load('a `code` b\n', parityOptions)
+await codeBordersSettle()
+const lightPlainBorders = codeBorders()
+const lightPlainBoxes = codeBorderBoxes([plainPill])
+lightCodeTheme.zoom = 1.5
+await codeBordersSettle()
+const zoomedBorders = codeBorders()
+const zoomedBoxes = codeBorderBoxes([[75.5, 98, 63.5, 35.5]])
+check(
+	`a code span has a 1px border in --code-border on native’s pill, radius 5px, 7.5px at zoom 1.5, where it moves with the zoom (${JSON.stringify([lightPlainBorders, zoomedBorders])})`,
+	[
+		lightPlainBoxes,
+		lightPlainBorders.map(({ width, colour, radius }) => [width, colour, radius]),
+		zoomedBoxes,
+		zoomedBorders.map(({ radius }) => radius)
+	],
+	[[plainPill], [[1, paletteFor('light')['code-border'], 5]], [[75.5, 98, 63.5, 35.5]], [7.5]]
+)
+lightCodeTheme.zoom = 1
+
+const codeSpanPills: [string, string, number[]][] = [
+	['heading', '# a `code` b\n', [95.5, 74, 87, 38]],
+	['list item', '- a `code` b\n', [110.5, 74, 44, 22.5]],
+	['quote', '> a `code` b\n', [102.5, 74, 44, 22.5]],
+	['table cell', '| h |\n| - |\n| a `code` b |\n', [96, 119, 41, 21]]
+]
+const codeSpanBoxes: number[][][] = []
+for (const [, source, pill] of codeSpanPills) {
+	documentController.load(source, parityOptions)
+	await codeBordersSettle()
+	codeSpanBoxes.push(codeBorderBoxes([pill]))
+}
+check(
+	`a code span in a heading, a list item, a quote and a table cell has its border on its pill (${JSON.stringify(codeSpanBoxes)})`,
+	codeSpanBoxes,
+	codeSpanPills.map(([, , pill]) => [pill])
+)
+
+documentController.load('[](u) `code` <kbd>x</kbd>\n', parityOptions)
+await codeBordersSettle()
+const besideMonoCount = codeBorders().length
+click_test_id('block-0')
+await codeBordersSettle()
+const openFieldCount = codeBorders().length
+press('escape')
+await codeBordersSettle()
+check(
+	'an empty link and inline HTML, which native also paints as code, take no border, the code span beside them one; an open field shows none',
+	[besideMonoCount, openFieldCount, codeBorders().length],
+	[1, 0, 1]
+)
+
+// a span wrapped over two rows has a border on each row's pill, and they move when the window's width reflows them
+const wrappedCode = `${'word '.repeat(22)}\`wrapped code span here\` tail\n`
+documentController.load(wrappedCode, parityOptions)
+await codeBordersSettle()
+const wideWrapBoxes = codeBorderBoxes([[311, 100.5, 221.5, 22.5]])
+await codeBorderWindow('dark', 600)
+documentController.load(wrappedCode, parityOptions)
+await codeBordersSettle()
+const narrowWrapBoxes = codeBorderBoxes([
+	[439.5, 100.5, 83, 22.5],
+	[40, 127, 140.5, 22.5]
+])
+check(
+	`a code span wrapped over two rows has a border on each row’s pill, which follows the reflow of a narrower window, in the dark --code-border (${JSON.stringify([wideWrapBoxes, narrowWrapBoxes])})`,
+	[wideWrapBoxes, narrowWrapBoxes, codeBorders().map(({ colour }) => colour)],
+	[
+		[[311, 100.5, 221.5, 22.5]],
+		[
+			[439.5, 100.5, 83, 22.5],
+			[40, 127, 140.5, 22.5]
+		],
+		[paletteFor('dark')['code-border'], paletteFor('dark')['code-border']]
+	]
+)
+await app.unmount()
+app = mount_headless(App, { width: 800, height: 538 })
+
 rmSync(r9Directory, { recursive: true, force: true })
 
 /**
@@ -10051,4 +10699,4 @@ check(
 
 rmSync(parityDirectory, { recursive: true, force: true })
 
-finish('document', 478)
+finish('document', 530)

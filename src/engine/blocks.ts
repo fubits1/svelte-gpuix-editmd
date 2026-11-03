@@ -24,8 +24,11 @@ export type Block = {
 	start: number
 	end: number
 	heading?: { level: number; slug: string }
-	/** for a quote, list or footnote: the anchors of the headings inside it, which a `#fragment` link scrolls to */
-	anchors?: string[]
+	/**
+	 * for a quote, list or footnote: the anchors of the headings inside it, which a `#fragment` link scrolls to, each
+	 * with where its heading starts in the Document
+	 */
+	anchors?: { slug: string; start: number }[]
 	/** for a quote: the Blocks inside it, each painted as a top-level one is */
 	children?: Block[]
 	/**
@@ -55,8 +58,8 @@ export type Block = {
 	footnote?: { label: string; identifier: string; contentStart: number }
 }
 
-/** `href` is the link around the image, as on a README badge */
-export type Image = { src: string; alt: string; href?: string }
+/** `href` is the link around the image, as on a README badge; `title` its tooltip, for an inline image */
+export type Image = { src: string; alt: string; href?: string; title?: string }
 
 /** `start`/`end` are offsets into the Document text; a text run is painted from that Slice */
 type Segment =
@@ -226,7 +229,10 @@ type Definitions = ReadonlyMap<string, string>
 
 /** an image, inline or by reference, with its source; null for a reference no definition names */
 function plainImageOf(node: MdastNode, definitions: Definitions): Image | null {
-	if (node.type === 'image') return { src: node.url, alt: node.alt ?? '' }
+	if (node.type === 'image') {
+		const image = { src: node.url, alt: node.alt ?? '' }
+		return node.title ? { ...image, title: node.title } : image
+	}
 	if (node.type !== 'imageReference') return null
 	const src = definitions.get(node.identifier.toLowerCase())
 	return src === undefined ? null : { src, alt: node.alt ?? '' }
@@ -348,7 +354,10 @@ export function parseBlocks(text: string): Block[] {
 		}
 		if (node.type === 'heading') block.heading = { level: node.depth, slug: slugs.get(node)! }
 		else if (HOLDS_HEADINGS.has(node.type)) {
-			const anchors = headingsIn([node]).map((heading) => slugs.get(heading)!)
+			const anchors = headingsIn([node]).map((heading) => ({
+				slug: slugs.get(heading)!,
+				start: span(heading).start
+			}))
 			if (anchors.length > 0) block.anchors = anchors
 		}
 		if (node.type === 'code') block.lang = node.lang ?? null
