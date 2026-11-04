@@ -5,12 +5,22 @@
  * `listItemKeymap`, where Tab and Mod-] sink the list item and Shift-Tab and Mod-[ lift it
  * (@milkdown/preset-commonmark src/node/list-item.ts:212-225)
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/tab.e2e.ts (unsandboxed: it opens a window)
+ * run: pnpm exec gpuix-svelte e2e/tab.e2e.ts (unsandboxed: it opens a window)
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { check, type Editor, finish, openEditor, pause, press, reaches } from './support.ts'
+import {
+	check,
+	type Editor,
+	finish,
+	openEditor,
+	openOn,
+	pause,
+	press,
+	reaches,
+	saveAfterEscape
+} from './support.ts'
 
 // a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
 const folder = mkdtempSync('/tmp/eg-tab-')
@@ -83,6 +93,66 @@ try {
 		check(
 			`Shift-Tab in the sunk item lifts it back beside the first (list-item.ts:219-225) (file ${JSON.stringify(lifted)})`,
 			lifted === '- a\n- b\n'
+		)
+		await app.close().catch(() => {})
+	}
+
+	{
+		const { app, file } = await launchOn('list-fast', '- a\n- b\n')
+		await openBlock(app)
+		for (const key of ['tab', 'z']) await typeKeys(app, key)
+		const text = await saveOnEscape(app, file, '- a\n- b\n')
+		check(
+			`Tab and z as separate key events right after each other in the second list item each land: Tab sinks it under the first and z follows b (list-item.ts:212-218) (file ${JSON.stringify(text)})`,
+			text === '- a\n  - bz\n'
+		)
+		await app.close().catch(() => {})
+	}
+
+	{
+		const { app, file } = await launchOn('list-batch', '- a\n- b\n')
+		await openBlock(app)
+		await typeKeys(app, 'tab z')
+		const text = await saveOnEscape(app, file, '- a\n- b\n')
+		check(
+			`Tab and z in one keystrokes call in the second list item each land: Tab sinks it under the first and z follows b (list-item.ts:212-218) (file ${JSON.stringify(text)})`,
+			text === '- a\n  - bz\n'
+		)
+		await app.close().catch(() => {})
+	}
+
+	{
+		const { app, file } = await openOn(folder, 'list-click', '- a\n- b\n\nnext\n', 0)
+		await typeKeys(app, 'tab z')
+		await app.getByTestId('block-1').click()
+		const [text, open] = await saveAfterEscape(app, file, '- a\n- b\n\nnext\n')
+		check(
+			`Tab and z in one keystrokes call in the second list item, then a click on the next Block at once: Tab sinks the item under the first and z follows b before the click opens the next Block, and Escape leaves no field open (list-item.ts:212-218) (open ${open}, file ${JSON.stringify(text)})`,
+			!open && text === '- a\n  - bz\n\nnext\n'
+		)
+		await app.close().catch(() => {})
+	}
+
+	{
+		const { app, file } = await launchOn('indent-fast', '- a\n- b\n')
+		await openBlock(app)
+		for (const key of ['cmd-]', 'z']) await typeKeys(app, key)
+		const text = await saveOnEscape(app, file, '- a\n- b\n')
+		check(
+			`⌘] (Indent, editmd's sinkListItem) and z as separate key events right after each other in the second list item each land: the item sinks under the first and z follows b (list-item.ts:212-218) (file ${JSON.stringify(text)})`,
+			text === '- a\n  - bz\n'
+		)
+		await app.close().catch(() => {})
+	}
+
+	{
+		const { app, file } = await openOn(folder, 'indent-selection', '- a\n- b\n- c\n', 0)
+		await typeKeys(app, 'shift-up')
+		await typeKeys(app, 'cmd-]')
+		const [text, open] = await saveAfterEscape(app, file, '- a\n- b\n- c\n')
+		check(
+			`⌘] (Indent, editmd's sinkListItem) over a selection from after b to after c sinks both items under the first, and Escape leaves no field open (list-item.ts:212-218) (open ${open}, file ${JSON.stringify(text)})`,
+			!open && text === '- a\n  - b\n  - c\n'
 		)
 		await app.close().catch(() => {})
 	}

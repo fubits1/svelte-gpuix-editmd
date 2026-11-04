@@ -31,16 +31,17 @@ const LEVELS: Partial<Record<BlockFormat, number>> = {
  * a Format command on one Block's source, written as editmd writes it: editmd runs Milkdown's command at
  * its caret and serializes the result. `caret` is the field's caret offset in `source` (learnt by the
  * probe in core/fieldSelection.ts); without one it is taken to be at the end of the Block, where the field puts
- * it. in a list or a quote the command acts on the item or paragraph the caret is in. null where editmd's
- * command refuses (lists for all but Indent and Outdent, tables, definitions, front matter, rules) or changes
- * nothing
+ * it. in a list or a quote the command acts on the item or paragraph the caret is in; a selection, from `caret` to
+ * `end`, has Indent and Outdent act on every list item it spans. null where editmd's command refuses (lists for all
+ * but Indent and Outdent, tables, definitions, front matter, rules) or changes nothing
  */
 export function formatBlock(
 	format: BlockFormat,
 	source: string,
-	caret: number = source.length
+	caret: number = source.length,
+	end: number = caret
 ): string | null {
-	const result = formatted(format, source, caret)
+	const result = formatted(format, source, caret, end)
 	return result === source ? null : result
 }
 
@@ -84,7 +85,7 @@ export function firstTextOffset(source: string): number | null {
 /** the line of `source` that offset `caret` is on, counting from 0 */
 const lineAt = (source: string, caret: number) => source.slice(0, caret).split('\n').length - 1
 
-function formatted(format: BlockFormat, source: string, caret: number): string | null {
+function formatted(format: BlockFormat, source: string, caret: number, end: number): string | null {
 	const block = parseBlocks(source)[0]
 	switch (block?.kind ?? 'paragraph') {
 		case 'paragraph':
@@ -96,7 +97,7 @@ function formatted(format: BlockFormat, source: string, caret: number): string |
 		case 'mermaid':
 			return code(format, source)
 		case 'list':
-			return list(format, source, lineAt(source, caret))
+			return list(format, source, lineAt(source, caret), lineAt(source, end))
 		case 'blockquote':
 			return quoted(format, source, lineAt(source, caret))
 		case 'footnoteDefinition':
@@ -280,12 +281,43 @@ function renumbered(lines: string[], from: number, indent: number, next: number)
 	})
 }
 
-/** in a list only Indent and Outdent act, on the item the caret is in, on line `caretLine` */
-function list(format: BlockFormat, source: string, caretLine: number): string | null {
+/**
+ * in a list only Indent and Outdent act: on the item the caret is in, on line `caretLine`, and on every item at its
+ * level up to line `endLine`, as sinkListItem and liftListItem take a selection's range, nested items going with their
+ * item. they move top down, each finding the items before it already moved
+ */
+function list(
+	format: BlockFormat,
+	source: string,
+	caretLine: number,
+	endLine: number
+): string | null {
 	if (format !== 'indent' && format !== 'outdent') return null
+	const items = itemsOf(source.split('\n'))
+	const first = items.findLastIndex((item) => item.line <= caretLine)
+	const target = items[first]
+	if (!target) return null
+	const left = items.slice(first).findIndex((item) => item.indent < target.indent)
+	const spanned = items
+		.slice(first, left < 0 ? undefined : first + left)
+		.filter((item) => item.indent === target.indent && item.line <= endLine)
+	let result: string | null = source
+	// the lines the items moved so far added above the next one
+	let moved = 0
+	for (const { line } of spanned) {
+		const before: string = result
+		result = itemMoved(format, before, line + moved)
+		if (result === null) return null
+		moved += result.split('\n').length - before.split('\n').length
+	}
+	return result
+}
+
+/** Indent or Outdent of the item on line `itemLine` */
+function itemMoved(format: 'indent' | 'outdent', source: string, itemLine: number): string | null {
 	const lines = source.split('\n')
 	const items = itemsOf(lines)
-	const index = items.findLastIndex((item) => item.line <= caretLine)
+	const index = items.findLastIndex((item) => item.line <= itemLine)
 	const target = items[index]
 	if (!target) return null
 	// the item's own lines: its text, its continuation lines and its own nested items
@@ -302,7 +334,11 @@ function list(format: BlockFormat, source: string, caretLine: number): string | 
 		const sibling = before.find((item) => item.indent <= target.indent)
 		if (!sibling || sibling.indent < target.indent) return null
 		const shift = sibling.content - target.indent
-		const marker = target.marker[3] === undefined ? target.marker[2]! : `1${target.marker[4]}`
+		// a numbered item counts on from an item already moved under the sibling, else starts at 1
+		const above = before.find((item) => item.indent <= sibling.content)
+		const number = above?.indent === sibling.content ? Number(above.marker[3]) + 1 : 1
+		const marker =
+			target.marker[3] === undefined ? target.marker[2]! : `${number}${target.marker[4]}`
 		const moved = [
 			`${' '.repeat(sibling.content)}${marker} ${text}`,
 			...body.slice(1).map((line) => (line.trim() === '' ? line : `${' '.repeat(shift)}${line}`))

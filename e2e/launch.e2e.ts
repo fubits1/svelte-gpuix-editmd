@@ -2,7 +2,7 @@
  * launching: editmd opens an untitled window when it starts with no file (AppDelegate.swift:13-15), and its
  * scripted modes run without one (Headless.swift)
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/launch.e2e.ts (unsandboxed: it opens a real window)
+ * run: pnpm exec gpuix-svelte e2e/launch.e2e.ts (unsandboxed: it opens a real window)
  * the app's support folder lives in a temp folder, so nothing reaches the real one
  */
 

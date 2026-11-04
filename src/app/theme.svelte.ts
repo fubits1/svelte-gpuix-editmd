@@ -148,7 +148,7 @@ export class ThemeController {
 		let stopped = false
 		let reading = false
 		// once, as the window starts: a reader that throws or rejects keeps the overlay style
-		new Promise<ScrollerStyle>((resolve) => resolve(this.#readScrollerStyle())).then(
+		Promise.try(() => this.#readScrollerStyle()).then(
 			(style) => {
 				if (!stopped) this.scrollerStyle = style
 			},
@@ -171,7 +171,7 @@ export class ThemeController {
 			if (reading) return
 			reading = true
 			// a reader that throws or rejects keeps the current appearance, as `systemAppearance` falls back to light
-			new Promise<Appearance>((resolve) => resolve(this.#readAppearance()))
+			Promise.try(() => this.#readAppearance())
 				.then(
 					(appearance) => {
 						// an answer that lands after stop() belongs to a window that is gone

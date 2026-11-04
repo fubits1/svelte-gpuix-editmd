@@ -1,12 +1,12 @@
 <!--
   @component
   A native tip, as AppKit shows a view's `toolTip` and WebKit an element's `title`: once the pointer has rested on the
-  trigger past the delay, the text shows below-right of where the pointer was, kept inside the window, and goes when
-  the pointer leaves. `text` may depend on where on the trigger the pointer is (a changed run's or a titled link's
-  painted boxes), a tip with other words showing afresh after the delay. The trigger, the `children` snippet's element,
-  spreads the handlers it is passed, none while `text` is null. Of nested triggers only
-  the one the pointer entered last shows its tip, as a browser shows the innermost `title`; the tip takes no clicks and
-  no hover.
+  trigger past the delay, the text shows below-right of where the pointer was, kept inside the window and wrapped at
+  its width, and goes when the pointer leaves or a button goes down. `text` may depend on where on
+  the trigger the pointer is (a changed run's or a titled link's painted boxes), a tip with other words showing afresh
+  after the delay. The trigger, the `children` snippet's element, spreads the handlers it is passed, none while `text`
+  is null. Of nested triggers only the one the pointer entered last shows its tip, as a browser shows the innermost
+  `title`; the tip takes no clicks and no hover.
 -->
 <script module lang="ts">
 	import type { GpuixEvent } from 'gpuix-svelte'
@@ -29,6 +29,7 @@
 </script>
 
 <script lang="ts">
+	import { window_size } from 'gpuix-svelte'
 	import { onDestroy, type Snippet } from 'svelte'
 
 	let {
@@ -97,6 +98,16 @@
 		sync()
 	}
 
+	/**
+	 * the shown tip goes, as AppKit hides a tooltip on mouse down; it shows again once the pointer moves on and rests
+	 * past the delay
+	 */
+	function hide(): void {
+		clearTimeout(timer)
+		timer = undefined
+		shownAt = null
+	}
+
 	const handlers: PointerHandlers = {
 		onmouseenter: track,
 		onmousemove: track,
@@ -132,7 +143,15 @@
 			snapMargin={EDGE_MARGIN}
 			occlude={false}
 		>
-			<div class="tip" testid={`${testid}-tip`}>{textAt(shownAt.x, shownAt.y)}</div>
+			<!-- a tip wider than the window wraps at its edges, as no source gives AppKit's own wrap width -->
+			<div
+				class="tip"
+				testid={`${testid}-tip`}
+				onmousedownoutside={hide}
+				style:max-width={`${window_size.width - 2 * EDGE_MARGIN}px`}
+			>
+				{textAt(shownAt.x, shownAt.y)}
+			</div>
 		</anchored>
 	</div>
 {/if}
@@ -151,7 +170,6 @@
 		border-radius: 6px;
 		font-size: 12px;
 		line-height: 16px;
-		white-space: nowrap;
 		user-select: none;
 		background-color: var(--tooltip-surface);
 		color: var(--tooltip-ink);

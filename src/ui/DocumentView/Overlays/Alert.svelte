@@ -4,9 +4,9 @@
   informative text and a row of equal buttons, on a window-sized backdrop that makes it modal. A `notice` is editmd's
   own plain NSAlert (f-encodings-source.png, e-link-policy-source.png): no icon, its default button filled in the accent.
   The `children` snippet is NSAlert's `accessoryView` (EditorWindowController.swift:122-129), between the text and the
-  buttons, which takes the keys in place of a button. Return presses `ondefault` and Escape `oncancel`, when given; a
-  parent that handles the keys itself leaves both out. Render it inside `Portal`, or inside a dialog that already is, so
-  it paints over the Document.
+  buttons, which takes the keys in place of a button. With `oncancel` given, Return presses the primary button and Escape
+  `oncancel`; a parent that handles the keys itself leaves it out. Render it inside `Portal`, or inside a dialog that
+  already is, so it paints over the Document.
 -->
 <script module lang="ts">
 	type AlertButton = {
@@ -38,7 +38,6 @@
 		message,
 		buttons,
 		notice = false,
-		ondefault,
 		oncancel,
 		children
 	}: {
@@ -52,8 +51,6 @@
 		buttons: AlertButton[]
 		/** editmd's own plain NSAlert (`showNotice`, LinkOpener, Add Link): no icon, the default button filled in the accent */
 		notice?: boolean
-		/** Return */
-		ondefault?: () => void
 		/** Escape */
 		oncancel?: () => void
 		/** NSAlert's `accessoryView`, which takes the keys (`initialFirstResponder`); its own element takes the focus */
@@ -70,10 +67,10 @@
 	)
 
 	$effect(() => {
-		if (!ondefault && !oncancel) return
+		if (!oncancel) return
 		return on_window_key('keydown', (event) => {
-			if (event.key === 'escape') oncancel?.()
-			else if (event.key === 'enter') ondefault?.()
+			if (event.key === 'escape') oncancel()
+			else if (event.key === 'enter') buttons.find((button) => button.primary)?.onclick()
 		})
 	})
 </script>

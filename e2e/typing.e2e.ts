@@ -5,7 +5,7 @@
  * Enter first in a list (@milkdown/preset-commonmark src/node/list-item.ts:200-206), and `# ` or a fence turn the
  * Block into a heading or code as they are typed (src/node/heading.ts:112-133, src/node/code-block.ts:100-110)
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/typing.e2e.ts (unsandboxed: it opens a window)
+ * run: pnpm exec gpuix-svelte e2e/typing.e2e.ts (unsandboxed: it opens a window)
  * the files, the app's support folder and the agents it counts live in a temp folder, so nothing reaches the real ones
  */
 

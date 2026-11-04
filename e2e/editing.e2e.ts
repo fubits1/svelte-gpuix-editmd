@@ -7,7 +7,7 @@
  * src/node/hardbreak.ts). every check asserts the file ⌘S saves exactly, so a stray character fails it, and that
  * Escape leaves no field open on raw markdown
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/editing.e2e.ts (unsandboxed: it opens windows and takes the keyboard)
+ * run: pnpm exec gpuix-svelte e2e/editing.e2e.ts (unsandboxed: it opens windows and takes the keyboard)
  * the files, the app's support folder and the agents it counts live in a temp folder, so nothing reaches the real ones
  */
 

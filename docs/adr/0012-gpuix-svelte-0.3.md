@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-29. Amends [ADR-0001](0001-native-host-gpuix-svelte.md) (host version) and [ADR-0009](0009-parity-gaps-native-track.md) (G11: the port no longer stays on 0.10.0).
+Accepted, 2026-10-29. Amends [ADR-0001](0001-native-host-gpuix-svelte.md) (host version) and [ADR-0009](0009-parity-gaps-native-track.md) (G11: the port no longer stays on 0.10.0). Amended by [ADR-0013](0013-gpuix-svelte-0.4.md): the host is gpuix-svelte 0.4.1, whose `build()` builds the app.
 
 ## Context
 
@@ -29,7 +29,7 @@ In a real window on 0.3.0, Tab in a Block's field typed nothing, Shift-Tab typed
 
 ## Consequences
 
-- In a list item, a key typed while the probe runs can be lost, as with Format > Indent. TODO: hold the keys typed during a probe and send them after it
+- In a list item, keys typed while the probe runs wait until it is done: Escape waits behind the probe as Format > Indent does, so Tab and a key typed in one burst nest the item and keep the key (amended 2026-11-04, `e2e/tab.e2e.ts`). A click on another Block while the probe runs still closes the field at once
 - The 2 spaces are sent as keys behind any keys already waiting, so a key that arrives in the same batch as the Tab lands before them. Keys typed one after another keep their order
 - TODO: write a literal tab once gpuix reports a text field's caret and selection (G1)
 - `@gpuix/native` 0.11.0 adds dashed borders, `outline*`, `onlayout` and `registerFont`. The blocked-image box uses the dashed border, the front matter field's focus ring the outline, and tables, images, mixed paragraphs and diagrams size from `onlayout` instead of 250ms polls (amended 2026-10-30); the deleted-block line keeps its `<svg>` dashes (ADR-0009 G11)

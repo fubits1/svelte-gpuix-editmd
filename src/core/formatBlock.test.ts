@@ -155,6 +155,25 @@ describe('the caret inside the Block: a list or quote command acts on the item o
 	})
 })
 
+// a selection from just after `from` to just after `to`; editmd's outputs with its selection there (sinkListItem and
+// liftListItem take the items the range spans at the first item's level, their nested items going with them)
+describe('a selection over several list items: Indent and Outdent act on every item it spans', () => {
+	test.each([
+		['indent', '- a\n- b\n- c', 'b', 'c', '- a\n  - b\n  - c'],
+		['indent', '- a\n- b\n  - x\n- c', 'b', 'c', '- a\n  - b\n    - x\n  - c'],
+		['indent', '- a\n- b\n  - x\n- c', 'b', 'x', '- a\n  - b\n    - x\n- c'],
+		['indent', '1. a\n2. b\n3. c\n4. d', 'b', 'c', '1. a\n   1. b\n   2. c\n2. d'],
+		['indent', '- a\n- b\n- c', 'a', 'b', null],
+		['outdent', '- a\n  - b\n  - c', 'b', 'c', '- a\n- b\n- c'],
+		['outdent', '- a\n- b\n- c', 'b', 'c', '- a\n\nb\n\nc'],
+		['outdent', '- a\n  - b\n  - c\n- d', 'b', 'c', '- a\n- b\n- c\n- d'],
+		['outdent', '- a\n  - b\n    - x\n  - c', 'b', 'c', '- a\n- b\n  - x\n- c']
+	] as const)('%s on %j from %j to %j gives %j', (format, source, from, to, expected) => {
+		const end = (needle: string) => source.indexOf(needle) + needle.length
+		expect(formatBlock(format, source, end(from), end(to))).toBe(expected)
+	})
+})
+
 // a loaded document's caret: ProseMirror's first cursor spot, the start of the first textblock's text (editmd focuses
 // its editor on load, main.ts:80-84), which a command acts at when no field is open
 describe('firstTextOffset: where a Block’s text starts, past its markers', () => {

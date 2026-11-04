@@ -16,7 +16,8 @@ type FindOptions = {
 	pollInterval?: number
 }
 
-const paintedWashes = (): readonly Wash[] => get_native()?.getPaintedHighlights() ?? []
+/** the `highlight` washes the last frame painted, as native reports them; none before the window is up */
+export const paintedWashes = () => get_native()?.getPaintedHighlights() ?? []
 
 /**
  * editmd's Find (Edit > Find, Cmd-F, Cmd-G, Cmd-Shift-G): the find bar's state and the matches it steps

@@ -1,4 +1,7 @@
-// the entry `pnpm run build` compiles: a binary carries no source to hot-reload, so it imports App statically
+// the entry `pnpm run build` compiles: a binary carries no source to hot-reload, so it imports App statically.
+
+// imported first: satteri's loader must find the .app's addon before anything imports satteri
+import './src/host/satteriAddon.ts'
 import { readFileSync } from 'node:fs'
 import { render } from 'gpuix-svelte'
 import App from './App.svelte'
@@ -50,8 +53,20 @@ if (launch.kind === 'open') documentController.openAtLaunch(launch.path, options
 else documentController.load('', { ...options, startedByNew: process.env[NEW_WINDOW_ENV] === '1' })
 
 // editmd caps its window to the screen; gpuix cannot read the screen, so AppKit is asked first
+const size = windowSizeFor(readVisibleScreen())
+// gpuix-svelte/build reads `app` from this source, so the options are written out here, not spread
 render(App, {
-	...WINDOW,
-	...windowSizeFor(readVisibleScreen()),
-	title: documentController.windowTitle
+	appName: WINDOW.appName,
+	width: size.width,
+	height: size.height,
+	minWidth: WINDOW.minWidth,
+	minHeight: WINDOW.minHeight,
+	title: documentController.windowTitle,
+	// what `pnpm build` packages the app as; the icon is drawn by build.ts before it builds
+	app: {
+		name: 'editmd-gpuix',
+		identifier: 'dev.gpuix.editmd',
+		copyright: 'A small markdown editor, ported from editmd.',
+		icon: './dist/AppIcon-1024.png'
+	}
 })

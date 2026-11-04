@@ -46,7 +46,7 @@
 </script>
 
 <div class="nested">
-	{#each blocks as block, n (block.start)}
+	{#each blocks as block, n (n)}
 		{@const margin = paragraph
 			? spaceInItem(blocks[n - 1], block)
 			: spaceAbove(blocks[n - 1], block)}

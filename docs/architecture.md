@@ -2,7 +2,7 @@
 
 ## Context
 
-editmd-gpuix ports [kirahowe/editmd](https://github.com/kirahowe/editmd) (v0.2.0, MIT) to a native GPUI desktop app written in Svelte 5 on gpuix-svelte 0.3.0 ([ADR-0012](adr/0012-gpuix-svelte-0.3.md)).
+editmd-gpuix ports [kirahowe/editmd](https://github.com/kirahowe/editmd) (v0.2.0, MIT) to a native GPUI desktop app written in Svelte 5 on gpuix-svelte 0.4.1 ([ADR-0013](adr/0013-gpuix-svelte-0.4.md)).
 
 editmd is a Swift/AppKit `NSDocument` host around a WKWebView. The web view runs Milkdown 7.22.3 (ProseMirror), Yjs 13.6 with y-prosemirror 1.3.7, and Mermaid 11. gpuix renders Svelte into a native GPUI window. It has no DOM, no contenteditable, no inline styled text runs and no textarea selection API, so editmd's editor layer cannot be ported. The port edits one Block's markdown source at a time in a text field ([ADR-0003](adr/0003-block-click-to-edit.md)). editmd's pure logic (TypeScript and the Swift core) is ported with its property tests.
 
@@ -94,13 +94,13 @@ A programmatic value moves a text field's caret to its end and clears its undo. 
 
 ```text
 editmd-gpuix/
-  app.ts (render_hot)  standalone.ts (render, the binary's entry)  build.ts (Bun compile, .app)  test.ts (headless UI suite)
+  app.ts (render_hot)  standalone.ts (render, the binary's entry)  build.ts (gpuix-svelte/build, then the satteri addon, plist keys, ad hoc signature)  test.ts (headless UI suite)
   docs/            architecture.md  parity.md  adr/
   src/core/        document model, merge, diff, text files, autosave machine, agent reports, links, images, Format commands,
                    typing as editmd's editor (Return, input rules, inline marks on a field's selection, code fields, tables)
   src/engine/      blocks.ts (Blocks from Sätteri's mdast, UTF-16 offsets; a quote's and a list item's children too)
   src/host/        files, watching, agent sockets and attribution, appearance, clipboard, print, recent files, windows,
-                   untitled window numbers
+                   untitled window numbers, satteri's addon in the .app (satteriAddon.ts)
   src/app/         launch and CLI modes, menus, shortcuts, palette and theme, find, zoom, snapshot and selftest
   src/ui/          DocumentView.svelte, MenuBar, FindBar; DocumentView/{Content, Views/, Overlays/, AgentLegend, controller}
   e2e/             real-window suites (gpuix-svelte/automation)

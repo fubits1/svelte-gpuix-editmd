@@ -23,7 +23,7 @@
 		text: findController.notFound ? theme().palette['system-red'] : theme().palette.text
 	})
 
-	/** an SF Symbols-like chevron; GPUI's SVG decoder drops var(), so the colour is inlined */
+	/** an SF Symbols-like chevron; GPUI paints it as a mask in its element's `color`, whatever its stroke names */
 	function chevron(direction: 'left' | 'right', colour: string | undefined): string {
 		const path = direction === 'left' ? 'M7.5 2.5 4 6l3.5 3.5' : 'M4.5 2.5 8 6 4.5 9.5'
 		return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="${path}" fill="none" stroke="${colour ?? 'currentColor'}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
@@ -54,12 +54,6 @@
 		return `M${turned.map(([x, y]) => `${x!.toFixed(3)} ${y!.toFixed(3)}`).join('L')}Z`
 	}
 
-	/**
-	 * NSSearchField's cancel button (SF Symbols `xmark.circle.fill`): a disc with the × cut out of it. GPUI paints an
-	 * SVG as a mask in the element's `color`, whatever fills it names (measured: disc and × both painted the bar's text
-	 * colour), so the × is a hole, an even-odd path, through which the field's own background shows: dark on the light
-	 * disc in dark mode, white on the grey one in light
-	 */
 	/** ⌘F with a query in the field selects it (`cmd-a`), as NSSearchField does, so typing replaces it */
 	function selectQuery(node: ShadowNode): void {
 		if (untrack(() => findController.takeSelectQuery())) void keysOnceFocused(node, 'cmd-a')
@@ -72,6 +66,12 @@
 	 */
 	let fieldFocused = $state(false)
 
+	/**
+	 * NSSearchField's cancel button (SF Symbols `xmark.circle.fill`): a disc with the × cut out of it. GPUI paints an
+	 * SVG as a mask in the element's `color`, whatever fills it names (measured: disc and × both painted the bar's text
+	 * colour), so the × is a hole, an even-odd path, through which the field's own background shows: dark on the light
+	 * disc in dark mode, white on the grey one in light
+	 */
 	const CLEAR_GLYPH = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path fill-rule="evenodd" d="M6 0A6 6 0 1 1 6 12A6 6 0 1 1 6 0Z${crossOutline()}"/></svg>`
 </script>
 

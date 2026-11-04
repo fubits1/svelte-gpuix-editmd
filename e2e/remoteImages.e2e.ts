@@ -2,7 +2,7 @@
  * end to end: editmd's SelfTest `remoteImages` (Sources/editmd/SelfTest.swift@9e889e6, lines 422-483)
  * in a real window, against a loopback server like editmd's PixelServer that counts requests
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/remoteImages.e2e.ts (unsandboxed: it opens a window)
+ * run: pnpm exec gpuix-svelte e2e/remoteImages.e2e.ts (unsandboxed: it opens a window)
  * editmd's paragraph mixes a remote and a local image with text; here each image has its own
  * paragraph (images inside text are not split out yet, docs/parity.md), and the mermaid image
  * shape is left out: pele draws no remote images

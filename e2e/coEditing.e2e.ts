@@ -2,7 +2,7 @@
  * end to end: editmd's SelfTest `coEditing` (Sources/editmd/SelfTest.swift@9e889e6, lines 91-180)
  * against the real app in a window, an agent hook through the real `--report-edit` command
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/coEditing.e2e.ts (unsandboxed: it opens a window)
+ * run: pnpm exec gpuix-svelte e2e/coEditing.e2e.ts (unsandboxed: it opens a window)
  */
 
 import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'

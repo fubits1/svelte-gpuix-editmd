@@ -7,11 +7,12 @@
   another title switches to that menu, as macOS does. Window chrome, so it does not zoom.
 -->
 <script lang="ts">
-	import { get_native, type ShadowNode } from 'gpuix-svelte'
+	import type { ShadowNode } from 'gpuix-svelte'
 	import Portal from 'gpuix-svelte/components/Portal.svelte'
 	import { SvelteMap } from 'svelte/reactivity'
 	import { documentController } from './DocumentView/controller.svelte.ts'
 	import MenuDropdown from './MenuBar/MenuDropdown.svelte'
+	import { boxOf, trackIn } from './nodes.ts'
 
 	const openIndex = $derived(
 		documentController.overlay?.kind === 'menu' ? documentController.overlay.index : null
@@ -28,17 +29,7 @@
 		}
 	}
 
-	function trackTitle(index: number, node: ShadowNode) {
-		titleNodes.set(index, node)
-		return () => {
-			if (titleNodes.get(index) === node) titleNodes.delete(index)
-		}
-	}
-
-	/** `node`'s box as last painted, null before its first paint */
-	function boxOf(node: ShadowNode | null | undefined) {
-		return node?.nativeId == null ? null : (get_native()?.getElementBounds(node.nativeId) ?? null)
-	}
+	const trackTitle = trackIn(titleNodes)
 
 	/** where the open menu hangs, in window coordinates: under its title, at the bar's bottom edge */
 	const placement = $derived.by(() => {

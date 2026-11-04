@@ -7,7 +7,6 @@
 <script lang="ts">
 	import {
 		focus_element,
-		focused_element,
 		get_native,
 		type GpuixEvent,
 		type GpuixTheme,
@@ -21,10 +20,11 @@
 	import { onDestroy, untrack } from 'svelte'
 	import { SvelteMap } from 'svelte/reactivity'
 	import { spaceAbove, spaceAroundDeletions } from '../app/blockSpacing.ts'
-	import { findController } from '../app/find.svelte.ts'
+	import { takeKeys } from '../app/fieldKeys.ts'
+	import { findController, paintedWashes } from '../app/find.svelte.ts'
 	import type { Match } from '../app/findMatches.ts'
 	import { commandFor } from '../app/shortcuts.ts'
-	import { headingThemeFor, NO_FILL, plainFieldThemeFor } from '../app/palette.ts'
+	import { headingThemeFor, mutedThemeFor, NO_FILL, plainFieldThemeFor } from '../app/palette.ts'
 	import { provideCommandHeld, useTheme } from '../app/theme.svelte.ts'
 	import { CODE_BORDER_RADIUS, codeBorderBox } from '../app/codeBorders.ts'
 	import { type ChangedRun, codeRunsOf, linkRunsOf } from '../core/changedText.ts'
@@ -46,6 +46,7 @@
 	import SaveAsDialog from './DocumentView/Overlays/SaveAsDialog.svelte'
 	import MermaidBlock from './DocumentView/Views/MermaidBlock.svelte'
 	import PointerTip from './PointerTip.svelte'
+	import { boxOf, trackIn } from './nodes.ts'
 
 	let {
 		autofocus = true
@@ -60,11 +61,6 @@
 	const theme = useTheme()
 
 	/**
-	 * editmd's `#editor` ends in `padding-bottom: 40vh`, so the last Block can scroll up to the top part of the
-	 * window: 40% of the window's height, a share of the viewport that page zoom leaves alone. Source mode's field
-	 * keeps it too, as it sits in the same `#editor` (style.css:64-69)
-	 */
-	/**
 	 * room added below the page so a followed link's target near the end still reaches the window's top, as editmd's
 	 * `scrollIntoView` puts its heading there (editmd's screenshot), where the page's own end would stop the scroll
 	 * short; 0 until a link needs it, and back to 0 with each Document (the room is kept with the Document it was
@@ -75,6 +71,11 @@
 		reveal.generation === documentController.documentGeneration ? reveal.room : 0
 	)
 
+	/**
+	 * editmd's `#editor` ends in `padding-bottom: 40vh`, so the last Block can scroll up to the top part of the
+	 * window: 40% of the window's height, a share of the viewport that page zoom leaves alone. Source mode's field
+	 * keeps it too, as it sits in the same `#editor` (style.css:64-69)
+	 */
 	const pageBottom = $derived(`${Math.round((window_size.height * 0.4 + revealRoom) * 10) / 10}px`)
 
 	/**
@@ -96,8 +97,8 @@
 			if (event.key === undefined || event.modifiers === undefined) return
 			/**
 			 * a dialog is modal, as editmd's sheets and alerts are: `runShortcut` keeps the menu keys away from the
-			 * Document while one shows (Cmd-S reopened Save As over the typed name), and the dialog's own listener
-			 * keeps Return and Escape; an open menu closes and lets the key run, as AppKit's menus do
+			 * Document while one shows, and the dialog's own listener keeps Return and Escape; an open menu closes
+			 * and lets the key run, as AppKit's menus do
 			 */
 			// null for ordinary typing, which stays with the focused field
 			const command = commandFor(event.key, event.modifiers)
@@ -193,14 +194,6 @@
 	 */
 	const rowNodes = new SvelteMap<number, ShadowNode>()
 
-	/** keys a node into `nodes`; its release leaves the key alone once a newer node holds it */
-	const trackIn = (nodes: SvelteMap<number, ShadowNode>) => (key: number, node: ShadowNode) => {
-		nodes.set(key, node)
-		return () => {
-			if (nodes.get(key) === node) nodes.delete(key)
-		}
-	}
-
 	const trackBlock = trackIn(blockNodes)
 	provideRowTracker(trackIn(rowNodes))
 
@@ -223,7 +216,19 @@
 			reveal = { generation: documentController.documentGeneration, room: revealRoom + lacking }
 		}
 		if (smooth) animateScroll(native, id, x, from, from - distance)
-		else native.scrollTo(id, x, from - distance)
+		else scrollPage(native, id, x, from - distance)
+	}
+
+	/** GPUI's native handle, once the window is up */
+	type Native = NonNullable<ReturnType<typeof get_native>>
+
+	/**
+	 * sets the scroller `id`'s offset and tells the theme the page scrolled: macOS shows an overlay scroller's thumb
+	 * during any scroll, and App hears only a wheel's (`onscroll`)
+	 */
+	function scrollPage(native: Native, id: number, x: number, y: number): void {
+		native.scrollTo(id, x, y)
+		theme().pageScrolled()
 	}
 
 	/**
@@ -247,19 +252,13 @@
 	 * a browser's smooth scroll from offset `from` to `to` of the scroller `id`: a step a frame over SMOOTH_SCROLL_MS,
 	 * easing in and out, a new one taking over from where the last one got to
 	 */
-	function animateScroll(
-		native: NonNullable<ReturnType<typeof get_native>>,
-		id: number,
-		x: number,
-		from: number,
-		to: number
-	): void {
+	function animateScroll(native: Native, id: number, x: number, from: number, to: number): void {
 		clearTimeout(smoothScroll)
 		const started = Date.now()
 		const step = () => {
 			const progress = Math.min(1, (Date.now() - started) / SMOOTH_SCROLL_MS)
 			const eased = (1 - Math.cos(Math.PI * progress)) / 2
-			native.scrollTo(id, x, from + (to - from) * eased)
+			scrollPage(native, id, x, from + (to - from) * eased)
 			if (progress < 1) smoothScroll = setTimeout(step, FRAME_MS)
 		}
 		smoothScroll = setTimeout(step, FRAME_MS)
@@ -278,7 +277,7 @@
 	 */
 	function scrollingAncestorOf(node: ShadowNode) {
 		const native = get_native()
-		const target = node.nativeId === null ? null : native?.getElementBounds(node.nativeId)
+		const target = boxOf(node)
 		if (!native || !target) return null
 		let content = target
 		for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
@@ -308,14 +307,11 @@
 	}
 
 	/** one `highlight` wash the last frame painted, as native reports it */
-	type PaintedWash = ReturnType<
-		NonNullable<ReturnType<typeof get_native>>['getPaintedHighlights']
-	>[number]
+	type PaintedWash = ReturnType<typeof paintedWashes>[number]
 
 	/** the first painted box of the changed run `run` washed inside `node`, null when none paints */
 	function runRectIn(node: ShadowNode, run: ChangedRun) {
-		const washes = get_native()?.getPaintedHighlights() ?? []
-		const painted = washedRunsIn(node, washes).find(
+		const painted = washedRunsIn(node, paintedWashes()).find(
 			({ text, occurrence }) => text === run.text && occurrence === run.index
 		)
 		return painted?.wash.rects[0] ?? null
@@ -424,23 +420,11 @@
 			: editorRevision === revision
 				? editorNode
 				: null
-		if (node?.nativeId == null) return false
-		focus_element(node)
-		return focused_element()?.nativeId === node.nativeId
+		return node?.nativeId != null && takeKeys(node)
 	}
 
 	$effect(() => documentController.onFocusField(focusField))
 
-	/** the dialogs that are alerts: buttons only, Return and Escape heard through the window's keys */
-	const ALERTS = new Set([
-		'confirmLink',
-		'saveChanges',
-		'revert',
-		'openFailed',
-		'saveFailed',
-		'saveLocked',
-		'saveNotice'
-	])
 	/** an alert was up at the last look; nothing renders from it */
 	let alertUp = false
 
@@ -449,7 +433,7 @@
 	 * from its page; the field gets them back once it goes, as editmd's page does
 	 */
 	$effect(() => {
-		const up = ALERTS.has(documentController.overlay?.kind ?? '')
+		const up = documentController.alert !== null
 		if (!up && alertUp) untrack(() => focusField(documentController.fieldRevision))
 		alertUp = up
 	})
@@ -460,11 +444,10 @@
 	 * never takes one
 	 */
 	function blockRows(): Row[] {
-		const native = get_native()
 		return documentController.blocks.map((_block, index) => {
-			const node =
+			const box = boxOf(
 				blockNodes.get(index) ?? (index === documentController.activeIndex ? activeField : null)
-			const box = node?.nativeId == null ? null : native?.getElementBounds(node.nativeId)
+			)
 			return box ? { top: box.y, height: box.height } : { top: Number.POSITIVE_INFINITY, height: 0 }
 		})
 	}
@@ -495,6 +478,30 @@
 		return size && lineHeight ? { size, lineHeight, rule } : null
 	})
 
+	/**
+	 * the box the open field of an h1 or h2, a list, a quote or a rule sits in, so it keeps the closed Block's look, as
+	 * editmd edits each in place: the heading's rule below its text, the list's item indent (`ul { padding-left: 1.75em
+	 * }`), the quote's rail, padding and muted text (`blockquote`) and the rule's line below it (`hr { border-top: 1px
+	 * }`, style.css:222-233, 274-279); null for a field with no box
+	 */
+	const fieldBox = $derived.by(() => {
+		const { textTheme } = theme()
+		if (headingFont?.rule)
+			return {
+				look: `field-rule field-rule-${headingFont.rule}`,
+				testid: 'block-editor-rule',
+				theme: textTheme
+			}
+		const kind = documentController.activeKind
+		if (kind === 'list')
+			return { look: 'field-list', testid: 'block-editor-list', theme: textTheme }
+		if (kind === 'blockquote')
+			return { look: 'field-quote', testid: 'block-editor-quote', theme: mutedThemeFor(textTheme) }
+		if (kind === 'thematicBreak')
+			return { look: 'field-rule', testid: 'block-editor-hr', theme: textTheme }
+		return null
+	})
+
 	/** whether the painted element `elementId` is `node` or inside it */
 	function holds(node: ShadowNode, elementId: number): boolean {
 		if (node.nativeId === elementId) return true
@@ -509,9 +516,9 @@
 	 * stepping between visible matches keeps still
 	 */
 	function revealMatch({ elementId, start }: Match): void {
-		const wash = get_native()
-			?.getPaintedHighlights()
-			.find((each) => each.elementId === elementId && each.start === start)
+		const wash = paintedWashes().find(
+			(each) => each.elementId === elementId && each.start === start
+		)
 		for (const node of blockNodes.values()) {
 			if (!holds(node, elementId)) continue
 			const scrolling = scrollingAncestorOf(node)
@@ -533,10 +540,11 @@
 	/**
 	 * each Block holding a link with its links as runs of its painted text (`linkRunsOf`), by index and then by `runKey`:
 	 * what ⌘ turns the pointer to a hand over. the render source carries the definitions a reference link needs to parse
-	 * as one
+	 * as one. none in Source mode, where no Block paints
 	 */
 	const linkRuns = $derived.by(() => {
 		const byBlock = new SvelteMap<number, SvelteMap<string, ChangedRun & { title?: string }>>()
+		if (documentController.sourceMode) return byBlock
 		documentController.blocks.forEach((block, index) => {
 			if (!block.links) return
 			const runs = linkRunsOf(documentController.renderSourceOf(block))
@@ -549,10 +557,11 @@
 	/**
 	 * each Block holding an inline code span with its spans as runs of its painted text (`codeRunsOf`), by index: what
 	 * editmd draws its border around. a code or mermaid Block, or one whose text has no backtick, holds none, so it is
-	 * never parsed for them
+	 * never parsed for them; none in Source mode either
 	 */
 	const codeRuns = $derived.by(() => {
 		const byBlock = new SvelteMap<number, ChangedRun[]>()
+		if (documentController.sourceMode) return byBlock
 		documentController.blocks.forEach((block, index) => {
 			const source = documentController.sliceOf(block)
 			if (block.kind === 'code' || block.kind === 'mermaid' || !source.includes('`')) return
@@ -562,6 +571,11 @@
 		})
 		return byBlock
 	})
+
+	/** each Block's changed runs (`changedRunsOf`) by index, which its washes and its run marks both read */
+	const changedRuns = $derived(
+		documentController.blocks.map((block) => documentController.changedRunsOf(block))
+	)
 
 	/** a wash over exactly the `run.index`th occurrence of `run.text` in `colour`, the other occurrences transparent */
 	const washOf = (run: ChangedRun, colour: string | undefined): HighlightSpec => ({
@@ -582,13 +596,11 @@
 	 */
 	const blockWashes = $derived.by(() => {
 		const marked = new SvelteMap<number, HighlightSpec[]>()
-		documentController.blocks.forEach((block, index) => {
+		changedRuns.forEach((changed, index) => {
 			const specs = [
-				...documentController
-					.changedRunsOf(block)
-					.flatMap(({ runs, agentClass }) =>
-						runs.map((run) => washOf(run, theme().palette[`${agentClass}-change`]))
-					),
+				...changed.flatMap(({ runs, agentClass }) =>
+					runs.map((run) => washOf(run, theme().palette[`${agentClass}-change`]))
+				),
 				...[...(linkRuns.get(index)?.values() ?? []), ...(codeRuns.get(index) ?? [])].map((run) =>
 					washOf(run, NO_FILL)
 				)
@@ -623,7 +635,7 @@
 		runs: ReadonlyMap<string, T> | undefined
 	): T | undefined {
 		const node = blockNodes.get(index)
-		if (!node || !runs) return undefined
+		if (!node || !runs || !washes.some((wash) => washHolds(wash, x, y))) return undefined
 		for (const { text, occurrence, wash } of washedRunsIn(node, washes)) {
 			const run = runs.get(runKey(text, occurrence))
 			if (run !== undefined && washHolds(wash, x, y)) return run
@@ -634,27 +646,26 @@
 	/** the Block with a link painted under the window point (`x`, `y`), null for none */
 	function linkBlockAt(x: number, y: number): number | null {
 		if (linkRuns.size === 0) return null
-		const washes = get_native()?.getPaintedHighlights() ?? []
+		const washes = paintedWashes()
 		for (const [index, runs] of linkRuns) if (washedRunAt(index, x, y, washes, runs)) return index
 		return null
 	}
 
 	/**
 	 * the tip a painted Block shows: editmd titles a highlight "<name>, <time>", anywhere over a Block marked whole and
-	 * only over the runs of one marked by its changed runs, each `.agent-change` run titled (highlights.ts:184-186), and
-	 * a titled link with its title over that link (links.ts:174), the innermost title as a browser shows it
+	 * only over the runs of one marked by its changed runs, each `.agent-change` run titled with its own Agent's line
+	 * (highlights.ts:184-186), and a titled link with its title over that link (links.ts:174), the innermost title as a
+	 * browser shows it
 	 */
 	function blockTipOf(index: number, agentClass: string | null, tooltip: string | null) {
-		const colours = agentClass === null ? underlineColours.get(index) : undefined
+		const marks = agentClass === null ? runMarks.get(index) : undefined
 		const links = linkRuns.get(index)
-		if (!colours && !links?.values().some((run) => run.title)) return tooltip
+		if (!marks && !links?.values().some((run) => run.title)) return tooltip
 		return (x: number, y: number) => {
-			const washes = get_native()?.getPaintedHighlights() ?? []
+			const washes = paintedWashes()
 			const title = washedRunAt(index, x, y, washes, links)?.title
-			return (
-				title ??
-				(colours && washedRunAt(index, x, y, washes, colours) === undefined ? null : tooltip)
-			)
+			if (!marks) return title ?? tooltip
+			return title ?? washedRunAt(index, x, y, washes, marks)?.tooltip ?? null
 		}
 	}
 
@@ -667,19 +678,24 @@
 	/** the key of the `occurrence`th run of `text` in its Block, which one Agent's change marks */
 	const runKey = (text: string, occurrence: number) => `${text}\u0000${occurrence}`
 
+	/** a changed run's mark: the colour that underlines it, its Agent's at 70%, and its Agent's tooltip line */
+	type RunMark = { colour: string; tooltip: string }
+
 	/**
-	 * each run-marked Block's runs, by index, with the colour that underlines each: its Agent's at 70%. a run is keyed
-	 * by its text and which occurrence of that text it is (`runKey`), so two Agents who wrote the same word in one
-	 * Block each underline their own
+	 * each run-marked Block's runs, by index, each with its mark. a run is keyed by its text and which occurrence of that text it is
+	 * (`runKey`), so two Agents who wrote the same word in one Block each underline and title their own
 	 */
-	const underlineColours = $derived.by(() => {
-		const byBlock = new SvelteMap<number, SvelteMap<string, string>>()
-		documentController.blocks.forEach((block, index) => {
-			const colours = new SvelteMap<string, string>()
-			for (const { runs, agentClass } of documentController.changedRunsOf(block))
+	const runMarks = $derived.by(() => {
+		const byBlock = new SvelteMap<number, SvelteMap<string, RunMark>>()
+		changedRuns.forEach((changed, index) => {
+			const marks = new SvelteMap<string, RunMark>()
+			for (const { runs, agentClass, tooltip } of changed)
 				for (const run of runs)
-					colours.set(runKey(run.text, run.index), theme().palette[`${agentClass}-deleted`] ?? '')
-			if (colours.size > 0) byBlock.set(index, colours)
+					marks.set(runKey(run.text, run.index), {
+						colour: theme().palette[`${agentClass}-deleted`] ?? '',
+						tooltip
+					})
+			if (marks.size > 0) byBlock.set(index, marks)
 		})
 		return byBlock
 	})
@@ -716,23 +732,22 @@
 
 	/** reads where the runs' washes painted, and keeps the underlines and code borders when they moved */
 	function measureRuns(): void {
-		const native = get_native()
-		const washes = native?.getPaintedHighlights() ?? []
+		const washes = paintedWashes()
 		const thickness = theme().scaled(UNDERLINE_PX)
 		const lines: Underline[] = []
 		const borders: CodeBorder[] = []
-		for (const index of new Set([...underlineColours.keys(), ...codeRuns.keys()])) {
+		for (const index of new Set([...runMarks.keys(), ...codeRuns.keys()])) {
 			const node = blockNodes.get(index)
-			const box = node?.nativeId == null ? null : native?.getElementBounds(node.nativeId)
+			const box = boxOf(node)
 			if (!node || !box) continue
-			const colours = underlineColours.get(index)
+			const marks = runMarks.get(index)
 			// each code span takes one wash, though Find's active match can wash the same place again
 			// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local to one measurement
 			const unbordered = new Set(
 				(codeRuns.get(index) ?? []).map((run) => runKey(run.text, run.index))
 			)
 			for (const { text, occurrence, wash } of washedRunsIn(node, washes)) {
-				const colour = colours?.get(runKey(text, occurrence))
+				const colour = marks?.get(runKey(text, occurrence))?.colour
 				const code = unbordered.delete(runKey(text, occurrence))
 				for (const rect of wash.rects) {
 					if (colour !== undefined)
@@ -758,7 +773,7 @@
 	 * as Find reads its matches
 	 */
 	$effect(() => {
-		if (underlineColours.size === 0 && codeRuns.size === 0) return
+		if (runMarks.size === 0 && codeRuns.size === 0) return
 		untrack(measureRuns)
 		const poll = setInterval(measureRuns, RUN_POLL_MS)
 		return () => clearInterval(poll)
@@ -839,8 +854,10 @@
 	agentClass: string | null = null
 )}
 	<textarea
-		class={[look, spaceClass, font && 'heading-field', agentClass && `agent ${agentClass}`]}
+		class={[look, spaceClass, font && 'heading-field', agentClass && 'agent']}
 		testid="block-editor"
+		style:border-color={agentClass && `var(--${agentClass})`}
+		style:background-color={agentClass && `var(--${agentClass}-tint)`}
 		style:font-size={font ? `${font.size}px` : null}
 		style:line-height={font ? `${font.lineHeight}px` : null}
 		{autofocus}
@@ -853,7 +870,7 @@
 		onchange={changeOfField}
 		onsubmit={() => documentController.pressReturn()}
 		onkeydown={(event) => {
-			if (event.key === 'escape') documentController.closeEdit()
+			if (event.key === 'escape') documentController.escapeField()
 			else if (
 				event.key !== undefined &&
 				event.modifiers !== undefined &&
@@ -899,10 +916,11 @@
 					onchange={(event) => documentController.typeInActive(event.value)}></textarea>
 			{:else}
 				<!--
-				  the Active block's key follows its Edit session, not its offset: a Disk merge that adds or removes a Block
-				  above moves its start, and a new key would remount the field, losing what it shows and its caret
+				  the Active block's key follows its Edit session, not its place: a Disk merge that adds or removes a Block
+				  above moves it, and a new key would remount the field, losing what it shows and its caret. the others key by
+				  place, so typing, which moves every later Block's offsets, updates them in place
 				-->
-				{#each paintedBlocks as block, place (place === documentController.activeIndex ? 'active' : block.start)}
+				{#each paintedBlocks as block, place (place === documentController.activeIndex ? 'active' : place)}
 					{@const index = blockIndexAt(place)}
 					{@const agentClass = documentController.agentClassOf(block)}
 					{@const tooltip = documentController.highlightTooltipOf(block)}
@@ -961,18 +979,17 @@
 								</div>
 							{:else}
 								{@const fieldAgent = documentController.fieldAgentClassOf(index)}
-								{#if headingFont?.rule}
-									<!-- an h1 or h2 keeps its rule below its text while it is edited, as editmd's heading does -->
+								{#if fieldBox}
 									<div
-										class={['field-rule', `field-rule-${headingFont.rule}`, spaceClass]}
-										testid="block-editor-rule"
+										class={[fieldBox.look, spaceClass]}
+										testid={fieldBox.testid}
 										{@attach trackField}
 									>
 										{@render blockField(
 											'editor',
 											null,
 											false,
-											theme().textTheme,
+											fieldBox.theme,
 											headingFont,
 											fieldAgent
 										)}
@@ -1007,8 +1024,10 @@
 								  as the page does: GPUI would hand a drop on it to its click (measured headless), opening it
 								-->
 								<div
-									class={['block', spaceClass, agentClass !== null && `agent ${agentClass}`]}
+									class={['block', spaceClass, agentClass !== null && 'agent']}
 									testid={`block-${index}`}
+									style:border-color={agentClass && `var(--${agentClass})`}
+									style:background-color={agentClass && `var(--${agentClass}-tint)`}
 									highlight={blockHighlight(index)}
 									style:cursor={cmdHeld && handOver === index ? 'pointer' : 'text'}
 									hitbox={block.tasks ? null : 'self'}
@@ -1031,7 +1050,7 @@
 									<!-- children an Agent took away after a list's or quote's last row -->
 									<GapLines place={{ index }} />
 									<!-- a measure left from runs since cleared paints nothing: only a run-marked Block draws underlines -->
-									{#each underlineColours.has(index) ? runUnderlines.filter((line) => line.index === index) : [] as line (line.key)}
+									{#each runMarks.has(index) ? runUnderlines.filter((line) => line.index === index) : [] as line (line.key)}
 										<div
 											class="run-underline"
 											testid={`run-underline-${line.key}`}
@@ -1092,34 +1111,13 @@
 	</Portal>
 {/if}
 
-{#if documentController.overlay?.kind === 'confirmLink'}
-	<!--
-	  editmd's question before a link of another scheme opens in whichever app claims it, its own NSAlert in its words
-	  (LinkOpener.swift:25-30): Open first, so Return presses it
-	-->
-	<Portal>
-		<Alert
-			testid="confirm-link"
-			notice
-			title="Open this link?"
-			message={`It opens in another app:\n\n${documentController.overlay.url}`}
-			buttons={[
-				{
-					label: 'Cancel',
-					testid: 'confirm-link-cancel',
-					onclick: () => documentController.closeOverlay()
-				},
-				{
-					label: 'Open',
-					testid: 'confirm-link-open',
-					onclick: () => documentController.openConfirmedLink(),
-					primary: true
-				}
-			]}
-			ondefault={() => documentController.openConfirmedLink()}
-			oncancel={() => documentController.closeOverlay()}
-		/>
-	</Portal>
+{#if documentController.alert}
+	<!-- each kind of alert mounts its own, so its key button takes the keys -->
+	{#key documentController.alert.testid}
+		<Portal>
+			<Alert {...documentController.alert} />
+		</Portal>
+	{/key}
 {:else if documentController.overlay?.kind === 'saveAs'}
 	<Portal>
 		<SaveAsDialog
@@ -1134,59 +1132,6 @@
 			close={() => documentController.closeOverlay()}
 		/>
 	</Portal>
-{:else if documentController.overlay?.kind === 'saveChanges'}
-	<!-- NSDocument's close alert, in its words (AppKit Document.loctable); Save… when it leads to Save As -->
-	<Portal>
-		<Alert
-			testid="save-changes"
-			title={`Do you want to save the changes made to the document “${documentController.overlay.documentName}”?`}
-			message="Your changes will be lost if you don’t save them."
-			buttons={[
-				{
-					label: 'Don’t Save',
-					testid: 'save-changes-dont-save',
-					onclick: () => documentController.discardChanges()
-				},
-				{
-					label: 'Cancel',
-					testid: 'save-changes-cancel',
-					onclick: () => documentController.closeOverlay()
-				},
-				{
-					label: documentController.overlay.untitled ? 'Save…' : 'Save',
-					testid: 'save-changes-save',
-					onclick: () => documentController.saveChanges(),
-					primary: true
-				}
-			]}
-			ondefault={() => documentController.saveChanges()}
-			oncancel={() => documentController.closeOverlay()}
-		/>
-	</Portal>
-{:else if documentController.overlay?.kind === 'revert'}
-	<!-- NSDocument's revert alert, in its words (AppKit Document.loctable) -->
-	<Portal>
-		<Alert
-			testid="revert"
-			title={`Do you want to revert to the most recently saved version of the document “${documentController.overlay.documentName}”?`}
-			message="Your current changes will be lost."
-			buttons={[
-				{
-					label: 'Cancel',
-					testid: 'revert-cancel',
-					onclick: () => documentController.closeOverlay()
-				},
-				{
-					label: 'Revert',
-					testid: 'revert-revert',
-					onclick: () => documentController.revertConfirmed(),
-					primary: true
-				}
-			]}
-			ondefault={() => documentController.revertConfirmed()}
-			oncancel={() => documentController.closeOverlay()}
-		/>
-	</Portal>
 {:else if documentController.overlay?.kind === 'openRecent'}
 	<Portal>
 		<OpenRecentDialog
@@ -1194,98 +1139,6 @@
 			onopen={(path) => documentController.openRecentFile(path)}
 			onclear={() => documentController.clearRecentFiles()}
 			close={() => documentController.closeOverlay()}
-		/>
-	</Portal>
-{:else if documentController.overlay?.kind === 'openFailed'}
-	<!--
-	  NSDocumentController's alert, in its words (AppKit Document.loctable and Common.loctable's OK, Foundation
-	  FoundationErrors.loctable); after a launch that opened nothing, dismissing it ends the window
-	-->
-
-	<Portal>
-		<Alert
-			testid="open-failed"
-			title={documentController.overlay.title}
-			message={documentController.overlay.message}
-			buttons={[
-				{
-					label: 'OK',
-					testid: 'open-failed-ok',
-					onclick: () => documentController.dismissOpenFailure(),
-					primary: true
-				}
-			]}
-			ondefault={() => documentController.dismissOpenFailure()}
-			oncancel={() => documentController.dismissOpenFailure()}
-		/>
-	</Portal>
-{:else if documentController.overlay?.kind === 'saveFailed'}
-	<!--
-	  NSDocument's alert for File > Save's error, as editmd presents it (Document.swift:171-176): AppKit
-	  Document.loctable's "could not be saved", Foundation FoundationErrors.loctable's reason, and Common.loctable's OK
-	-->
-	<Portal>
-		<Alert
-			testid="save-failed"
-			title={documentController.overlay.title}
-			message={documentController.overlay.message}
-			buttons={[
-				{
-					label: 'OK',
-					testid: 'save-failed-ok',
-					onclick: () => documentController.closeOverlay(),
-					primary: true
-				}
-			]}
-			ondefault={() => documentController.closeOverlay()}
-			oncancel={() => documentController.closeOverlay()}
-		/>
-	</Portal>
-{:else if documentController.overlay?.kind === 'saveLocked'}
-	<!--
-	  NSDocument's question for a locked file (editmd measured: the edit is written, the mode stays 444): Cancel is the
-	  default, so Return and Escape both cancel; Save Anyway writes the file all the same
-	-->
-	<Portal>
-		<Alert
-			testid="save-locked"
-			title={`The document “${documentController.overlay.documentName}” could not be saved. The file is locked.`}
-			message="Do you want to save your changes to it anyway?"
-			buttons={[
-				{
-					label: 'Cancel',
-					testid: 'save-locked-cancel',
-					onclick: () => documentController.closeOverlay(),
-					primary: true
-				},
-				{
-					label: 'Save Anyway',
-					testid: 'save-locked-anyway',
-					onclick: () => documentController.saveAnyway()
-				}
-			]}
-			ondefault={() => documentController.closeOverlay()}
-			oncancel={() => documentController.closeOverlay()}
-		/>
-	</Portal>
-{:else if documentController.overlay?.kind === 'saveNotice'}
-	<!-- editmd's notice sheet (EditorWindowController `showNotice`): an NSAlert with only AppKit's default OK -->
-	<Portal>
-		<Alert
-			testid="save-notice"
-			notice
-			title="Saved in a Different Encoding"
-			message={documentController.overlay.message}
-			buttons={[
-				{
-					label: 'OK',
-					testid: 'save-notice-ok',
-					onclick: () => documentController.closeOverlay(),
-					primary: true
-				}
-			]}
-			ondefault={() => documentController.closeOverlay()}
-			oncancel={() => documentController.closeOverlay()}
 		/>
 	</Portal>
 {:else if documentController.overlay?.kind === 'addLink'}
@@ -1414,35 +1267,6 @@
 		border-left-width: var(--size-agent-rail);
 		padding-left: var(--size-agent-inset);
 	}
-	.agent-0 {
-		border-color: var(--agent-0);
-		background-color: var(--agent-0-tint);
-	}
-	.agent-1 {
-		border-color: var(--agent-1);
-		background-color: var(--agent-1-tint);
-	}
-	.agent-2 {
-		border-color: var(--agent-2);
-		background-color: var(--agent-2-tint);
-	}
-	.agent-3 {
-		border-color: var(--agent-3);
-		background-color: var(--agent-3-tint);
-	}
-	.agent-4 {
-		border-color: var(--agent-4);
-		background-color: var(--agent-4-tint);
-	}
-	.agent-5 {
-		border-color: var(--agent-5);
-		background-color: var(--agent-5-tint);
-	}
-	/* Outside edit, editmd's UNKNOWN agent */
-	.agent-unknown {
-		border-color: var(--agent-unknown);
-		background-color: var(--agent-unknown-tint);
-	}
 	/* the Deletion lines at one place, each `margin: 0.2rem 0` apart, collapsed */
 	.deletions {
 		display: flex;
@@ -1456,7 +1280,23 @@
 	.editor {
 		width: 100%;
 	}
-	/* an open h1's or h2's rule, as MarkdownBlock draws it: its padding, then a 1px line in the border colour */
+	/* `ul { padding-left: 1.75em }`: an open list's text starts where its items' text does */
+	.field-list {
+		width: 100%;
+		padding-left: var(--size-list-indent);
+	}
+	/* `blockquote { padding: 0 1em; border-left: 0.25em solid var(--border) }`, its muted text in the field's theme */
+	.field-quote {
+		width: 100%;
+		border-left-width: var(--size-quote-rail);
+		border-color: var(--border);
+		padding-left: var(--size-quote-padding);
+		padding-right: var(--size-quote-padding);
+	}
+	/*
+	 * an open h1's or h2's rule, as MarkdownBlock draws it: its padding, then a 1px line in the border colour; an open
+	 * rule's `hr { border-top: 1px solid var(--border) }` below its text
+	 */
 	.field-rule {
 		width: 100%;
 		border-bottom-width: 1px;

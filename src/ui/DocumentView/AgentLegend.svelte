@@ -32,7 +32,7 @@
 	import { keysOnceFocused } from '../../app/fieldKeys.ts'
 	import { useTheme } from '../../app/theme.svelte.ts'
 	import PointerTip from '../PointerTip.svelte'
-	import { documentController } from './controller.svelte.ts'
+	import { documentController, slotClassOf } from './controller.svelte.ts'
 
 	const theme = useTheme()
 
@@ -47,9 +47,6 @@
 
 	/** the pill's number: every highlight in the legend */
 	const total = $derived(documentController.agents.reduce((sum, { count }) => sum + count, 0))
-
-	/** a dot's colour class: the Agent's slot, or editmd's `agent-unknown` for Outside edit */
-	const dotClass = (slot: number | null) => (slot === null ? 'dot-unknown' : `dot-${slot}`)
 
 	/**
 	 * editmd reveals on the first click (`event.detail < 2`) and renames on the double click, whose second click
@@ -111,8 +108,9 @@
 						<PointerTip text={agent.name} testid={`legend-pill-dot-tooltip-${index}`}>
 							{#snippet children(dotPointer)}
 								<div
-									class={['dot', dotClass(agent.slot)]}
+									class="dot"
 									testid={`legend-pill-dot-${index}`}
+									style:background-color={`var(--${slotClassOf(agent)})`}
 									aria-label={agent.name}
 									onclick={() => documentController.minimizeLegend(false)}
 									{...dotPointer}
@@ -176,7 +174,11 @@
 								onclick={(event) => clickName(event, agent.id, agent.name)}
 								{...pointer}
 							>
-								<div class={['dot', dotClass(agent.slot)]} testid={`legend-dot-${index}`}></div>
+								<div
+									class="dot"
+									testid={`legend-dot-${index}`}
+									style:background-color={`var(--${slotClassOf(agent)})`}
+								></div>
 								<text class="name-text" testid={`legend-name-text-${index}`}>{agent.name}</text>
 								<text class="count" testid={`legend-count-${index}`}>{agent.count}</text>
 							</div>
@@ -353,26 +355,5 @@
 		width: var(--size-legend-dot);
 		height: var(--size-legend-dot);
 		border-radius: var(--size-legend-dot-radius);
-	}
-	.dot-0 {
-		background-color: var(--agent-0);
-	}
-	.dot-1 {
-		background-color: var(--agent-1);
-	}
-	.dot-2 {
-		background-color: var(--agent-2);
-	}
-	.dot-3 {
-		background-color: var(--agent-3);
-	}
-	.dot-4 {
-		background-color: var(--agent-4);
-	}
-	.dot-5 {
-		background-color: var(--agent-5);
-	}
-	.dot-unknown {
-		background-color: var(--agent-unknown);
 	}
 </style>

@@ -8,13 +8,12 @@
 <script lang="ts">
 	import type { GpuixEvent, GpuixTheme } from 'gpuix-svelte'
 	import {
-		emptyLinkThemeFor,
 		heldLinkThemeFor,
-		inlineHtmlThemeFor,
 		linkThemeFor,
 		LIST_INDENT,
 		listItemThemeFor,
-		mutedThemeFor
+		mutedThemeFor,
+		sourceThemeFor
 	} from '../../../app/palette.ts'
 	import { useCommandHeld, useQuoteColour, useTheme } from '../../../app/theme.svelte.ts'
 	import { struckThrough } from '../../../core/paintedSlice.ts'
@@ -63,19 +62,18 @@
 	}
 
 	/**
-	 * an item holding a link with no text paints its source as editmd does, in the accent with no fill
-	 * (`emptyLinkThemeFor`), and one holding an inline HTML tag its source in the muted colour with no fill
-	 * (`inlineHtmlThemeFor`); every other item the Blocks' theme, a ticked task's muted (`doneTheme`)
+	 * an item holding a link with no text paints its source as editmd does, in the accent with no fill, and one
+	 * holding an inline HTML tag its source in the muted colour with no fill (`sourceThemeFor`); every other item the
+	 * Blocks' theme, a ticked task's muted (`doneTheme`)
 	 */
 	function themeOf(start: number, end: number, checked: boolean): GpuixTheme {
-		const itemTheme = checked ? doneTheme : openTheme
 		const within = (span: { start: number; end: number }) => span.start >= start && span.end <= end
-		const holdsEmptyLink = block.emptyLinks?.some(within)
-		const holdsHtml = block.inlineHtml?.some(within)
-		if (!holdsEmptyLink && !holdsHtml) return lined(itemTheme, checked)
+		const spans = {
+			emptyLink: block.emptyLinks?.some(within),
+			html: block.inlineHtml?.some(within)
+		}
 		const hasCode = documentController.text.slice(start, end).includes('`')
-		const html = holdsHtml ? inlineHtmlThemeFor(itemTheme, hasCode) : itemTheme
-		return lined(holdsEmptyLink ? emptyLinkThemeFor(html, hasCode) : html, checked)
+		return lined(sourceThemeFor(checked ? doneTheme : openTheme, spans, hasCode), checked)
 	}
 
 	/**
@@ -126,7 +124,7 @@
 {/snippet}
 
 <div class="list" testid={`${listId}-${testKey}`}>
-	{#each items as item, n (item.contentStart)}
+	{#each items as item, n (n)}
 		{@const checked = item.task?.checked === true}
 		<!-- an item's paragraph among Blocks of other kinds paints as its text does when it holds only paragraphs -->
 		{#snippet itemParagraph(paragraph: Block)}

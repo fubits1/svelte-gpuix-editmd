@@ -2,7 +2,7 @@
  * end to end: editmd's SelfTest `links` (Sources/editmd/SelfTest.swift@9e889e6, lines 350-405) in a
  * real window, where the order of GPUI's link and Block click events is the one a user gets
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/links.e2e.ts (unsandboxed: it opens a window)
+ * run: pnpm exec gpuix-svelte e2e/links.e2e.ts (unsandboxed: it opens a window)
  * EDITMD_GPUIX_DRY_RUN logs what the app would start, so nothing opens in Finder or the browser.
  * editmd puts the five links in one paragraph; here each has its own, so a Cmd-click at the start
  * of its Block lands on it (GPUI offers no hit test of a link run)

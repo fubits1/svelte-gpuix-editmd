@@ -73,7 +73,6 @@
 	title={edit ? 'Edit Link' : 'Add Link'}
 	message="Enter the URL for the selected text."
 	{buttons}
-	ondefault={() => onadd(url)}
 	oncancel={close}
 >
 	<input

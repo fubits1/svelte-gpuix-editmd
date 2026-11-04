@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-25
+Accepted, 2026-10-25. Amended by [ADR-0013](0013-gpuix-svelte-0.4.md): the `satteri-native` Bun plugin is replaced. The `.app` carries satteri's addon in its Resources, and `src/host/satteriAddon.ts` points satteri's loader at it
 
 ## Context
 
@@ -31,7 +31,7 @@ Use Sätteri `satteri@0.10.5` as the only markdown engine, behind a `MarkdownEng
 - Pre-1.0: breaking changes are expected on minor bumps
 - Known open issues: #326 (7 CommonMark edge cases such as `*_*a` and `- [ ]\r\n  b`) and #337 (CRLF spec tests)
 - Documented divergences: a task item's paragraph starts after the checkbox, table alignment is emitted as a style, unknown directives are dropped
-- A second napi addon ships in the binary. The Bun build needs the `satteri-native` plugin described below
+- A second napi addon ships in the binary. The Bun build needed the `satteri-native` plugin described below, until ADR-0013 replaced it
 - Bun support is not documented upstream. It works in this project (S2), which is the only verification
 
 ## Alternatives considered
@@ -63,7 +63,7 @@ S2 (2026-10-25), pass:
 
 - under gpuix-svelte on Node 26.6.0 and with `--bun` on Bun 1.4.4, Sätteri parses `sample.md` inside a `.svelte.ts` module: 19 blocks, first block `yaml` (frontmatter is on by default)
 - A plain `Bun.build({compile})` binary fails at runtime with `Cannot find module '@bruits/satteri-darwin-arm64' from '/$bunfs/root/spike-s2'`. The napi-rs loader uses `createRequire(import.meta.url)`, which Bun.build cannot trace
-- Fix: a `satteri-native` onLoad plugin (now in `build.ts`) replaces `nativeBinding = requireNative()` with a static import of the `.node` file named by `@bruits/satteri-${platform}-${arch}`'s `main`. The binary then runs from `/tmp/editmd-gpuix-s2` with no `node_modules` and prints `yaml,heading,list`
-- `build.ts` carries this plugin next to gpuix's `resolve_native_cjs`
+- Fix: a `satteri-native` onLoad plugin (in `build.ts` until ADR-0013) replaces `nativeBinding = requireNative()` with a static import of the `.node` file named by `@bruits/satteri-${platform}-${arch}`'s `main`. The binary then runs from `/tmp/editmd-gpuix-s2` with no `node_modules` and prints `yaml,heading,list`
+- `build.ts` carried this plugin next to gpuix's `resolve_native_cjs` until ADR-0013
 
 Registry facts (`pnpm view satteri`): 0.10.5, MIT, published 2026-08-19, napi prebuilds for darwin-arm64, darwin-x64, linux, win32 and wasm32-wasi. Repo bruits/satteri. The parser is a fork of pulldown-cmark, the same parser family as gpuix's `<markdown>` element (pulldown-cmark 0.12).

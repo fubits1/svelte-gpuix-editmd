@@ -9,7 +9,7 @@
 -->
 <script lang="ts">
 	import type { GpuixEvent } from 'gpuix-svelte'
-	import { emptyLinkThemeFor, inlineHtmlThemeFor, linkThemeFor } from '../../../app/palette.ts'
+	import { linkThemeFor, sourceThemeFor } from '../../../app/palette.ts'
 	import { useCommandHeld, useQuoteColour, useTheme } from '../../../app/theme.svelte.ts'
 	import type { Image } from '../../../engine/blocks.ts'
 	import { documentController } from '../controller.svelte.ts'
@@ -70,19 +70,18 @@
 	/**
 	 * the theme a text run from `start` to `end` paints in: a link's underline in the accent at 35%, the accent while ⌘
 	 * is held (`linkThemeFor`), a run holding a link with no text its source as editmd does, in the accent with
-	 * no fill (`emptyLinkThemeFor`), and one holding an inline HTML tag its source in the muted colour with no fill
-	 * (`inlineHtmlThemeFor`), as MarkdownBlock paints a Block's
+	 * no fill, and one holding an inline HTML tag its source in the muted colour with no fill (`sourceThemeFor`), as
+	 * MarkdownBlock paints a Block's
 	 */
 	function themeOf(start: number, end: number) {
 		const text = quoteColour(theme().textTheme)
 		const base = block.links ? linkThemeFor(text, commandHeld()) : text
 		const within = (span: { start: number; end: number }) => span.start >= start && span.end <= end
-		const holdsEmptyLink = block.emptyLinks?.some(within)
-		const holdsHtml = block.inlineHtml?.some(within)
-		if (!holdsEmptyLink && !holdsHtml) return base
-		const hasCode = documentController.text.slice(start, end).includes('`')
-		const html = holdsHtml ? inlineHtmlThemeFor(base, hasCode) : base
-		return holdsEmptyLink ? emptyLinkThemeFor(html, hasCode) : html
+		const spans = {
+			emptyLink: block.emptyLinks?.some(within),
+			html: block.inlineHtml?.some(within)
+		}
+		return sourceThemeFor(base, spans, documentController.text.slice(start, end).includes('`'))
 	}
 
 	/** what the paragraph paints, so a run measured too long for one line counts only until it changes */
@@ -120,7 +119,7 @@
 	class={['paragraph', inline ? 'inline' : 'stacked']}
 	onlayout={(event) => (columnWidth = event.width ?? null)}
 >
-	{#each parts as part, partIndex (part.start)}
+	{#each parts as part, partIndex (partIndex)}
 		{#if part.kind === 'image'}
 			<ImageView image={part.image} testIdSuffix={part.testIdSuffix} {columnWidth} {inline} />
 		{:else}

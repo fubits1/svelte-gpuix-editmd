@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
-	emptyLinkThemeFor,
 	headingThemeFor,
 	heldLinkThemeFor,
-	inlineHtmlThemeFor,
 	linkThemeFor,
 	listItemThemeFor,
 	mermaidPaletteFor,
@@ -11,6 +9,7 @@ import {
 	paletteFor,
 	plainFieldThemeFor,
 	sizeTokensFor,
+	sourceThemeFor,
 	tableThemeFor,
 	textThemeFor
 } from './palette.ts'
@@ -268,22 +267,6 @@ describe('tableThemeFor', () => {
 	})
 })
 
-describe('emptyLinkThemeFor', () => {
-	test('a Block with an empty link paints code in the accent with no wash, as editmd’s `a.empty-link::before`', () => {
-		const theme = textThemeFor('light')
-		expect(emptyLinkThemeFor(theme, false)).toEqual({
-			...theme,
-			codeWash: '#00000000',
-			codeText: EDITMD.light.accent
-		})
-	})
-
-	test('a Block with inline code of its own keeps the theme, so its code keeps editmd’s pill', () => {
-		const theme = textThemeFor('dark')
-		expect(emptyLinkThemeFor(theme, true)).toBe(theme)
-	})
-})
-
 // editmd paints its window chrome in AppKit's colours: Find's no-match count in systemRed (EditorWindowController.swift:301),
 // the save label in secondaryLabelColor and Not Saved in systemRed (:358); values read in Swift on this macOS, sRGB
 test('the chrome takes AppKit’s systemRed and secondaryLabelColor, light and dark', () => {
@@ -297,19 +280,26 @@ test('the chrome takes AppKit’s systemRed and secondaryLabelColor, light and d
 	])
 })
 
-describe('inlineHtmlThemeFor', () => {
-	test('a Block with inline HTML paints code muted with no wash, as editmd’s `span[data-type="html"]`', () => {
-		const theme = textThemeFor('light')
-		expect(inlineHtmlThemeFor(theme, false)).toEqual({
-			...theme,
-			codeWash: '#00000000',
-			codeText: EDITMD.light.muted
-		})
+describe('sourceThemeFor', () => {
+	const theme = textThemeFor('light')
+
+	test('an empty link paints its source in the accent with no wash, inline HTML in the muted colour, the link winning', () => {
+		expect([
+			sourceThemeFor(theme, { emptyLink: true }, false),
+			sourceThemeFor(theme, { html: true }, false),
+			sourceThemeFor(theme, { emptyLink: true, html: true }, false)
+		]).toEqual([
+			{ ...theme, codeWash: '#00000000', codeText: EDITMD.light.accent },
+			{ ...theme, codeWash: '#00000000', codeText: EDITMD.light.muted },
+			{ ...theme, codeWash: '#00000000', codeText: EDITMD.light.accent }
+		])
 	})
 
-	test('a Block with inline code of its own keeps the theme, so its code keeps editmd’s pill', () => {
-		const theme = textThemeFor('dark')
-		expect(inlineHtmlThemeFor(theme, true)).toBe(theme)
+	test('a run with inline code of its own, or with neither, keeps the theme', () => {
+		expect([
+			sourceThemeFor(theme, { emptyLink: true, html: true }, true),
+			sourceThemeFor(theme, {}, false)
+		]).toEqual([theme, theme])
 	})
 })
 

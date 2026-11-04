@@ -2,7 +2,7 @@
  * end to end: editmd's SelfTest `fileFormats` (Sources/editmd/SelfTest.swift@9e889e6, lines 226-282)
  * against the real app in a window, through `gpuix-svelte/automation`
  *
- * run: pnpm --dir . exec node e2e/fileFormats.e2e.ts (unsandboxed: it opens windows)
+ * run: pnpm exec node e2e/fileFormats.e2e.ts (unsandboxed: it opens windows)
  * every file and the app's support folder live in a temp folder (EDITMD_GPUIX_SUPPORT)
  */
 
