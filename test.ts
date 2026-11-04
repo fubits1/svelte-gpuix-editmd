@@ -221,6 +221,36 @@ check(
 )
 
 /**
+ * a list, a quote or a rule typed into an empty field takes its kind's look at once too: `keys` typed, then whether the
+ * open field sits in the box `box` and whether its left edge is where the closed Block's text `closed` starts once
+ * Escape closes it (the list's item indent, the quote's rail and padding, the rule's column)
+ */
+function boxAfterTyping(keys: string[], box: string, closed: string): [boolean, boolean] {
+	documentController.load('')
+	settle()
+	for (const key of keys) type(key)
+	settle()
+	const boxed = find_test_id(box) !== null
+	const open = bounds(find_test_id('block-editor') ?? 0).x
+	press('escape')
+	settle()
+	return [boxed, open === bounds(find_test_id(closed) ?? 0).x]
+}
+check(
+	'typing `- a`, `> a` or `---` into an empty field shows it at once at the list’s indent, inside the quote’s rail, or above the rule’s line, the field still open',
+	[
+		boxAfterTyping(['-', 'space', 'a'], 'block-editor-list', 'list-text-2'),
+		boxAfterTyping(['>', 'space', 'a'], 'block-editor-quote', 'markdown-0.0'),
+		boxAfterTyping(['-', '-', '-'], 'block-editor-hr', 'markdown-0')
+	],
+	[
+		[true, true],
+		[true, true],
+		[true, true]
+	]
+)
+
+/**
  * the look follows the text back: with `# ` deleted the field's text is a paragraph again, as editmd's heading turns
  * back into one, so the open field drops the heading's look, still open with its caret where the keys left it
  */

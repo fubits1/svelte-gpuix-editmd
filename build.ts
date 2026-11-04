@@ -1,4 +1,5 @@
-// `bun build.ts` (npm run build): compiles standalone.ts into one executable for the platform it runs on.
+// `bun build.ts` (pnpm build): compiles standalone.ts into one executable for the platform it runs on; on macOS
+// also dist/editmd-gpuix.app, the bundle to open.
 
 import type { BunPlugin } from 'bun'
 import { load_module, load_svelte, resolve_native_cjs, resolve_svelte } from 'gpuix-svelte/plugin'
@@ -76,12 +77,12 @@ if (!result.success || components === 0) {
 console.log(`built ${outfile}`)
 
 /**
- * `bun build.ts --app` (macOS): wraps the binary as dist/editmd-gpuix.app with Resources/Info.plist and signs it ad
- * hoc, as editmd's scripts/build.sh does. the plist leaves editmd's document types out on purpose: Finder hands a
- * `.app` its file through an Apple Event gpuix does not handle (gap G6), so declaring them would offer the app for
- * files it cannot open
+ * on macOS the binary is wrapped as dist/editmd-gpuix.app with Resources/Info.plist and signed ad hoc, as editmd's
+ * scripts/build.sh does: Finder opens a bare executable through Terminal, a bundle on its own. the plist leaves
+ * editmd's document types out on purpose: Finder hands a `.app` its file through an Apple Event gpuix does not
+ * handle (gap G6), so declaring them would offer the app for files it cannot open
  */
-if (process.argv.includes('--app') && process.platform === 'darwin') {
+if (process.platform === 'darwin') {
 	const bundle = 'dist/editmd-gpuix.app'
 	const executable = join(bundle, 'Contents', 'MacOS', 'editmd-gpuix')
 	rmSync(bundle, { recursive: true, force: true })

@@ -21,7 +21,8 @@
 		"lint:prettier": "prettier --check .",
 		"lint:eslint": "eslint .",
 		"lint:knip": "knip",
-		"lint:svelte": "svelte-check --diagnostic-sources js,svelte --fail-on-warnings"
+		"lint:svelte": "svelte-check --diagnostic-sources js,svelte --fail-on-warnings",
+		"dev": "gpuix-svelte app.ts"
 	},
 	"dependencies": {
 		"gpuix-svelte": "^0.3.0",

@@ -20,14 +20,13 @@ Node 26 (`nvm use`), pnpm.
 
 ```bash
 pnpm install
-pnpm start             # opens the window, hot-reloads .svelte files
+pnpm dev [file.md]     # opens the window, hot-reloads .svelte files on save (a .svelte.ts change needs a restart)
 pnpm test              # unit tests (Vitest), then the headless gpuix test
 pnpm run test:unit     # Vitest only
 pnpm run typecheck     # tsc, then svelte-check against GPUI's element types
 pnpm run lint          # prettier --check
 pnpm run format        # prettier --write
-pnpm run build         # one executable for this platform; needs Bun
-bun build.ts --app     # macOS: also dist/editmd-gpuix.app, signed ad hoc
+pnpm run build         # one executable for this platform, on macOS also dist/editmd-gpuix.app (open this one); needs Bun
 
 # end to end, editmd's SelfTest scenarios in real windows (each opens and closes windows)
 pnpm exec gpuix-svelte e2e/fileFormats.e2e.ts
