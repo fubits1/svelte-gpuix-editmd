@@ -113,4 +113,6 @@ every `svelte` import to it. Keep `svelte` itself out of `package.json`.
 - `test.ts` — the headless test (`gpuix-svelte/test`); a plain script that exits 1 on failure, and also when the
   count given to `finish()` is not how many `check()`s ran, so keep it in step.
 - `standalone.ts`, `build.ts` — the entry and the build script behind `pnpm build`.
+- `startup.ts` — what both entries run before the window opens: the command line's headless modes and agent hook,
+  and the Document the window shows.
 - `tsconfig.json`, `svelte.d.ts`, `svelte.config.js` — TypeScript and svelte-check setup.

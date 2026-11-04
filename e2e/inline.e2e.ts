@@ -12,24 +12,20 @@
  * the files, the app's support folder and the agents it counts live in a temp folder, so nothing reaches the real ones
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
 import {
 	check,
 	type Editor,
-	finish,
 	keystrokes,
 	keysOf,
 	openOn,
 	painted,
 	pause,
-	saveAfterEscape
+	saveAfterEscape,
+	suite
 } from './support.ts'
 
-// a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
-const folder = mkdtempSync('/tmp/eg-inline-')
-
 /** one step of a sequence: a key, or a Format menu row clicked through the in-window menu bar */
-type Step = string | { menu: 'Format'; row: number; title: string }
+type Step = string | { row: number; title: string }
 
 /**
  * the saved Block text, or, where the harness measured no such case, a looser rule: the text with every `mark` taken
@@ -56,7 +52,7 @@ type Case = {
 /** the caret after `one two` in `one two three`, then `two` selected word-wise, as a person selects it */
 const SELECT_TWO = 'cmd-left right right right right right right right shift-alt-left'
 const ONE_TWO_THREE = keysOf('one two three')
-const FORMAT_BOLD: Step = { menu: 'Format', row: 0, title: 'Bold' }
+const FORMAT_BOLD: Step = { row: 0, title: 'Bold' }
 
 const CASES: Case[] = [
 	{
@@ -175,7 +171,7 @@ const AFTER = '\n\nSecond\n'
  * one call per key, two frames apart as automation waits, and a pause for a remounted field's caret; a command key
  * (⌘, ⇧⌘) waits longer, as a person who presses a shortcut does, so its probe settles before the next key
  */
-async function typeEach(app: Editor, keys: string[], shown: string[]): Promise<void> {
+async function typeShowing(app: Editor, keys: string[], shown: string[]): Promise<void> {
 	for (const key of keys) {
 		await keystrokes(app, key)
 		await pause(key.startsWith('cmd-') ? 300 : 60)
@@ -183,7 +179,7 @@ async function typeEach(app: Editor, keys: string[], shown: string[]): Promise<v
 	}
 }
 
-/** the in-window menu bar's `step.menu`, then its row `step.row` */
+/** the in-window menu bar's Format menu, then its row `step.row` */
 async function chooseMenu(app: Editor, step: Exclude<Step, string>): Promise<void> {
 	await app.getByTestId('menu-title-2').click()
 	const row = app.getByTestId(`menu-row-${step.row}`)
@@ -205,7 +201,7 @@ async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<str
 			await keystrokes(app, keys.join(' '))
 			await pause(300)
 			shown.push(`${keys.join(' ')}: ${JSON.stringify(await painted(app))}`)
-		} else await typeEach(app, keys, shown)
+		} else await typeShowing(app, keys, shown)
 		keys.length = 0
 	}
 	for (const step of steps) {
@@ -213,7 +209,7 @@ async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<str
 		else {
 			await flush()
 			await chooseMenu(app, step)
-			shown.push(`${step.menu} > ${step.title}: ${JSON.stringify(await painted(app))}`)
+			shown.push(`Format > ${step.title}: ${JSON.stringify(await painted(app))}`)
 		}
 	}
 	await flush()
@@ -233,7 +229,7 @@ function paintsPlain(shown: string, text: string): boolean {
 	return shown.replaceAll('\n', '').includes(text) && !/[*`~]/.test(shown)
 }
 
-try {
+await suite('inline', 'inline', async (folder) => {
 	for (const [index, each] of CASES.entries()) {
 		for (const existing of each.closed ? [true] : [true, false]) {
 			for (const batch of [false, true]) {
@@ -250,7 +246,7 @@ try {
 					each.closed ? null : 0
 				)
 				try {
-					if (!existing) await typeEach(app, each.setup, [])
+					if (!existing) await typeShowing(app, each.setup, [])
 					if (each.caret !== '') await keystrokes(app, each.caret)
 					await pause(200)
 					// what the window paints with the caret placed, before the sequence: a stray character shows here first
@@ -269,10 +265,4 @@ try {
 			}
 		}
 	}
-} catch (error) {
-	check(`no error: ${error instanceof Error ? error.message : String(error)}`, false)
-} finally {
-	rmSync(folder, { recursive: true, force: true })
-}
-
-finish('inline')
+})

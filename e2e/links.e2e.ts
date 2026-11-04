@@ -8,38 +8,28 @@
  * of its Block lands on it (GPUI offers no hit test of a link run)
  */
 
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { check, finish, openEditor, until } from './support.ts'
+import { check, has, openEditor, suite, until } from './support.ts'
 
-// a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
-const folder = mkdtempSync('/tmp/eg-links-')
-const root = realpathSync(folder)
-const file = join(folder, 'links.md')
-const log = join(folder, 'runs.jsonl')
+await suite('links', 'links', async (folder) => {
+	const root = realpathSync(folder)
+	const file = join(folder, 'links.md')
+	const log = join(folder, 'runs.jsonl')
 
-/** what the app would have started, symlinks in paths resolved for comparison, as editmd's `decision` */
-function runs(): string[] {
-	if (!existsSync(log)) return []
-	return readFileSync(log, 'utf8')
-		.trim()
-		.split('\n')
-		.map((line) => {
-			const [command, args] = JSON.parse(line) as [string, (string | null)[]]
-			const resolved = args.map((arg) => (arg?.startsWith('/') ? arg.replace(folder, root) : arg))
-			return `${command} ${resolved.join(' ')}`
-		})
-}
+	/** what the app would have started, symlinks in paths resolved for comparison, as editmd's `decision` */
+	function runs(): string[] {
+		if (!existsSync(log)) return []
+		return readFileSync(log, 'utf8')
+			.trim()
+			.split('\n')
+			.map((line) => {
+				const [command, args] = JSON.parse(line) as [string, (string | null)[]]
+				const resolved = args.map((arg) => (arg?.startsWith('/') ? arg.replace(folder, root) : arg))
+				return `${command} ${resolved.join(' ')}`
+			})
+	}
 
-try {
 	mkdirSync(join(folder, 'tools', 'Tool.app', 'Contents', 'MacOS'), { recursive: true })
 	writeFileSync(join(folder, 'other notes.md'), '# Other\n')
 	writeFileSync(
@@ -48,15 +38,13 @@ try {
 	)
 	const app = await openEditor(file, folder, { EDITMD_GPUIX_DRY_RUN: log })
 
-	const cmdClickLink = async (block: number) => {
+	/** a click at the start of Block `block`, where its link is, `modifiers` held */
+	const clickStart = async (block: number, modifiers?: string) => {
 		const bounds = await app.getByTestId(`block-${block}`).bounds()
-		await app.mouse.click(
-			{ x: bounds.x + 4, y: bounds.y + bounds.height / 2 },
-			{ modifiers: 'cmd' }
-		)
+		await app.mouse.click({ x: bounds.x + 4, y: bounds.y + bounds.height / 2 }, { modifiers })
 	}
 
-	for (const block of [1, 2, 3, 4]) await cmdClickLink(block)
+	for (const block of [1, 2, 3, 4]) await clickStart(block, 'cmd')
 	await until('four links followed', () => runs().length === 4)
 	check(
 		`Cmd-clicked links reveal apps and other files, open text files here and web pages outside (${runs().join(' | ')})`,
@@ -68,26 +56,19 @@ try {
 				'open https://example.com/'
 			])
 	)
-	check('following a link opens no editor', (await app.getByTestId('block-editor').count()) === 0)
+	check('following a link opens no editor', !(await has(app, 'block-editor')))
 
-	await cmdClickLink(5)
+	await clickStart(5, 'cmd')
 	await app.getByTestId('confirm-link').waitFor()
 	check('a link of another scheme asks first and starts nothing', runs().length === 4)
 	await app.getByTestId('confirm-link-cancel').click()
 
 	// a plain click edits, as in editmd, where only a Cmd-click follows a link
-	const bounds = await app.getByTestId('block-4').bounds()
-	await app.mouse.click({ x: bounds.x + 4, y: bounds.y + bounds.height / 2 })
+	await clickStart(4)
 	await app.getByTestId('block-editor').waitFor()
 	check(
 		'a plain click on a link opens its Block for editing and starts nothing',
 		runs().length === 4
 	)
 	await app.close()
-} catch (error) {
-	check(`no error: ${error instanceof Error ? error.message : String(error)}`, false)
-} finally {
-	rmSync(folder, { recursive: true, force: true })
-}
-
-finish('links')
+})

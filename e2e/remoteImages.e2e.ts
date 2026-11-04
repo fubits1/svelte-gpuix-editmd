@@ -4,23 +4,24 @@
  *
  * run: pnpm exec gpuix-svelte e2e/remoteImages.e2e.ts (unsandboxed: it opens a window)
  * editmd's paragraph mixes a remote and a local image with text; here each image has its own
- * paragraph (images inside text are not split out yet, docs/parity.md), and the mermaid image
- * shape is left out: pele draws no remote images
+ * paragraph, and the mermaid image shape is left out: pele draws no remote images
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import {
 	check,
 	editBlock,
-	finish,
+	type Editor,
+	has,
 	openEditor,
 	painted,
 	pause,
 	press,
 	reaches,
+	suite,
 	textOf,
 	until
 } from './support.ts'
@@ -40,14 +41,22 @@ const server = createServer((request, response) => {
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 
-// a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
-const folder = mkdtempSync('/tmp/eg-remote-')
-const file = join(folder, 'remote.md')
+/** ⇧⌘/ opens the command palette, `load remote` filters it, and Return runs the selected entry */
+async function loadRemoteImages(app: Editor): Promise<void> {
+	await press(app, 'cmd-shift-/')
+	const field = app.getByTestId('command-palette-field')
+	await field.waitFor()
+	await field.fill('load remote')
+	await field.press('enter')
+}
 
-try {
+// the server ends with the process, which the suite's summary exits
+await suite('remote images', 'remote', async (folder) => {
+	const file = join(folder, 'remote.md')
+	const dryRun = { EDITMD_GPUIX_DRY_RUN: join(folder, 'runs.jsonl') }
 	writeFileSync(join(folder, 'local.png'), PIXEL)
 	writeFileSync(file, `# Remote\n\n![pixel](${base}/image.png)\n\n![local](local.png)\n`)
-	const app = await openEditor(file, folder, { EDITMD_GPUIX_DRY_RUN: join(folder, 'runs.jsonl') })
+	const app = await openEditor(file, folder, dryRun)
 
 	await app.getByTestId('image-2-0').waitFor()
 	await pause(1000)
@@ -55,19 +64,11 @@ try {
 	check('a blocked image shows its alt text', (await textOf(app, 'image-blocked-1-0')) === 'pixel')
 
 	await editBlock(app, 0, '# Kept Remote')
-	await press(app, 'cmd-shift-/')
-	const field = app.getByTestId('command-palette-field')
-	await field.waitFor()
-	await field.fill('load remote')
-	await field.press('enter')
-	await until('remote image fetched', () => requests.includes('/image.png'))
-	check('Load Remote Images fetches them', requests.includes('/image.png'))
+	await loadRemoteImages(app)
+	check('Load Remote Images fetches them', await reaches(() => requests.includes('/image.png')))
 	await app.getByTestId('image-1-0').waitFor()
 
-	await press(app, 'cmd-shift-/')
-	await app.getByTestId('command-palette-field').waitFor()
-	await app.getByTestId('command-palette-field').fill('load remote')
-	await app.getByTestId('command-palette-field').press('enter')
+	await loadRemoteImages(app)
 	await pause(300)
 	// enabled, Return ran it and closed the palette above; disabled, nothing is selected and it stays
 	check(
@@ -79,23 +80,14 @@ try {
 
 	check('loading them keeps unsaved edits', (await painted(app)).startsWith('Kept Remote'))
 	await press(app, 'cmd-z')
-	await until('undo shown', async () => (await painted(app)).startsWith('Remote'))
-	check('and undo history', (await painted(app)).startsWith('Remote'))
+	check('and undo history', await reaches(async () => (await painted(app)).startsWith('Remote')))
 	await app.close()
 
-	/**
-	 * a remote image that fails once allowed (a 404) paints its alt text, as a missing local file
-	 * does, where GPUI's own "img: load failed" box pushed the text aside
-	 */
+	// a remote image that fails once allowed (a 404) paints its alt text, as a missing local file does
 	const missingFile = join(folder, 'missing.md')
 	writeFileSync(missingFile, `![gone picture](${base}/missing.png) after it.\n`)
-	const missing = await openEditor(missingFile, folder, {
-		EDITMD_GPUIX_DRY_RUN: join(folder, 'runs.jsonl')
-	})
-	await press(missing, 'cmd-shift-/')
-	await missing.getByTestId('command-palette-field').waitFor()
-	await missing.getByTestId('command-palette-field').fill('load remote')
-	await missing.getByTestId('command-palette-field').press('enter')
+	const missing = await openEditor(missingFile, folder, dryRun)
+	await loadRemoteImages(missing)
 	await until('the missing image asked for', () => requests.includes('/missing.png'))
 	const altShown = await reaches(
 		async () => (await textOf(missing, 'image-missing-0-0')) === 'gone picture',
@@ -103,14 +95,7 @@ try {
 	)
 	check(
 		'a remote image that answers 404 paints its alt text, not GPUI’s load-failed box',
-		altShown && (await missing.getByTestId('image-0-0').count()) === 0
+		altShown && !(await has(missing, 'image-0-0'))
 	)
 	await missing.close()
-} catch (error) {
-	check(`no error: ${error instanceof Error ? error.message : String(error)}`, false)
-} finally {
-	server.close()
-	rmSync(folder, { recursive: true, force: true })
-}
-
-finish('remote images')
+})

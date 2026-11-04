@@ -8,55 +8,34 @@
  * run: pnpm exec gpuix-svelte e2e/tab.e2e.ts (unsandboxed: it opens a window)
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import {
+	changed,
 	check,
 	type Editor,
-	finish,
-	openEditor,
+	has,
+	keystrokes,
 	openOn,
 	pause,
 	press,
-	reaches,
-	saveAfterEscape
+	saveAfterEscape,
+	suite,
+	typeEach
 } from './support.ts'
-
-// a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
-const folder = mkdtempSync('/tmp/eg-tab-')
-
-/** space-separated keystrokes, sent to the focused element the way a user types them */
-const typeKeys = (app: Editor, keys: string) => app.call('keystrokes', { keys })
-
-const isFieldOpen = async (app: Editor) => (await app.getByTestId('block-editor').count()) > 0
-
-/** a click on Block 0 opens its field with the caret at the end of its source */
-async function openBlock(app: Editor): Promise<void> {
-	await app.getByTestId('block-0').click()
-	await app.getByTestId('block-editor').waitFor()
-}
-
-async function launchOn(name: string, text: string): Promise<{ app: Editor; file: string }> {
-	const file = join(folder, `${name}.md`)
-	writeFileSync(file, text)
-	return { app: await openEditor(file, folder), file }
-}
 
 /** Escape closes the field; the file once its save differs from `before`, or as it stands after 4s */
 async function saveOnEscape(app: Editor, file: string, before: string): Promise<string> {
-	await typeKeys(app, 'escape')
-	await reaches(() => readFileSync(file, 'utf8') !== before, 4000)
-	return readFileSync(file, 'utf8')
+	await keystrokes(app, 'escape')
+	return changed(file, before)
 }
 
-try {
+// every case but Source mode's opens Block 0's field with a click, which puts the caret at the end of its source
+await suite('tab', 'tab', async (folder) => {
 	{
-		const { app, file } = await launchOn('para', 'para\n')
-		await openBlock(app)
-		await typeKeys(app, 'tab')
+		const { app, file } = await openOn(folder, 'para', 'para\n', 0)
+		await keystrokes(app, 'tab')
 		await pause(200)
-		const open = await isFieldOpen(app)
-		await typeKeys(app, 'z')
+		const open = await has(app, 'block-editor')
+		await keystrokes(app, 'z')
 		const text = await saveOnEscape(app, file, 'para\n')
 		check(
 			`Tab in a paragraph types 2 spaces at the caret, as editmd's plugin-indent does where no list item takes Tab, and the field stays open (indent src/index.ts:52, 63-71; list-item.ts:212-218) (open ${open}, file ${JSON.stringify(text)})`,
@@ -66,10 +45,9 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('fast', 'para\n')
-		await openBlock(app)
-		// One keystrokes call delivers its keys as one batch, ahead of the spaces Tab sends; separate calls arrive as a person's typing does.
-		for (const key of ['tab', 'tab', 'z']) await typeKeys(app, key)
+		const { app, file } = await openOn(folder, 'fast', 'para\n', 0)
+		// one keystrokes call delivers its keys as one batch, ahead of the spaces Tab sends; separate calls arrive as a person's typing does
+		await typeEach(app, ['tab', 'tab', 'z'], 0)
 		const text = await saveOnEscape(app, file, 'para\n')
 		check(
 			`Tab, Tab and z as separate key events right after each other, as a person types them, each land: two indents of 2 spaces, then z (indent src/index.ts:63-71) (file ${JSON.stringify(text)})`,
@@ -79,16 +57,16 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('list', '- a\n- b\n')
-		await openBlock(app)
-		await typeKeys(app, 'tab')
+		const { app, file } = await openOn(folder, 'list', '- a\n- b\n', 0)
+		await keystrokes(app, 'tab')
 		const sunk = await saveOnEscape(app, file, '- a\n- b\n')
 		check(
 			`Tab in the second list item sinks it under the first (list-item.ts:212-218) (file ${JSON.stringify(sunk)})`,
 			sunk === '- a\n  - b\n'
 		)
-		await openBlock(app)
-		await typeKeys(app, 'shift-tab')
+		await app.getByTestId('block-0').click()
+		await app.getByTestId('block-editor').waitFor()
+		await keystrokes(app, 'shift-tab')
 		const lifted = await saveOnEscape(app, file, sunk)
 		check(
 			`Shift-Tab in the sunk item lifts it back beside the first (list-item.ts:219-225) (file ${JSON.stringify(lifted)})`,
@@ -98,9 +76,8 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('list-fast', '- a\n- b\n')
-		await openBlock(app)
-		for (const key of ['tab', 'z']) await typeKeys(app, key)
+		const { app, file } = await openOn(folder, 'list-fast', '- a\n- b\n', 0)
+		await typeEach(app, ['tab', 'z'], 0)
 		const text = await saveOnEscape(app, file, '- a\n- b\n')
 		check(
 			`Tab and z as separate key events right after each other in the second list item each land: Tab sinks it under the first and z follows b (list-item.ts:212-218) (file ${JSON.stringify(text)})`,
@@ -110,9 +87,8 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('list-batch', '- a\n- b\n')
-		await openBlock(app)
-		await typeKeys(app, 'tab z')
+		const { app, file } = await openOn(folder, 'list-batch', '- a\n- b\n', 0)
+		await keystrokes(app, 'tab z')
 		const text = await saveOnEscape(app, file, '- a\n- b\n')
 		check(
 			`Tab and z in one keystrokes call in the second list item each land: Tab sinks it under the first and z follows b (list-item.ts:212-218) (file ${JSON.stringify(text)})`,
@@ -123,7 +99,7 @@ try {
 
 	{
 		const { app, file } = await openOn(folder, 'list-click', '- a\n- b\n\nnext\n', 0)
-		await typeKeys(app, 'tab z')
+		await keystrokes(app, 'tab z')
 		await app.getByTestId('block-1').click()
 		const [text, open] = await saveAfterEscape(app, file, '- a\n- b\n\nnext\n')
 		check(
@@ -134,9 +110,8 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('indent-fast', '- a\n- b\n')
-		await openBlock(app)
-		for (const key of ['cmd-]', 'z']) await typeKeys(app, key)
+		const { app, file } = await openOn(folder, 'indent-fast', '- a\n- b\n', 0)
+		await typeEach(app, ['cmd-]', 'z'], 0)
 		const text = await saveOnEscape(app, file, '- a\n- b\n')
 		check(
 			`⌘] (Indent, editmd's sinkListItem) and z as separate key events right after each other in the second list item each land: the item sinks under the first and z follows b (list-item.ts:212-218) (file ${JSON.stringify(text)})`,
@@ -147,8 +122,8 @@ try {
 
 	{
 		const { app, file } = await openOn(folder, 'indent-selection', '- a\n- b\n- c\n', 0)
-		await typeKeys(app, 'shift-up')
-		await typeKeys(app, 'cmd-]')
+		await keystrokes(app, 'shift-up')
+		await keystrokes(app, 'cmd-]')
 		const [text, open] = await saveAfterEscape(app, file, '- a\n- b\n- c\n')
 		check(
 			`⌘] (Indent, editmd's sinkListItem) over a selection from after b to after c sinks both items under the first, and Escape leaves no field open (list-item.ts:212-218) (open ${open}, file ${JSON.stringify(text)})`,
@@ -158,10 +133,9 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('single', '- a\n')
-		await openBlock(app)
-		await typeKeys(app, 'tab')
-		await typeKeys(app, 'z')
+		const { app, file } = await openOn(folder, 'single', '- a\n', 0)
+		await keystrokes(app, 'tab')
+		await keystrokes(app, 'z')
 		const text = await saveOnEscape(app, file, '- a\n')
 		check(
 			`Tab in the only list item, where sinking is refused, inserts plugin-indent's 2 spaces at the caret (list-item.ts:212-218; indent src/index.ts:52, 63-71) (file ${JSON.stringify(text)})`,
@@ -171,12 +145,11 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('lift', 'para\n')
-		await openBlock(app)
-		await typeKeys(app, 'shift-tab')
+		const { app, file } = await openOn(folder, 'lift', 'para\n', 0)
+		await keystrokes(app, 'shift-tab')
 		await pause(200)
-		const open = await isFieldOpen(app)
-		await typeKeys(app, 'z')
+		const open = await has(app, 'block-editor')
+		await keystrokes(app, 'z')
 		const text = await saveOnEscape(app, file, 'para\n')
 		check(
 			`Shift-Tab in a paragraph changes nothing, as no list item lifts and plugin-indent binds Tab alone, and the field stays open (list-item.ts:219-225; indent src/index.ts:62-75) (open ${open}, file ${JSON.stringify(text)})`,
@@ -186,10 +159,9 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('selection', 'para\n')
-		await openBlock(app)
-		await typeKeys(app, 'shift-left shift-left')
-		await typeKeys(app, 'tab')
+		const { app, file } = await openOn(folder, 'selection', 'para\n', 0)
+		await keystrokes(app, 'shift-left shift-left')
+		await keystrokes(app, 'tab')
 		const text = await saveOnEscape(app, file, 'para\n')
 		check(
 			`Tab over a selection replaces it with 2 spaces, as in VS Code (user decision); editmd's plugin-indent would keep it (file ${JSON.stringify(text)})`,
@@ -199,24 +171,17 @@ try {
 	}
 
 	{
-		const { app, file } = await launchOn('source', 'para\n')
+		const { app, file } = await openOn(folder, 'source', 'para\n', null)
 		await press(app, 'cmd-/')
 		await app.getByTestId('source-editor').waitFor()
-		await typeKeys(app, 'tab')
-		await typeKeys(app, 'z')
+		await keystrokes(app, 'tab')
+		await keystrokes(app, 'z')
 		// Source mode keeps Escape in its field, so the 1s autosave writes the file
-		await reaches(() => readFileSync(file, 'utf8') !== 'para\n', 4000)
-		const text = readFileSync(file, 'utf8')
+		const text = await changed(file, 'para\n')
 		check(
 			`Tab in Source mode puts no tab character and no 2 spaces into the file: editmd's source view is a plain textarea with no Tab handler of its own (editor.ts:159-163) (file ${JSON.stringify(text)})`,
 			!text.includes('\t') && !text.includes('  ')
 		)
 		await app.close().catch(() => {})
 	}
-} catch (error) {
-	check(`no error: ${error instanceof Error ? error.message : String(error)}`, false)
-} finally {
-	rmSync(folder, { recursive: true, force: true })
-}
-
-finish('tab')
+})

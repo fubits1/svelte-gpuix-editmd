@@ -5,7 +5,7 @@
  */
 
 import { type ChildProcess, spawnSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { type App, launch } from 'gpuix-svelte/automation'
 
@@ -28,6 +28,24 @@ export function finish(name: string): never {
 	const failed = results.filter(([, passed]) => !passed).length
 	console.log(failed === 0 ? `\n${name} ok (${results.length})` : `\n${failed} failure(s)`)
 	process.exit(failed === 0 ? 0 : 1)
+}
+
+/** `body` in a short temp folder: an error is one failed check, the folder goes, then the summary */
+export async function suite(
+	name: string,
+	prefix: string,
+	body: (folder: string) => Promise<void>
+): Promise<never> {
+	// a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
+	const folder = mkdtempSync(`/tmp/eg-${prefix}-`)
+	try {
+		await body(folder)
+	} catch (error) {
+		check(`no error: ${error instanceof Error ? error.message : String(error)}`, false)
+	} finally {
+		rmSync(folder, { recursive: true, force: true })
+	}
+	return finish(name)
 }
 
 export const pause = (milliseconds: number) =>
@@ -54,7 +72,7 @@ export async function until(
 	if (!(await reaches(condition, timeoutMs))) throw new Error(`timed out waiting for ${label}`)
 }
 
-export type Editor = App & { close(): Promise<void>; process: ChildProcess }
+export type Editor = App & { process: ChildProcess }
 
 /**
  * the running coding agents a launched app sees: only those working in `folder` or below it
@@ -95,6 +113,8 @@ export async function editBlock(app: App, index: number, source: string): Promis
 
 export const press = (app: App, keys: string) => app.getByTestId('block-0').press(keys)
 
+export const has = async (app: App, testId: string) => (await app.getByTestId(testId).count()) > 0
+
 /**
  * a window on `text` in `folder`/`name`.md: an existing file's Block `block` clicked open, none with null, or an empty
  * file's own field
@@ -122,11 +142,11 @@ export const keystrokes = (app: App, keys: string) => app.call('keystrokes', { k
 export const keysOf = (text: string) =>
 	[...text].map((character) => (character === ' ' ? 'space' : character))
 
-/** one call per key, two frames apart as automation waits, and a pause for a remounted field's caret */
-export async function typeEach(app: App, keys: string[]): Promise<void> {
+/** one call per key, two frames apart as automation waits, then `gapMs`: by default a pause for a remounted field's caret */
+export async function typeEach(app: App, keys: string[], gapMs = 60): Promise<void> {
 	for (const key of keys) {
 		await keystrokes(app, key)
-		await pause(60)
+		await pause(gapMs)
 	}
 }
 
@@ -141,7 +161,13 @@ export async function pressBackspace(app: App, held?: string): Promise<void> {
 	await pause(150)
 }
 
-/** Escape and ⌘S: the file once it differs from `before`, or as it stands after 4s, and whether a field is still open */
+/** the file once it differs from `before`, or as it stands after 4s */
+export async function changed(file: string, before: string): Promise<string> {
+	await reaches(() => readFileSync(file, 'utf8') !== before, 4000)
+	return readFileSync(file, 'utf8')
+}
+
+/** Escape and ⌘S: the file once it differs from `before`, and whether a field is still open 200ms after Escape */
 export async function saveAfterEscape(
 	app: App,
 	file: string,
@@ -149,11 +175,9 @@ export async function saveAfterEscape(
 ): Promise<[string, boolean]> {
 	await pause(300)
 	await keystrokes(app, 'escape')
-	await pause(200)
-	const open = (await app.getByTestId('block-editor').count()) > 0
+	const open = !(await reaches(async () => !(await has(app, 'block-editor')), 200))
 	await press(app, 'cmd-s')
-	await reaches(() => readFileSync(file, 'utf8') !== before, 4000)
-	return [readFileSync(file, 'utf8'), open]
+	return [await changed(file, before), open]
 }
 
 /** the in-window menu bar's titles, which paint before the document */
@@ -171,13 +195,12 @@ export async function painted(app: App): Promise<string> {
 
 /** the text of a test id's own <text> nodes, or '' when it is not there */
 export async function textOf(app: App, testId: string): Promise<string> {
-	const locator = app.getByTestId(testId)
-	if ((await locator.count()) === 0) return ''
+	if (!(await has(app, testId))) return ''
 	try {
-		return await locator.textContent()
+		return await app.getByTestId(testId).textContent()
 	} catch (error) {
 		// the element went away between the two calls, as the Saved label does after 2s
-		if ((await locator.count()) === 0) return ''
+		if (!(await has(app, testId))) return ''
 		throw error
 	}
 }

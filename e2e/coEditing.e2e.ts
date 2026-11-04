@@ -5,34 +5,36 @@
  * run: pnpm exec gpuix-svelte e2e/coEditing.e2e.ts (unsandboxed: it opens a window)
  */
 
-import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
 	check,
 	editBlock,
-	finish,
+	has,
+	keystrokes,
 	openEditor,
+	openOn,
 	painted,
 	pause,
 	press,
 	reaches,
 	reportEdit,
+	suite,
 	textOf,
+	typeEach,
 	until
 } from './support.ts'
 
-// a short root: the agent socket inside it must fit macOS's 104-byte socket path limit
-const folder = mkdtempSync('/tmp/eg-coedit-')
-const file = join(folder, 'coedit.md')
-const onDisk = () => readFileSync(file, 'utf8')
+await suite('co-editing', 'coedit', async (folder) => {
+	const file = join(folder, 'coedit.md')
+	const onDisk = () => readFileSync(file, 'utf8')
 
-/** most editors and tools save this way: a new file renamed over the old one */
-function writeAtomically(text: string): void {
-	writeFileSync(`${file}.tmp`, text)
-	renameSync(`${file}.tmp`, file)
-}
+	/** most editors and tools save this way: a new file renamed over the old one */
+	function writeAtomically(text: string): void {
+		writeFileSync(`${file}.tmp`, text)
+		renameSync(`${file}.tmp`, file)
+	}
 
-try {
 	writeFileSync(file, '# Title\n\nFirst paragraph.\n\nSecond paragraph.\n')
 	const app = await openEditor(file, folder)
 	const shown = () => painted(app)
@@ -65,12 +67,11 @@ try {
 		tool_input: { file_path: 'coedit.md' }
 	}
 	const hookOutput = reportEdit(hook, folder, 'Selftest agent')
-	// row a-report-edit: an agent shows its user whatever its hook prints, and editmd's prints nothing
+	// an agent shows its user whatever its hook prints, and editmd's prints nothing
 	check(
 		`--report-edit prints nothing on stdout or stderr, Node's ExperimentalWarning class off since the shipped binary runs on Bun (stdout ${JSON.stringify(hookOutput.stdout)}, stderr ${JSON.stringify(hookOutput.stderr)})`,
 		hookOutput.stdout === '' && hookOutput.stderr === ''
 	)
-	await pause(300)
 	writeAtomically(
 		'# Title\n\nFirst paragraph.\n\nSecond paragraph, by an agent.\n\nThird, reported.\n'
 	)
@@ -135,7 +136,7 @@ try {
 
 	// a save that fails says so, and the next edit tries again
 	chmodSync(folder, 0o555)
-	let failureShown = false
+	let failureShown: boolean
 	try {
 		await editBlock(app, 0, '# Unsaved My Title')
 		failureShown = await reaches(async () => (await textOf(app, 'save-status')) === 'Not Saved')
@@ -176,9 +177,7 @@ try {
 	 * Close Window and Quit all end in the process exiting, as automation's `close()` ends it (stdin closed, then
 	 * `process.exit(0)`); the exit comes well inside the 1s the autosave waits after the last key
 	 */
-	const exitFile = join(folder, 'exit.md')
-	writeFileSync(exitFile, '# Exit\n')
-	const exiting = await openEditor(exitFile, folder)
+	const { app: exiting, file: exitFile } = await openOn(folder, 'exit', '# Exit\n', null)
 	await editBlock(exiting, 0, '# Exit, edited')
 	// still unsaved: the autosave would come a second after the last key
 	const beforeClose = readFileSync(exitFile, 'utf8')
@@ -201,29 +200,21 @@ try {
 	 * Block. editmd shows the outside change in the field at once, merged with the typing, and a format right after it
 	 * shows at once too
 	 */
-	const liveFile = join(folder, 'live.md')
-	writeFileSync(liveFile, '# Live\n\none two three\n')
-	const live = await openEditor(liveFile, folder)
-	await live.getByTestId('block-1').click()
-	await live.getByTestId('block-editor').waitFor()
-	await live.call('keystrokes', { keys: 'cmd-down z' })
-	await pause(200)
+	const { app: live, file: liveFile } = await openOn(folder, 'live', '# Live\n\none two three\n', 1)
+	await keystrokes(live, 'cmd-down z')
+	await until('z typed', async () => (await painted(live)).includes('threez'))
 	writeFileSync(liveFile, '# Live\n\none two three\nagent\n')
 	const fieldShowsBoth = await reaches(async () => {
 		const text = await painted(live)
 		return (
-			(await live.getByTestId('block-editor').count()) > 0 &&
-			text.includes('one two threez') &&
-			text.includes('agent')
+			(await has(live, 'block-editor')) && text.includes('one two threez') && text.includes('agent')
 		)
 	}, 2000)
 	check(
 		'an outside write to the open Block shows in its field within 2s, merged with the typing',
 		fieldShowsBoth
 	)
-	await live.call('keystrokes', {
-		keys: 'cmd-up right right right right shift-right shift-right shift-right cmd-b'
-	})
+	await keystrokes(live, 'cmd-up right right right right shift-right shift-right shift-right cmd-b')
 	const boldShows = await reaches(
 		async () => (await painted(live)).includes('one **two** threez'),
 		2000
@@ -243,19 +234,10 @@ try {
 	 * every 200ms, each time on top of what it finds on disk. every typed character must land once and in order, and
 	 * every one of the program's changes too
 	 */
-	const busyFile = join(folder, 'busy.md')
-	writeFileSync(busyFile, '# Busy\n\nStart.\n')
-	const busy = await openEditor(busyFile, folder)
-	await busy.getByTestId('block-1').click()
-	await busy.getByTestId('block-editor').waitFor()
-	await busy.call('keystrokes', { keys: 'cmd-down' })
+	const { app: busy, file: busyFile } = await openOn(folder, 'busy', '# Busy\n\nStart.\n', 1)
+	await keystrokes(busy, 'cmd-down')
 	const typed = 'abcdefghijklmnopqrstuvwxy'
-	const typing = (async () => {
-		for (const key of typed) {
-			await busy.call('keystrokes', { keys: key })
-			await pause(45)
-		}
-	})()
+	const typing = typeEach(busy, [...typed], 45)
 	const writing = (async () => {
 		for (let round = 1; round <= 5; round++) {
 			await pause(200)
@@ -264,7 +246,11 @@ try {
 		}
 	})()
 	await Promise.all([typing, writing])
-	await pause(500)
+	// the field paints the last key and the last write before Escape; a lost key leaves the check to say so
+	await reaches(async () => {
+		const text = await painted(busy)
+		return text.includes(typed) && text.includes('A5')
+	}, 2000)
 	await busy.getByTestId('block-editor').press('escape')
 	const busyLanded = await reaches(() => {
 		const text = readFileSync(busyFile, 'utf8')
@@ -281,11 +267,4 @@ try {
 			[1, 2, 3, 4, 5].every((round) => busyText.split(`A${round} `).length === 2)
 	)
 	await busy.close().catch(() => {})
-} catch (error) {
-	check(`no error: ${error instanceof Error ? error.message : String(error)}`, false)
-} finally {
-	chmodSync(folder, 0o755)
-	rmSync(folder, { recursive: true, force: true })
-}
-
-finish('co-editing')
+})
