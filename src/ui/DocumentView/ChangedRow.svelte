@@ -2,28 +2,39 @@
   @component
   The content of one row of a list or a quote (a list item's text, a quote's child), painting the Document from `start`
   to `end`, in its Agent's tint and bar when an Agent made that child new or another node (a ticked task): editmd marks
-  such a child as a block (changes.ts:38-40, 49-50), with the tint and bar a Block marked whole takes (style.css:474-479).
+  such a child as a block (changes.ts:38-40, 49-50), with the tint and bar a Block marked whole takes (style.css:474-479),
+  titled with its highlight's tooltip line over that row alone.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte'
+	import PointerTip from '../PointerTip.svelte'
 	import { documentController } from './controller.svelte.ts'
 
-	let { start, end, children }: { start: number; end: number; children: Snippet } = $props()
+	let {
+		start,
+		end,
+		children: content
+	}: { start: number; end: number; children: Snippet } = $props()
 
-	const agentClass = $derived(documentController.rowAgentClassOf(start, end))
+	const mark = $derived(documentController.rowMarkOf(start, end))
 </script>
 
-{#if agentClass}
-	<div
-		class="agent"
-		testid={`agent-row-${start}`}
-		style:border-color={`var(--${agentClass})`}
-		style:background-color={`var(--${agentClass}-tint)`}
-	>
-		{@render children()}
-	</div>
+{#if mark}
+	<PointerTip text={mark.tooltip} testid={`row-tooltip-${start}`}>
+		{#snippet children(pointer)}
+			<div
+				class="agent"
+				testid={`agent-row-${start}`}
+				style:border-color={`var(--${mark.agentClass})`}
+				style:background-color={`var(--${mark.agentClass}-tint)`}
+				{...pointer}
+			>
+				{@render content()}
+			</div>
+		{/snippet}
+	</PointerTip>
 {:else}
-	{@render children()}
+	{@render content()}
 {/if}
 
 <style>

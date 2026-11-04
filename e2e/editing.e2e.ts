@@ -7,15 +7,13 @@
  * src/node/hardbreak.ts). every check asserts the file ⌘S saves exactly, so a stray character fails it, and that
  * Escape leaves no field open on raw markdown
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/editing.e2e.ts (unsandboxed: it opens windows and takes the keyboard)
+ * run: pnpm exec gpuix-svelte e2e/editing.e2e.ts (unsandboxed: it opens windows and takes the keyboard)
  * the files, the app's support folder and the agents it counts live in a temp folder, so nothing reaches the real ones
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
 import {
 	check,
 	type Editor,
-	finish,
 	keystrokes,
 	keysOf,
 	openOn,
@@ -23,11 +21,9 @@ import {
 	pause,
 	pressBackspace,
 	saveAfterEscape,
+	suite,
 	typeEach
 } from './support.ts'
-
-// a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
-const folder = mkdtempSync('/tmp/eg-edit-')
 
 /**
  * one step of a sequence: keystrokes, or a Backspace pressed as a person does, key down then up; `rolled` types `then`
@@ -161,7 +157,7 @@ async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<voi
 	await flush()
 }
 
-try {
+await suite('editing', 'edit', async (folder) => {
 	for (const [index, each] of CASES.entries()) {
 		const caret = each.caret ?? 'cmd-down'
 		for (const existing of [true, false]) {
@@ -196,10 +192,4 @@ try {
 			}
 		}
 	}
-} catch (error) {
-	check(`no error: ${error instanceof Error ? error.message : String(error)}`, false)
-} finally {
-	rmSync(folder, { recursive: true, force: true })
-}
-
-finish('editing')
+})

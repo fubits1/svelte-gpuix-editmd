@@ -5,11 +5,10 @@
 -->
 <script lang="ts">
 	import {
-		emptyLinkThemeFor,
 		headingThemeFor,
 		heldLinkThemeFor,
-		inlineHtmlThemeFor,
-		linkThemeFor
+		linkThemeFor,
+		sourceThemeFor
 	} from '../../../app/palette.ts'
 	import { useCommandHeld, useQuoteColour, useTheme } from '../../../app/theme.svelte.ts'
 	import { documentController } from '../controller.svelte.ts'
@@ -29,8 +28,8 @@
 	/**
 	 * an h5 or h6 paints at its own size, an h6 muted, where native <markdown> has one tier for h4-h6; inside a quote
 	 * every other Block takes the quote's muted colour too, which muting an h6 again would turn faint. a Block with a
-	 * link with no text paints its source as editmd does, in the accent with no fill (`emptyLinkThemeFor`), and one
-	 * with an inline HTML tag its source in the muted colour with no fill (`inlineHtmlThemeFor`, editmd style.css:346-349)
+	 * link with no text paints its source as editmd does, in the accent with no fill, and one with an inline HTML tag
+	 * its source in the muted colour with no fill (`sourceThemeFor`, editmd style.css:346-349)
 	 */
 	const sourceTheme = $derived.by(() => {
 		const base =
@@ -39,10 +38,11 @@
 				: level === 6
 					? headingThemeFor(theme().textTheme, level, theme().zoom)
 					: headingThemeFor(quoteColour(theme().textTheme), level, theme().zoom)
-		if (!block.emptyLinks && !block.inlineHtml) return base
-		const hasCode = documentController.sliceOf(block).includes('`')
-		const html = block.inlineHtml ? inlineHtmlThemeFor(base, hasCode) : base
-		return block.emptyLinks ? emptyLinkThemeFor(html, hasCode) : html
+		const spans = {
+			emptyLink: block.emptyLinks !== undefined,
+			html: block.inlineHtml !== undefined
+		}
+		return sourceThemeFor(base, spans, documentController.sliceOf(block).includes('`'))
 	})
 
 	/**

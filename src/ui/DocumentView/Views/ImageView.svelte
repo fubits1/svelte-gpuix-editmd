@@ -2,10 +2,12 @@
   @component
   One image of a paragraph, as `<img>`, since native <markdown> paints images as link text. A local image paints at
   its natural size, scaled down to fit the column; one of unknown size gets a fixed box. A remote image shows its alt
-  text until View > Load Remote Images allows it. A local image whose file is missing shows its alt text the same way,
-  as WebKit paints a broken image small, instead of GPUI's load error atop the fixed box. ImageBlock and MixedParagraphBlock paint each of their images here.
+  text until View > Load Remote Images allows it, and paints the bytes fetched for its size. A local image whose file
+  is missing, or a remote one that failed, paints as WebKit's broken image, instead of GPUI's load error atop the
+  fixed box. ImageBlock and MixedParagraphBlock paint each of their images here.
 -->
 <script lang="ts">
+	import { set_image, type ShadowNode } from 'gpuix-svelte'
 	import { useTheme } from '../../../app/theme.svelte.ts'
 	import type { Image } from '../../../engine/blocks.ts'
 	import { fitToWidth, type Size } from '../../../core/imageSize.ts'
@@ -47,6 +49,12 @@
 	const BELOW_BASELINE = 6.9
 
 	const source = $derived(resolveImageSource(image.src, documentController.folder))
+	/** a loaded remote image's size and bytes once they came; null while unknown, and for any other image */
+	const remote = $derived(
+		source.kind === 'remote' && source.path === undefined && documentController.remoteImagesAllowed
+			? documentController.remoteImageOf(source.url)
+			: null
+	)
 	/**
 	 * a local image's size from its file, a loaded remote one's from its bytes once they came (a `file:` URL's from the
 	 * file it loads from); null while unknown
@@ -55,8 +63,16 @@
 		if (source.kind === 'local') return documentController.imageSizeOf(source.path)
 		if (!documentController.remoteImagesAllowed) return null
 		return source.path === undefined
-			? documentController.remoteImageSizeOf(source.url)
+			? (remote?.size ?? null)
 			: documentController.imageSizeOf(source.path)
+	})
+	/**
+	 * what the <img> loads: a file's path, or a remote image's URL until its bytes came; null once they did, which it
+	 * paints instead (`set_image`), so the image is fetched once
+	 */
+	const imageSource = $derived.by(() => {
+		if (source.kind === 'local') return source.path
+		return source.path ?? (remote?.bytes ? null : source.url)
 	})
 	/**
 	 * a linked image's click reports its link as a <markdown> reports a link run's: the Block's click that follows
@@ -65,7 +81,7 @@
 	const href = $derived(image.href)
 	/**
 	 * a local image whose file is missing, or a remote one that failed once allowed (a 404, no answer): either paints
-	 * its alt text, as WebKit paints a broken image small
+	 * as WebKit's broken image, a box its alt text's size
 	 */
 	const fileMissing = $derived(
 		source.kind === 'local'
@@ -94,13 +110,21 @@
 	}
 
 	/**
-	 * editmd's picture icon for a blocked image (style.css:313, its mask's rect, circle and mountain), in `colour`:
-	 * GPUI's SVG decoder drops var() and currentColor, so the colour is inlined, as the find bar's chevrons
+	 * editmd's picture icon for a blocked image (style.css:313, its mask's rect, circle and mountain): GPUI paints it as
+	 * a mask in `.remote-icon`'s `color`, so `colour` only matters where something reads the source, as the magnifier's
 	 */
 	function pictureIcon(colour: string | undefined): string {
 		const paint = colour ?? '#808080'
 		return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="${paint}" stroke-width="1.3"/><circle cx="5.5" cy="6.3" r="1.3" fill="${paint}"/><path d="M2.5 12.5 6.5 8.5 9 11 11 9 13.5 12.5Z" fill="${paint}"/></svg>`
 	}
+
+	/**
+	 * WebKit's broken-image icon as editmd's picture shows it: a blue square in a pale frame holding a white question
+	 * mark. GPUI paints an <svg> element in one colour, so the icon's several go in through an <img>
+	 */
+	const BROKEN_ICON = `data:image/svg+xml,${encodeURIComponent(
+		'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><rect x="0.5" y="0.5" width="15" height="15" fill="#4f86c6" stroke="#dce8f5"/><path d="M5.8 6.2a2.2 2.2 0 1 1 3.3 1.9c-.7.4-1.1.8-1.1 1.6v.5" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="12.2" r="0.9" fill="#ffffff"/></svg>'
+	)}`
 </script>
 
 <!--
@@ -121,12 +145,28 @@
 			{...pointer}
 		>
 			{#if fileMissing}
-				<text class="blocked" testid={`image-missing-${testIdSuffix}`}>{image.alt}</text>
+				<!--
+				  WebKit's broken image: a box the alt text's size in a 1px light grey border, the alt text itself unpainted,
+				  its icon centred in it
+				-->
+				<div class="broken" testid={`image-broken-${testIdSuffix}`}>
+					<text class="broken-alt" testid={`image-missing-${testIdSuffix}`}>{image.alt}</text>
+					<div class="broken-centre">
+						<img
+							class="broken-icon"
+							testid={`image-broken-icon-${testIdSuffix}`}
+							src={BROKEN_ICON}
+							alt=""
+						/>
+					</div>
+				</div>
 			{:else if source.kind === 'local' || documentController.remoteImagesAllowed}
+				{@const bytes = remote?.bytes}
 				<img
 					class={['image', naturalSize === null && 'fixed']}
 					testid={`image-${testIdSuffix}`}
-					src={source.kind === 'local' ? source.path : (source.path ?? source.url)}
+					src={imageSource}
+					{@attach bytes && ((node: ShadowNode) => set_image(node, bytes))}
 					alt={image.alt}
 					style={naturalSize && styleOf(naturalSize)}
 					style:margin-bottom={inline ? `${theme().scaled(BELOW_BASELINE)}px` : null}
@@ -180,9 +220,33 @@
 		height: var(--size-image-fallback);
 	}
 
-	.blocked {
-		color: var(--muted);
+	.broken {
+		align-self: flex-start;
+		border-width: 1px;
+		border-color: var(--broken-image);
+	}
+
+	/* the alt text sizes the box and paints nothing */
+	.broken-alt {
 		font-size: var(--size-image-alt);
+		opacity: 0;
+	}
+
+	.broken-centre {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.broken-icon {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
 	}
 
 	/* editmd's `.remote-image { border: 1px dashed var(--border); border-radius: 4px }` (style.css:297-306) */

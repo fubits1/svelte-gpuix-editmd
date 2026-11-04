@@ -15,7 +15,9 @@ import {
 	focus,
 	key_up,
 	mount_headless,
+	mouse_down,
 	mouse_move,
+	mouse_up,
 	painted,
 	painted_highlights,
 	press,
@@ -231,10 +233,10 @@ function boxAfterTyping(keys: string[], box: string, closed: string): [boolean, 
 	for (const key of keys) type(key)
 	settle()
 	const boxed = find_test_id(box) !== null
-	const open = bounds(find_test_id('block-editor') ?? 0).x
+	const open = bounds(find_test_id('block-editor') ?? 0)?.x
 	press('escape')
 	settle()
-	return [boxed, open === bounds(find_test_id(closed) ?? 0).x]
+	return [boxed, open !== undefined && open === bounds(find_test_id(closed) ?? 0)?.x]
 }
 check(
 	'typing `- a`, `> a` or `---` into an empty field shows it at once at the list’s indent, inside the quote’s rail, or above the rule’s line, the field still open',
@@ -7118,6 +7120,16 @@ check(
 	['#00000000', palette().accent]
 )
 
+/** a plain list's item paints a link with no text as a task list's item does, in the accent with no fill */
+documentController.load('- see [](https://example.com)\n', parityOptions)
+settle()
+const listEmptyTheme = find_test_id('list-text-2')?.children?.[0]?.customProps?.theme
+check(
+	'a plain list item paints its empty link’s source in the accent with no fill',
+	[fieldOf(listEmptyTheme, 'codeWash'), fieldOf(listEmptyTheme, 'codeText')],
+	['#00000000', palette().accent]
+)
+
 /**
  * open front matter's text paints muted, as editmd's `.frontmatter { color: var(--muted) }` keeps it while it is
  * edited (frontmatter.ts:20-23)
@@ -7508,6 +7520,26 @@ check(
 	['- a\n  - b\n- c\n', 'x- a\n- b\n']
 )
 
+/** `command` with the field's selection from after `b` to after `c`, as shift-up from the end of `c` selects */
+async function overTwoItems(source: string, command: string): Promise<string> {
+	documentController.load(source, r9Options)
+	settle()
+	click_test_id('block-0')
+	type('shift-up')
+	press(command)
+	await fieldIdle()
+	press('escape')
+	return documentController.text
+}
+check(
+	'Indent and Outdent over a selection from after “b” to after “c” move both items at the first one’s level, as editmd’s sinkListItem and liftListItem over its range',
+	[
+		await overTwoItems('- a\n- b\n- c\n', 'cmd-]'),
+		await overTwoItems('- a\n  - b\n  - c\n', 'cmd-[')
+	],
+	['- a\n  - b\n  - c\n', '- a\n- b\n- c\n']
+)
+
 // editmd's commands are Undo steps of their own: the typing before Heading 2 stays when ⌘Z takes the heading back
 documentController.load('Intro\n', r9Options)
 settle()
@@ -7881,12 +7913,18 @@ await wait(150)
 settle()
 const twoPalette = palette()
 const twoBlock = documentController.blocks[1]
-const twoTooltip = documentController.highlights
-	.filter(
-		({ start, end }) => twoBlock !== undefined && start < twoBlock.end && end > twoBlock.start
-	)
-	.map(({ author, at }) => highlightTooltip(author.name, at, menuOptions.timeFormat))
-	.join('\n')
+/** the tooltip line of the highlight `name` made on Block 1, as editmd titles that Agent's run */
+const twoLineOf = (name: string) =>
+	documentController.highlights
+		.filter(
+			({ start, end, author }) =>
+				author.name === name &&
+				twoBlock !== undefined &&
+				start < twoBlock.end &&
+				end > twoBlock.start
+		)
+		.map(({ author, at }) => highlightTooltip(author.name, at, menuOptions.timeFormat))
+		.join('\n')
 const twoWashes = (() => {
 	const specs = propOf('block-1', 'highlight')
 	return (Array.isArray(specs) ? specs : [])
@@ -7903,6 +7941,10 @@ const offRunPoint = { x: (twoBlockBox?.x ?? 0) + (twoBlockBox?.width ?? 0) - 4, 
 const offRunTip = await tipAt(offRunPoint, 'block-tooltip-1-tip')
 const twoTip = await tipAt(twoRunPoint, 'block-tooltip-1-tip')
 const onRunOffset = tipOffsetFrom(twoRunPoint, 'block-tooltip-1-tip')
+const betaTip = await tipAt(
+	washPointIn('block-1', 'lea') ?? { x: -1, y: -1 },
+	'block-tooltip-1-tip'
+)
 const wholeBox = bounds(find_test_id('block-3') ?? 0)
 const wholeTip = await tipAt(
 	{
@@ -7917,12 +7959,12 @@ check(
 	[null, true, [0, 0], true]
 )
 check(
-	'every Agent highlight on a Block paints: each changed run washed in its own Agent’s colour, a Block marked whole by two Agents tinted by the latest, the tooltip listing every change',
+	'every Agent highlight on a Block paints: each changed run washed in its own Agent’s colour, a Block marked whole by two Agents tinted by the latest, each run titled with its own Agent’s line',
 	[
 		twoWashes,
 		find_test_id('block-3')?.style?.backgroundColor,
 		find_test_id('block-3')?.style?.borderColor,
-		twoTip
+		[twoTip, betaTip]
 	],
 	[
 		[
@@ -7931,7 +7973,7 @@ check(
 		],
 		twoPalette['agent-1-tint'],
 		twoPalette['agent-1'],
-		twoTooltip
+		[twoLineOf('Alpha'), twoLineOf('Beta')]
 	]
 )
 
@@ -8878,10 +8920,17 @@ check(
 )
 mouse_move({ x: 5, y: 500 })
 
-// a loaded remote image paints at its natural size, read from its bytes as a local image's are
+/**
+ * a loaded remote image paints at its natural size, read from its bytes as a local image's are, and paints those
+ * same bytes: its <img> names no URL for GPUI to fetch again, so the image is fetched once
+ */
+let remoteFetches = 0
 documentController.load('![remote](https://example.com/natural.png)\n', {
 	...r9Options,
-	fetchImage: () => Promise.resolve(png(300, 200))
+	fetchImage: () => {
+		remoteFetches++
+		return Promise.resolve(png(300, 200))
+	}
 })
 settle()
 documentController.allowRemoteImages()
@@ -8892,9 +8941,13 @@ await waitUntil(
 settle()
 const loadedRemoteBox = bounds(find_test_id('image-0-0') ?? 0)
 check(
-	`a remote image, once loaded, paints at its natural 300 × 200 (${loadedRemoteBox?.width}×${loadedRemoteBox?.height})`,
-	loadedRemoteBox ? [loadedRemoteBox.width, loadedRemoteBox.height] : null,
-	[300, 200]
+	`a remote image, once loaded, paints at its natural 300 × 200 from the bytes fetched once (${loadedRemoteBox?.width}×${loadedRemoteBox?.height})`,
+	[
+		loadedRemoteBox ? [loadedRemoteBox.width, loadedRemoteBox.height] : null,
+		remoteFetches,
+		propOf('image-0-0', 'src') ?? null
+	],
+	[[300, 200], 1, null]
 )
 
 /**
@@ -8936,6 +8989,20 @@ check(
 	[[300, 200], [['open', ['https://example.com/ref']]], null]
 )
 press('escape')
+
+// r-table: an image in a table cell paints as its picture, as editmd's `td img`, not as link text
+const tableImagePath = join(r9Directory, 'table-image.md')
+writeFileSync(tableImagePath, '| pic | name |\n| - | - |\n| ![pic](ref.png) | text |\n')
+documentController.open(tableImagePath, r9Options)
+settle()
+await wait(300)
+settle()
+const cellImageBox = bounds(find_test_id('image-0.1.0-0') ?? 0)
+check(
+	`an image in a table cell paints its 300 × 200 picture (${cellImageBox?.width}×${cellImageBox?.height})`,
+	cellImageBox ? [cellImageBox.width, cellImageBox.height] : null,
+	[300, 200]
+)
 
 // a blocked image's tip is its src as written, as editmd titles it with the attribute (remote.ts:68)
 documentController.load('![tracker](//x.example/p.png)\n', r9Options)
@@ -9559,10 +9626,29 @@ documentController.allowRemoteImages()
 settle()
 await waitUntil(() => find_test_id('image-missing-0-0') !== null, 'the failed image’s alt text')
 settle()
+/**
+ * WebKit's broken image, as editmd's picture shows it: a box the size of the alt text in a 1px light grey border, its
+ * question-mark icon (16 × 16) centred in it; the alt text sizes the box, painting nothing beside the icon
+ */
+const brokenBox = bounds(find_test_id('image-broken-0-0') ?? 0)
+const brokenIcon = bounds(find_test_id('image-broken-icon-0-0') ?? 0)
+const brokenAlt = bounds(find_test_id('image-missing-0-0') ?? 0)
 check(
-	'a remote image that fails to load paints its alt text, not GPUI’s load-failed box',
-	[textOf('image-missing-0-0'), find_test_id('image-0-0')],
-	['gone picture', null]
+	`a remote image that fails to load paints WebKit’s broken-image box and icon over its alt text, not GPUI’s load-failed box (${JSON.stringify([brokenBox, brokenIcon, brokenAlt])})`,
+	[
+		textOf('image-missing-0-0'),
+		find_test_id('image-0-0'),
+		find_test_id('image-broken-0-0')?.style?.borderColor,
+		brokenIcon ? [brokenIcon.width, brokenIcon.height] : null,
+		brokenBox && brokenIcon && brokenAlt
+			? [
+					brokenIcon.x + brokenIcon.width / 2 === brokenBox.x + brokenBox.width / 2,
+					brokenBox.width >= brokenAlt.width
+				]
+			: null,
+		find_test_id('image-missing-0-0')?.style?.opacity
+	],
+	['gone picture', null, '#c0c0c0', [16, 16], [true, true], 0]
 )
 
 /**
@@ -10117,6 +10203,39 @@ check(
 	documentController.text,
 	'- a\n  - bX\n- c\n'
 )
+/**
+ * `burst` typed in one batch into Block 0's field of `source` from its end, then Escape at once, as fast typing ends:
+ * the field work a key of the batch started is still in flight when Escape comes
+ */
+async function escapeAfter(source: string, burst: string): Promise<string> {
+	documentController.load(source, r9Options)
+	settle()
+	click_test_id('block-0')
+	type(burst)
+	press('escape')
+	await fieldIdle()
+	return documentController.text
+}
+check(
+	'Tab, or Tab and `z` in one batch, at the second item’s end, then Escape at once, sink the item and keep `z` after `b`, as editmd takes the keys in order (list-item.ts:212-218)',
+	[await escapeAfter('- a\n- b\n', 'tab z'), await escapeAfter('- a\n- b\n', 'tab')],
+	['- a\n  - bz\n', '- a\n  - b\n']
+)
+/** a click on another Block while Tab's indent probe is still running, where Escape waits for it */
+documentController.load('- a\n- b\n\nnext\n', r9Options)
+settle()
+click_test_id('block-0')
+type('tab z')
+click_test_id('block-1')
+await fieldIdle()
+settle()
+press('escape')
+await fieldIdle()
+check(
+	'Tab and `z` in one batch at the second item’s end, then a click on the next Block at once, sink the item and keep `z` after `b`',
+	documentController.text,
+	'- a\n  - bz\n\nnext\n'
+)
 
 /**
  * Bold with no field open acts at editmd's load caret, the start of the first textblock: its empty pair is a stored
@@ -10586,6 +10705,69 @@ check(
 	[[[`agent-row-${documentController.text.indexOf('new')}`, ...etaColours()]], null]
 )
 
+/** every tip box painted now */
+const shownTips = () => find_all((node) => node.testId?.endsWith('-tip') === true).length
+
+// a native tip hides on mouse down and on key down, and shows again once the pointer moves on and rests
+await mergeByEta('new-paragraph', 'a\n', 'a\n\nnew\n')
+const restedTip = await tipAfterHover('block-1', 'block-tooltip-1-tip')
+const restPoint = centreOf('block-1')
+await wait(300)
+settle()
+const tipBeforeKey = shownTips()
+// a key no command or field takes
+press('f5')
+settle()
+const tipAfterKey = shownTips()
+await wait(400)
+settle()
+const tipAfterKeyRest = shownTips()
+// headless, a move inside the Block after a key enters it again only once the pointer has left it
+await tipAfterHover('block-0', 'block-tooltip-0-tip')
+const tipAfterMoveOn = await tipAfterHover('block-1', 'block-tooltip-1-tip')
+mouse_down(restPoint)
+settle()
+const tipAfterDown = shownTips()
+await wait(400)
+settle()
+const tipAfterDownRest = shownTips()
+// the release completes a click, which opens the Block's field
+mouse_up(restPoint)
+settle()
+press('escape')
+settle()
+check(
+	'a tip hides on key down and on mouse down, as an AppKit tooltip, and shows again only once the pointer moves on and rests',
+	[
+		restedTip,
+		tipBeforeKey,
+		tipAfterKey,
+		tipAfterKeyRest,
+		tipAfterMoveOn,
+		tipAfterDown,
+		tipAfterDownRest
+	],
+	[
+		highlightTooltip('Eta', documentController.highlights[0]?.at ?? 0, menuOptions.timeFormat),
+		1,
+		0,
+		0,
+		restedTip,
+		0,
+		0
+	]
+)
+
+// a list item's tip is its own row's, as editmd titles the item's `block` change
+await mergeByEta('new-item-tip', '- a\n- b\n', '- a\n- new\n- b\n')
+const markedRowTip = await tipAfterHover('agent-row-6', 'row-tooltip-6-tip')
+await tipAfterHover('list-row-2', 'no-tip')
+check(
+	'a list item an Agent added shows its tip over its own row, and an unmarked row of the same list none',
+	[markedRowTip, shownTips()],
+	[highlightTooltip('Eta', documentController.highlights[0]?.at ?? 0, menuOptions.timeFormat), 0]
+)
+
 /**
  * editmd's inline code `border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); border-radius: 5px`
  * (style.css:185-191), which native's pill lacks: each painted box with its bounds, border width, colour and radius
@@ -10729,6 +10911,23 @@ check(
 		[paletteFor('dark')['code-border'], paletteFor('dark')['code-border']]
 	]
 )
+
+// a tip longer than the window wraps at the window's edge, as AppKit gives no wrap width of its own to copy
+await mergeByEta('long-gone', `- a\n- ${'word '.repeat(59)}words\n- c\n`, '- a\n- c\n')
+const longGapId = gapLines()[0]?.testId ?? 'no-gap'
+const longTipId = `${longGapId.replace('gap-', 'gap-tooltip-')}-tip`
+await tipAfterHover(longGapId, longTipId)
+const longTipBox = bounds(find_test_id(longTipId) ?? 0)
+check(
+	`a 300-character deletion tip in a 600px window wraps onto more than its two lines and stays inside the window (${JSON.stringify(longTipBox)})`,
+	longTipBox
+		? [
+				longTipBox.height > 2 * 16 + 8,
+				longTipBox.x >= 0 && longTipBox.x + longTipBox.width <= window_size.width
+			]
+		: null,
+	[true, true]
+)
 await app.unmount()
 app = mount_headless(App, { width: 800, height: 538 })
 
@@ -10814,20 +11013,23 @@ check(
 
 /**
  * Q18: editmd's page scroller is AppKit's overlay style on a Mac that shows scroll bars automatically: no thumb at
- * rest, shown while the page scrolls and for about a second after; the legacy style shows it always. per style: what
- * the middle of the thumb's box paints at rest, just after a wheel scroll, and 1.2s later
+ * rest, shown while the page scrolls and for about a second after, whatever scrolls it; the legacy style shows it
+ * always. per style: what the middle of the thumb's box paints at rest, just after `scroll` (a wheel scroll of
+ * `source`), and 1.5s later
  */
-async function thumbLook(style: 'overlay' | 'legacy') {
+const scrolledPage = `${Array.from({ length: 80 }, (_, n) => `Paragraph ${n}.`).join('\n\n')}\n`
+async function thumbLook(
+	style: 'overlay' | 'legacy',
+	source = scrolledPage,
+	scroll = () => wheel({ x: 400, y: 300 }, 0, -200)
+) {
 	await app.unmount()
 	const scrollerTheme = new ThemeController({
 		readAppearance: () => 'light',
 		readScrollerStyle: () => style
 	})
 	app = mount_headless(App, { width: 800, height: 538, props: { theme: scrollerTheme } })
-	documentController.load(
-		`${Array.from({ length: 80 }, (_, n) => `Paragraph ${n}.`).join('\n\n')}\n`,
-		parityOptions
-	)
+	documentController.load(source, parityOptions)
 	settle()
 	// the Scroller measures its thumb every 250ms
 	await wait(400)
@@ -10844,24 +11046,40 @@ async function thumbLook(style: 'overlay' | 'legacy') {
 		return near(colour, paletteFor('light').background, 4) ? 'none' : 'thumb'
 	}
 	const atRest = look()
-	wheel({ x: 400, y: 300 }, 0, -200)
+	scroll()
 	settle()
-	await wait(100)
+	// a Find match is read from the paint on Find's poll, so its scroll comes a few frames after the query
+	await wait(400)
 	settle()
 	const scrolled = look()
-	await wait(1200)
+	await wait(1500)
 	settle()
 	return [atRest, scrolled, look()]
 }
 check(
-	'the page’s scrollbar thumb follows the system’s scroller style: overlay shows none at rest, shows while scrolling and is gone 1.2s later; legacy shows it throughout',
+	'the page’s scrollbar thumb follows the system’s scroller style: overlay shows none at rest, shows while scrolling and is gone 1.5s later; legacy shows it throughout',
 	[await thumbLook('overlay'), await thumbLook('legacy')],
 	[
 		['none', 'thumb', 'none'],
 		['thumb', 'thumb', 'thumb']
 	]
 )
+const linkedPage = `[Jump to the end](#the-end)\n\n${scrolledPage}\n# The end\n\nLast zebra.\n`
+check(
+	'an overlay scroller’s thumb shows while a followed link or a Find match scrolls the page, as macOS shows it during any scroll, and is gone 1.5s later',
+	[
+		await thumbLook('overlay', linkedPage, () => clickLinkIn('block-0', 'cmd')),
+		await thumbLook('overlay', linkedPage, () => {
+			press('cmd-f')
+			for (const key of 'zebra') type(key)
+		})
+	],
+	[
+		['none', 'thumb', 'none'],
+		['none', 'thumb', 'none']
+	]
+)
 
 rmSync(parityDirectory, { recursive: true, force: true })
 
-finish('document', 535)
+finish('document', 545)

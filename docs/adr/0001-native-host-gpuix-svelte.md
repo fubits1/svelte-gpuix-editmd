@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-25. Amended by [ADR-0012](0012-gpuix-svelte-0.3.md): the host is gpuix-svelte 0.3.0
+Accepted, 2026-10-25. Amended by [ADR-0012](0012-gpuix-svelte-0.3.md): the host is gpuix-svelte 0.3.0. Amended by [ADR-0013](0013-gpuix-svelte-0.4.md): the host is gpuix-svelte 0.4.1, and `build()` from `gpuix-svelte/build` builds the shipping app
 
 ## Context
 

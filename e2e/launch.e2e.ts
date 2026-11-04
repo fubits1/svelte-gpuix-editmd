@@ -2,7 +2,7 @@
  * launching: editmd opens an untitled window when it starts with no file (AppDelegate.swift:13-15), and its
  * scripted modes run without one (Headless.swift)
  *
- * run: pnpm --dir . exec gpuix-svelte e2e/launch.e2e.ts (unsandboxed: it opens a real window)
+ * run: pnpm exec gpuix-svelte e2e/launch.e2e.ts (unsandboxed: it opens a real window)
  * the app's support folder lives in a temp folder, so nothing reaches the real one
  */
 
@@ -62,7 +62,6 @@ try {
 /**
  * a window on a file with front matter: editmd's box becomes editable in place (frontmatter.ts:20-23), so opening it
  * leaves the page where it was. headlessly no field takes focus, so only a window shows the scroll its focus caused
- * (the e-frontmatter-edit target: the page about 16px up, 32 in the 2x shot)
  */
 // render.md, as the target shot: a page taller than the window, which can scroll
 const frontmatterFile = join(folder, 'render.md')
@@ -216,11 +215,7 @@ const first = await openEditor(twiceFile, folder)
 try {
 	// the first window listens on its socket a moment after its Block paints
 	await pause(500)
-	const second = spawnSync(process.execPath, [GPUIX_BIN, 'standalone.ts', twiceFile], {
-		env: { ...process.env, EDITMD_GPUIX_SUPPORT: support },
-		encoding: 'utf8',
-		timeout: 20_000
-	})
+	const second = cli([twiceFile])
 	const firstStillThere = (await first.getByTestId('block-0').count()) === 1
 	check(
 		`a second launch on a file a window has exits 0 without a window, and the first window stays (exit ${second.status}${second.error ? `, ${second.error.message}` : ''})`,

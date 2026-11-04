@@ -25,7 +25,7 @@
 		"dev": "gpuix-svelte app.ts"
 	},
 	"dependencies": {
-		"gpuix-svelte": "^0.3.0",
+		"gpuix-svelte": "0.4.1",
 		"pele": "1.10.0",
 		"satteri": "0.10.5",
 		"yjs": "13.6.33"

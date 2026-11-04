@@ -143,6 +143,8 @@ export function paletteFor(appearance: Appearance): Palette {
 	 */
 	palette['scroller-thumb'] = BASE[appearance].faint
 	palette['scroller-thumb-hover'] = BASE[appearance].muted
+	// WebKit draws a broken image's 1px border in its own light grey whatever the page's colours (editmd's picture)
+	palette['broken-image'] = '#c0c0c0'
 	AGENTS[appearance].forEach((colour, slot) => {
 		palette[`agent-${slot}`] = colour
 		palette[`agent-${slot}-tint`] = `${colour}${TINT_ALPHA}`
@@ -269,26 +271,21 @@ export function tableThemeFor(theme: GpuixTheme, zoom = 1): GpuixTheme {
 export const NO_FILL = '#00000000'
 
 /**
- * the `theme` a Block holding a link with no text paints in: editmd shows such a link as its source,
- * `a.empty-link::before { content: "[](" attr(href) ")"; font: 0.86em var(--font-mono) }` (style.css:363-366), in the
- * link's accent and with no fill. native <markdown> paints it as inline code (paintedSlice), so the code wash goes
- * and code takes the accent; a Block with inline code of its own (`hasCode`) keeps `theme`, so its code keeps
- * editmd's pill
+ * the `theme` a run holding a link with no text (`emptyLink`) or an inline HTML tag (`html`) paints in. editmd shows
+ * both as their source with no fill: the link as `a.empty-link::before { content: "[](" attr(href) ")"; font: 0.86em
+ * var(--font-mono) }` (style.css:363-366) in its accent, a tag as `span[data-type="html"] { font: 0.86em
+ * var(--font-mono); color: var(--muted) }` (style.css:346-349). native <markdown> paints both as inline code
+ * (paintedSlice), so the code wash goes and code takes the accent, or with a tag alone the muted colour; a run with
+ * inline code of its own (`hasCode`) keeps `theme`, so its code keeps editmd's pill
  */
-export function emptyLinkThemeFor(theme: GpuixTheme, hasCode: boolean): GpuixTheme {
-	if (hasCode) return theme
-	return { ...theme, codeWash: NO_FILL, codeText: theme.caret ?? theme.codeText }
-}
-
-/**
- * the `theme` a Block holding inline HTML paints in: editmd shows each tag as its source, `span[data-type="html"] {
- * font: 0.86em var(--font-mono); color: var(--muted) }` (style.css:346-349), with no fill. native <markdown> paints it
- * as inline code (paintedSlice), so the code wash goes and code takes the muted colour; a Block with inline code of
- * its own (`hasCode`) keeps `theme`, so its code keeps editmd's pill
- */
-export function inlineHtmlThemeFor(theme: GpuixTheme, hasCode: boolean): GpuixTheme {
-	if (hasCode) return theme
-	return { ...theme, codeWash: NO_FILL, codeText: theme.textMuted }
+export function sourceThemeFor(
+	theme: GpuixTheme,
+	{ emptyLink, html }: { emptyLink?: boolean; html?: boolean },
+	hasCode: boolean
+): GpuixTheme {
+	if (hasCode || (!emptyLink && !html)) return theme
+	const codeText = emptyLink ? (theme.caret ?? theme.codeText) : theme.textMuted
+	return { ...theme, codeWash: NO_FILL, codeText }
 }
 
 /**
@@ -309,7 +306,7 @@ const LINK_UNDERLINE_ALPHA = alphaHex(0.35)
  * `textMuted` (and a strike line with it, which editmd draws in the text colour)
  */
 export function linkThemeFor(theme: GpuixTheme, held: boolean): GpuixTheme {
-	// the page's caret is editmd's accent (`emptyLinkThemeFor`)
+	// the page's caret is editmd's accent (`sourceThemeFor`)
 	const accent = theme.caret ?? theme.textMuted
 	return { ...theme, textMuted: held ? accent : `${accent}${LINK_UNDERLINE_ALPHA}` }
 }

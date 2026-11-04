@@ -20,13 +20,13 @@ Node 26 (`nvm use`), pnpm.
 
 ```bash
 pnpm install
-pnpm dev [file.md]     # opens the window, hot-reloads .svelte files on save (a .svelte.ts change needs a restart)
+pnpm dev [file.md]     # opens the window, remounts it on each saved .svelte file; a .ts, .svelte.ts or .js change needs a restart
 pnpm test              # unit tests (Vitest), then the headless gpuix test
 pnpm run test:unit     # Vitest only
 pnpm run typecheck     # tsc, then svelte-check against GPUI's element types
-pnpm run lint          # prettier --check
+pnpm run lint          # prettier --check, eslint, knip, svelte-check
 pnpm run format        # prettier --write
-pnpm run build         # one executable for this platform, on macOS also dist/editmd-gpuix.app (open this one); needs Bun
+pnpm run build         # dist/editmd-gpuix.app through gpuix-svelte/build, the bundle to open; macOS only, needs Bun
 
 # end to end, editmd's SelfTest scenarios in real windows (each opens and closes windows)
 pnpm exec gpuix-svelte e2e/fileFormats.e2e.ts
@@ -35,6 +35,10 @@ pnpm exec gpuix-svelte e2e/links.e2e.ts
 pnpm exec gpuix-svelte e2e/remoteImages.e2e.ts
 pnpm exec gpuix-svelte e2e/launch.e2e.ts
 pnpm exec gpuix-svelte e2e/tab.e2e.ts
+pnpm exec gpuix-svelte e2e/typing.e2e.ts
+pnpm exec gpuix-svelte e2e/editing.e2e.ts
+pnpm exec gpuix-svelte e2e/inline.e2e.ts
+pnpm exec gpuix-svelte e2e/differential.e2e.ts   # the same keys as editmd's own editor took (kit fixture)
 
 # headless modes, as editmd's (Headless.swift)
 pnpm exec gpuix-svelte standalone.ts --roundtrip FILE    # what Save writes for the untouched file
@@ -50,7 +54,7 @@ The end-to-end runs keep their files, the agent sockets and Open Recent in a `/t
 `EDITMD_GPUIX_SUPPORT`, so they never touch the support folder in `~/Library`. With `EDITMD_GPUIX_DRY_RUN=<file>`
 the app writes every process it would start (`open` for links and printing, new windows) to that file instead.
 
-Open a file with `dist/app <path>` (or the executable inside the `.app`). Finder and `open -a` do not hand the app
+Open a file with `dist/editmd-gpuix.app/Contents/MacOS/editmd-gpuix <path>`. Finder and `open -a` do not hand the app
 their file yet (gap G6 in [ADR-0009](docs/adr/0009-parity-gaps-native-track.md)).
 
 Every script runs through the `gpuix-svelte` bin, which starts Node (or Bun with `--bun`) with the
@@ -59,5 +63,8 @@ shell, so run them unsandboxed.
 
 ## Caveats
 
-- Tab writes 2 spaces outside a list, never a tab character, and in a list item a key typed while Tab finds the
-  caret can be lost. Details and TODOs: [ADR-0012](docs/adr/0012-gpuix-svelte-0.3.md).
+- A Block you edit opens as its markdown source in a field, the `#`, `**` or `-` markers shown, and takes its kind's
+  look as you type them. Escape, or a click on another Block, closes the field and paints the Block
+  ([ADR-0003](docs/adr/0003-block-click-to-edit.md)).
+- Tab writes 2 spaces outside a list, never a tab character. Details and TODOs:
+  [ADR-0012](docs/adr/0012-gpuix-svelte-0.3.md).

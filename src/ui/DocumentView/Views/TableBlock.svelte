@@ -3,8 +3,9 @@
   A GFM table as editmd's `.markdown-body table` (style.css:316-342): sized to its content and scrolling sideways when
   wider than the column, 0.94em text, every cell `padding: 0.4em 0.85em` inside 1px borders, the header row bold on
   the surface fill, each column aligned as its delimiter cell says. A cell's inline markdown paints through native
-  <markdown>. Columns are laid out side by side, each a stack of its cells, so every column takes its widest cell's
-  width as `width: max-content` gives it; a click anywhere opens the Block, as any other Block's does.
+  <markdown>, a cell of only images through ImageBlock. Columns are laid out side by side, each a stack of its cells,
+  so every column takes its widest cell's width as `width: max-content` gives it; a click anywhere opens the Block,
+  as any other Block's does.
 -->
 <script module lang="ts">
 	import { blockLines } from '../../../app/blockLines.ts'
@@ -87,9 +88,11 @@
 	import { monoLinesWidth } from '../../../app/monoLines.ts'
 	import { linkThemeFor, tableThemeFor } from '../../../app/palette.ts'
 	import { useCommandHeld, useQuoteColour, useTheme } from '../../../app/theme.svelte.ts'
+	import { type Block, parseBlocks } from '../../../engine/blocks.ts'
 	import { documentController } from '../controller.svelte.ts'
 	import { dropFiles } from '../fileDrop.ts'
 	import { BLANK_LINE, type BlockViewProps } from '../DocumentView.model.ts'
+	import ImageBlock from './ImageBlock.svelte'
 
 	let { block, index, testKey }: BlockViewProps = $props()
 
@@ -134,6 +137,19 @@
 		const painted = unescapedPipes(documentController.paintedSliceOf(block, cell.start, cell.end))
 		if (painted === '') return BLANK_LINE
 		return header ? `**${painted}**` : painted
+	}
+
+	/**
+	 * a cell of nothing but images as the paragraph ImageBlock paints, as editmd's `td img` shows each picture where
+	 * native <markdown> paints link text; null for any other cell
+	 */
+	function picturesOf(cell: Cell): Block | null {
+		const text = documentController.text.slice(cell.start, cell.end)
+		if (!text.includes('![')) return null
+		const [paragraph, ...rest] = parseBlocks(text)
+		return paragraph?.images && rest.length === 0
+			? { ...paragraph, start: cell.start, end: cell.end }
+			: null
 	}
 
 	/** a cell's text as its width is measured (`cellSizing`): its sans text, and its code spans in SF Mono */
@@ -192,6 +208,7 @@
 					{@const cell = row[column]}
 					{#if cell}
 						{@const sizing = sizingOf(cell)}
+						{@const pictures = picturesOf(cell)}
 						<div
 							class={['cell', ALIGN_CLASS[align], rowIndex === 0 && 'header']}
 							testid={`table-cell-${testKey}-${rowIndex}-${column}`}
@@ -212,11 +229,19 @@
 									class="text"
 									onlayout={(event) => (textHeights[`${rowIndex}-${column}`] = event.height ?? 0)}
 								>
-									<markdown
-										source={documentController.renderSource(sourceOf(cell, rowIndex === 0))}
-										theme={cellTheme}
-										onlinkclick={(event) => documentController.linkClicked(event.value)}
-									></markdown>
+									{#if pictures}
+										<ImageBlock
+											block={pictures}
+											{index}
+											testKey={`${testKey}.${rowIndex}.${column}`}
+										/>
+									{:else}
+										<markdown
+											source={documentController.renderSource(sourceOf(cell, rowIndex === 0))}
+											theme={cellTheme}
+											onlinkclick={(event) => documentController.linkClicked(event.value)}
+										></markdown>
+									{/if}
 								</div>
 								<div class="sizer">
 									<text class={['sizer-text', rowIndex === 0 && 'sizer-bold']}>{sizing.plain}</text>

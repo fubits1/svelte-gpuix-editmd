@@ -2,7 +2,8 @@
 type FetchLimits = { timeoutMs?: number; maxBytes?: number }
 
 const TIMEOUT_MS = 10_000
-const MAX_BYTES = 1024 * 1024
+/** the most of a remote image read; a read that comes back shorter holds the whole file */
+export const MAX_BYTES = 1024 * 1024
 
 /**
  * the first bytes of a remote image, enough to read its size, through the platform's `fetch`: the read stops at

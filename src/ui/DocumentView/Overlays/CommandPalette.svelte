@@ -13,6 +13,7 @@
 	import { firstEnabled, moveSelection } from '../../../app/commandPalette.ts'
 	import { filterEntries, type MenuCommand, type MenuEntry } from '../../../app/menu.ts'
 	import { useTheme } from '../../../app/theme.svelte.ts'
+	import { boxOf, trackIn } from '../../nodes.ts'
 
 	let {
 		entries,
@@ -63,13 +64,7 @@
 
 	/** each painted row's node by index, for keeping the selected row in view; nothing renders from it */
 	const rowNodes = new SvelteMap<number, ShadowNode>()
-
-	function trackRow(index: number, node: ShadowNode) {
-		rowNodes.set(index, node)
-		return () => {
-			if (rowNodes.get(index) === node) rowNodes.delete(index)
-		}
-	}
+	const trackRow = trackIn(rowNodes)
 
 	/**
 	 * scrolls the list just enough that row `index` shows whole, as a menu keeps its highlighted item in view: the
@@ -79,7 +74,7 @@
 	function keepInView(index: number): void {
 		const native = get_native()
 		const node = rowNodes.get(index)
-		const row = node?.nativeId == null ? null : native?.getElementBounds(node.nativeId)
+		const row = boxOf(node)
 		if (!native || !node || !row) return
 		for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
 			if (ancestor.nativeId === null) continue

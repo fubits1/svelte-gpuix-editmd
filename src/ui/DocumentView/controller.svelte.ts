@@ -4,7 +4,6 @@ import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
 	activate_window,
-	get_native,
 	minimize_window,
 	prompt_for_paths,
 	set_window_title,
@@ -15,6 +14,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import { AgentLegend, type LegendAgent } from '../../app/agentLegend.ts'
 import { type FormatCommand, isFormatCommand } from '../../app/commands.ts'
 import { sortDrop } from '../../app/drop.ts'
+import { delay, FIELD_POLL_MS, FIELD_POLL_TRIES, sendKeystrokes } from '../../app/fieldKeys.ts'
 import { findController } from '../../app/find.svelte.ts'
 import { deletionTooltip, highlightTooltip, type TimeFormat } from '../../app/highlightTooltip.ts'
 import {
@@ -91,7 +91,7 @@ import { createClockScheduler } from '../../host/clock.ts'
 import { DocumentFile } from '../../host/documentFile.ts'
 import { describeFile, isImageName, isTextName } from '../../host/fileKinds.ts'
 import { FileExistsError, FileLockedError, openTextFile, realPathOf } from '../../host/files.ts'
-import { fetchImageHead } from '../../host/imageFetch.ts'
+import { fetchImageHead, MAX_BYTES } from '../../host/imageFetch.ts'
 import { ImageSizes } from '../../host/imageSizes.ts'
 import { LegendPreference } from '../../host/legendPreference.ts'
 import { carryOutLink, type Run, runDetached } from '../../host/openLink.ts'
@@ -106,6 +106,12 @@ export type RunOptions = {
 	/** a text field has focus and gets the same key (`GpuixEvent.editing`) */
 	editing?: boolean
 }
+
+/** a loaded remote image: its natural size, and its bytes when the read holds the whole image, else null */
+type RemoteImage = { size: Size; bytes: Uint8Array | null }
+
+/** an Agent highlight with the legend's row for its Agent, undefined when the legend has none */
+type FoundHighlight = { highlight: Highlight; agent: LegendAgent | undefined }
 
 /** how a followed link reaches outside the editor; tests pass recorders, so nothing is launched */
 type LinkOptions = {
@@ -206,7 +212,7 @@ export type OpenOptions = LinkOptions &
 		listAgentProcesses?: () => AgentProcess[]
 	}
 
-/** a dialog over the Document; at most one is open, through `#showOverlay` */
+/** a dialog over the Document; at most one is open, a second replacing the first, a notice waiting its turn */
 export type Overlay =
 	/** editmd asks before a link of another scheme starts whichever app claims it (LinkPolicy `.confirm`) */
 	| { kind: 'confirmLink'; url: string }
@@ -295,10 +301,6 @@ export const NEW_WINDOW_ENV = 'EDITMD_GPUIX_NEW'
  */
 const FIELD_REPLY_MS = 1000
 
-/** how often the open field is looked for after it was mounted afresh, and for how many tries */
-const FIELD_POLL_MS = 16
-const FIELD_POLL_TRIES = 60
-
 /** how many field polls an outside change waits for field work in flight before it shows */
 const MERGE_WAIT_TRIES = 120
 
@@ -317,10 +319,6 @@ const FIELD_KEYS: Record<FieldCommand, string> = {
 /** how long after Copy sends the field its ⌘C the same key heard by the window is taken as that one */
 const ECHO_MS = 300
 
-const sendKeystrokes = (keys: string) => get_native()?.simulateKeystrokes(keys)
-
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
-
 /** `a` and `b` name one file: the same real path, or the same device and inode */
 function isSameFile(a: string, b: string): boolean {
 	if (realPathOf(a) === realPathOf(b)) return true
@@ -332,8 +330,23 @@ function isSameFile(a: string, b: string): boolean {
 	}
 }
 
+/** `options` over `defaults`: an option passed as undefined keeps its default, as a destructuring default does */
+function withDefaults<T extends object>(defaults: T, options: Partial<T>): T {
+	const given = Object.entries(options).filter(([, value]) => value !== undefined)
+	return { ...defaults, ...Object.fromEntries(given) }
+}
+
+/** the one of `items` with the latest `at`, the last of equal ones; null for none */
+function latestOf<T>(items: readonly T[], at: (item: T) => number): T | null {
+	return items.reduce<T | null>(
+		(found, each) => (found && at(found) > at(each) ? found : each),
+		null
+	)
+}
+
 /** an Agent's colour class, as editmd's `colorClass`: `agent-<slot>`, or `agent-unknown` for Outside edit */
-const slotClassOf = ({ slot }: LegendAgent) => (slot === null ? 'agent-unknown' : `agent-${slot}`)
+export const slotClassOf = ({ slot }: Pick<LegendAgent, 'slot'>) =>
+	slot === null ? 'agent-unknown' : `agent-${slot}`
 
 /**
  * a new editor process (`openWindow`, ADR-0008), File > New's (`path` null) told so through NEW_WINDOW_ENV, which
@@ -417,28 +430,41 @@ export class DocumentController {
 	 * (`#fieldOf`), so a fence typed into a paragraph's field stays in its text until the field opens again
 	 */
 	#fence: FenceParts | null = null
-	#run: Run = runDetached
-	#openInEditor: (path: string) => void = (path) => this.#openLinkedFile(path)
-	#chooseFolder: () => Promise<string | null> = chooseFolderWithPicker
-	#closeWindow: () => void = exitProcess
-	#setWindowTitle: (title: string) => void = set_window_title
-	#writePrintable: (text: string, title: string, folder: string | null) => string =
-		writePrintablePage
-	#openWindow: (path: string | null) => void = openEditorWindow
-	#choosePaths: () => Promise<string[] | null> = choosePathsWithPicker
-	#recentFiles: RecentFiles = sharedRecentFiles()
-	#minimizeWindow: () => void = minimize_window
-	#zoomWindow: () => void = zoom_window
-	#activateWindow: () => void = activate_window
-	#toggleFullScreen: () => void = toggle_fullscreen
-	#readClipboardUrl: () => string | null = readClipboardUrl
-	#writeClipboard: (text: string) => boolean = writeClipboard
-	#describeFile: (path: string) => LinkTarget | null = describeFile
-	#isTextName: (path: string) => boolean = isTextName
-	#isImageName: (path: string) => boolean = isImageName
-	#startedByNew = false
-	#sendKeys: (keys: string) => void = sendKeystrokes
-	#fieldReplyMs = FIELD_REPLY_MS
+	/** each option a window is opened without (`OpenOptions`) */
+	#defaults(): Required<Omit<OpenOptions, 'untitledNumbers'>> {
+		return {
+			run: runDetached,
+			openInEditor: (path) => this.#openLinkedFile(path),
+			chooseFolder: chooseFolderWithPicker,
+			closeWindow: exitProcess,
+			setWindowTitle: set_window_title,
+			writePrintable: writePrintablePage,
+			openWindow: openEditorWindow,
+			choosePaths: choosePathsWithPicker,
+			recentFiles: sharedRecentFiles(),
+			minimizeWindow: minimize_window,
+			zoomWindow: zoom_window,
+			activateWindow: activate_window,
+			toggleFullScreen: toggle_fullscreen,
+			readClipboardUrl,
+			writeClipboard,
+			describeFile,
+			isTextName,
+			isImageName,
+			startedByNew: false,
+			sendKeys: sendKeystrokes,
+			fieldReplyMs: FIELD_REPLY_MS,
+			fetchImage: fetchImageHead,
+			// kept from `load`, so an untitled Document saved later listens where the window was told to
+			socketsDirectory: SOCKETS_DIRECTORY,
+			listAgentProcesses,
+			onExit: onProcessExit,
+			legendPreference: sharedLegendPreference(),
+			timeFormat: {}
+		}
+	}
+	/** the options the window was bound with (`#bind`), each one it was not given at its default */
+	#with = this.#defaults()
 	/**
 	 * set by the view: gives the open field (a Block's or Source mode's) the keys, true once it has them; false while no
 	 * field mounted for `fieldRevision` is painted yet
@@ -457,8 +483,6 @@ export class DocumentController {
 	#queued: (() => Promise<void>)[] = []
 	/** where the pointer went down on a Block, so the click its release makes can be told from a drag's */
 	#pressedAt: { x: number; y: number } | null = null
-	/** kept from `load`, so an untitled Document saved later listens where the window was told to */
-	#socketsDirectory = SOCKETS_DIRECTORY
 	/** what the window was opened with, so a file opened into it later keeps the same outside effects */
 	#options: OpenOptions = {}
 	/**
@@ -485,12 +509,10 @@ export class DocumentController {
 	#adopting = false
 	/** clears the save-status text once its fade-out is over */
 	#statusFade: ReturnType<typeof setTimeout> | undefined = undefined
-	#legendPreference: LegendPreference = sharedLegendPreference()
 	/** set by the legend's – and pill; null until then, so the stored state is read only once a legend shows */
 	#legendMinimized = $state<boolean | null>(null)
 	/** the stored state, read on the first look and kept: a window that never shows a legend never reads it */
 	#storedMinimized: boolean | null = null
-	#timeFormat: TimeFormat = {}
 	#imageSizes = new ImageSizes()
 	/**
 	 * the names the user gave Agents, here or in another window, by id, for the window's life: editmd's app-wide
@@ -579,7 +601,9 @@ export class DocumentController {
 	 * localStorage (highlights.ts:221-229): the legend's own choice, else the store's, read once a legend asks
 	 */
 	get legendMinimized(): boolean {
-		return this.#legendMinimized ?? (this.#storedMinimized ??= this.#legendPreference.minimized())
+		return (
+			this.#legendMinimized ?? (this.#storedMinimized ??= this.#with.legendPreference.minimized())
+		)
 	}
 
 	/**
@@ -631,7 +655,7 @@ export class DocumentController {
 			this.#openedNothing = true
 			return false
 		}
-		this.#recentFiles.add(path)
+		this.#with.recentFiles.add(path)
 		return true
 	}
 
@@ -644,7 +668,7 @@ export class DocumentController {
 	/** the open-failure alert's OK, Return or Escape: after a failed launch it ends the window too */
 	dismissOpenFailure(): void {
 		this.closeOverlay()
-		if (this.#openedNothing) this.#closeWindow()
+		if (this.#openedNothing) this.#with.closeWindow()
 	}
 
 	/** NSDocumentController's alert for the file at `path`, which could not be read as text because of `error` */
@@ -653,7 +677,7 @@ export class DocumentController {
 			basename(path),
 			error instanceof Error ? error : new Error(String(error))
 		)
-		this.#showOverlay({ kind: 'openFailed', ...failure })
+		this.overlay = { kind: 'openFailed', ...failure }
 	}
 
 	/**
@@ -710,7 +734,7 @@ export class DocumentController {
 				if (
 					await this.#fieldReady(() => this.#session === session && this.fieldRevision === revision)
 				)
-					this.#sendKeys(caretKeys(field, caret))
+					this.#with.sendKeys(caretKeys(field, caret))
 			} finally {
 				this.#mergePending = false
 			}
@@ -753,7 +777,7 @@ export class DocumentController {
 		documentFile.onMoved = (path) => {
 			if (this.#documentFile !== documentFile) return
 			this.#watch(documentFile)
-			this.#recentFiles.add(path)
+			this.#with.recentFiles.add(path)
 			this.#sync()
 		}
 		this.#watch(documentFile)
@@ -765,7 +789,7 @@ export class DocumentController {
 	 * window about to open this one's file, which only a window with a file answers
 	 */
 	#listen(): void {
-		const directory = this.#socketsDirectory
+		const directory = this.#with.socketsDirectory
 		// without a socket the editor still works: outside writes fall back to the agent processes
 		const listening = listenForReports(
 			directory,
@@ -776,7 +800,7 @@ export class DocumentController {
 			// a window about to open this file asks first, and this one comes forward instead (`#openInNewWindow`)
 			{
 				owns: (path) => this.#documentFile !== null && isSameFile(path, this.#documentFile.path),
-				focus: () => this.#activateWindow()
+				focus: () => this.#with.activateWindow()
 			}
 		).catch((error: Error) => this.#reportsUnreachable(error))
 		const stop = () => void listening.then((close) => close?.())
@@ -853,11 +877,10 @@ export class DocumentController {
 
 	/**
 	 * the Block the open field stands for: the first one the Edit session's range reaches, wherever a Disk merge moved
-	 * it. an index kept from the click went stale when a write from outside added or removed a Block above, and put the
-	 * field on another Block, whose text the next keystroke then replaced. a range a merge emptied sits
-	 * where its Block was, so the Block after it stands for it, or the last one at the end; a new Block's empty field
-	 * (`activeIsNew`) past the last Block gets the Blocks' count. null when nothing is open,
-	 * in Source mode, and 0 for an empty Document's first field (`startWriting`), which has no Block yet
+	 * it, so a write from outside that adds or removes a Block above keeps the field on its own Block. a range a merge
+	 * emptied sits where its Block was, so the Block after it stands for it, or the last one at the end; a new Block's
+	 * empty field (`activeIsNew`) past the last Block gets the Blocks' count. null when nothing is open, in Source mode,
+	 * and 0 for an empty Document's first field (`startWriting`), which has no Block yet
 	 */
 	#activeIndexOfSession(): number | null {
 		const session = this.#session
@@ -876,14 +899,11 @@ export class DocumentController {
 	 * (`changedRunsOf`)
 	 */
 	agentClassOf(block: Block): string | null {
-		// a list's or quote's new children and the ones taken away mark their own rows (`rowAgentClassOf`, `gapsAt`)
+		// a list's or quote's new children and the ones taken away mark their own rows (`rowMarkOf`, `gapsAt`)
 		const whole = this.#highlightsOf(block).filter(
 			({ highlight }) => !highlight.runs?.length && !highlight.gaps?.length
 		)
-		const latest = whole.reduce<(typeof whole)[number] | null>(
-			(found, each) => (found && found.highlight.at > each.highlight.at ? found : each),
-			null
-		)
+		const latest = latestOf(whole, ({ highlight }) => highlight.at)
 		return latest?.agent ? slotClassOf(latest.agent) : null
 	}
 
@@ -898,13 +918,7 @@ export class DocumentController {
 		if (this.activeIsNew && index === this.activeIndex) return null
 		const block = this.blocks[index]
 		if (!block) return null
-		const latest = this.#highlightsOf(block).reduce<{
-			highlight: Highlight
-			agent: LegendAgent | undefined
-		} | null>(
-			(found, each) => (found && found.highlight.at > each.highlight.at ? found : each),
-			null
-		)
+		const latest = latestOf(this.#highlightsOf(block), ({ highlight }) => highlight.at)
 		return latest?.agent ? slotClassOf(latest.agent) : null
 	}
 
@@ -913,12 +927,16 @@ export class DocumentController {
 	 * (`Highlight.runs`, editmd's `.agent-change`, highlights.ts:185-188), in document order: each run as the nth
 	 * occurrence of its text in the Block's painted text, with its Agent's colour class (`agent-<slot>`, or
 	 * `agent-unknown`), whose `-change` token washes it and `-deleted` token (70%) underlines it. a `whole` run is no
-	 * wash: its row takes the tint (`rowAgentClassOf`). empty when none does
+	 * wash: its row takes the tint (`rowMarkOf`). each comes with its highlight's own tooltip line, which editmd
+	 * titles each `.agent-change` run with (highlights.ts:184-186). empty when none does
 	 */
-	changedRunsOf(block: Block): readonly { runs: readonly ChangedRun[]; agentClass: string }[] {
-		return this.#highlightsOf(block).flatMap(({ highlight, agent }) => {
-			const runs = highlight.runs?.filter((run) => !run.whole) ?? []
-			return agent && runs.length > 0 ? [{ runs, agentClass: slotClassOf(agent) }] : []
+	changedRunsOf(
+		block: Block
+	): readonly { runs: readonly ChangedRun[]; agentClass: string; tooltip: string }[] {
+		return this.#highlightsOf(block).flatMap((found) => {
+			const runs = found.highlight.runs?.filter((run) => !run.whole) ?? []
+			if (!found.agent || runs.length === 0) return []
+			return [{ runs, agentClass: slotClassOf(found.agent), tooltip: this.#tooltipLineOf(found) }]
 		})
 	}
 
@@ -929,14 +947,14 @@ export class DocumentController {
 	 * top-level Block's index, its Agent's `-deleted` class and its tooltip
 	 */
 	#changedRows = $derived.by(() => {
-		const whole: { offset: number; at: number; agentClass: string }[] = []
+		const whole: { offset: number; at: number; agentClass: string; tooltip: string }[] = []
 		const gaps: { index: number; offset: number | null; colour: string; tooltip: string }[] = []
 		for (const highlight of this.highlights) {
 			const index = this.blocks.findIndex(
 				({ start, end }) => highlight.start < end && highlight.end > start
 			)
 			const block = this.blocks[index]
-			const agent = this.agents.find(({ id }) => id === highlight.author.id)
+			const agent = this.#agentOf(highlight.author.id)
 			if (!block || !agent) continue
 			const source = this.text.slice(block.start, block.end)
 			const offsetOf = (run: ChangedRun) => {
@@ -946,14 +964,19 @@ export class DocumentController {
 			for (const run of highlight.runs ?? []) {
 				const offset = run.whole ? offsetOf(run) : null
 				if (offset !== null)
-					whole.push({ offset, at: highlight.at, agentClass: slotClassOf(agent) })
+					whole.push({
+						offset,
+						at: highlight.at,
+						agentClass: slotClassOf(agent),
+						tooltip: this.#tooltipLineOf({ highlight, agent })
+					})
 			}
 			for (const gap of highlight.gaps ?? []) {
 				gaps.push({
 					index,
 					offset: gap.before ? offsetOf(gap.before) : null,
 					colour: `${slotClassOf(agent)}-deleted`,
-					tooltip: deletionTooltip(agent.name, highlight.at, gap.text, this.#timeFormat)
+					tooltip: deletionTooltip(agent.name, highlight.at, gap.text, this.#with.timeFormat)
 				})
 			}
 		}
@@ -961,18 +984,14 @@ export class DocumentController {
 	})
 
 	/**
-	 * the colour class that tints and bars the row of a list or quote painting the Document from `start` to `end`: the
-	 * latest Agent's change that made a child new there or another node (a `whole` run), as editmd marks such a child
-	 * as a block, with the tokens a whole Block takes; null for none
+	 * the mark of the row of a list or quote painting the Document from `start` to `end`: the latest Agent's change
+	 * that made a child new there or another node (a `whole` run), as editmd marks such a child as a block, with the
+	 * colour class that tints and bars it in the tokens a whole Block takes and its highlight's tooltip line; null for
+	 * none
 	 */
-	rowAgentClassOf(start: number, end: number): string | null {
+	rowMarkOf(start: number, end: number): { agentClass: string; tooltip: string } | null {
 		const inside = this.#changedRows.whole.filter(({ offset }) => offset >= start && offset < end)
-		return (
-			inside.reduce<(typeof inside)[number] | null>(
-				(found, each) => (found && found.at > each.at ? found : each),
-				null
-			)?.agentClass ?? null
-		)
+		return latestOf(inside, ({ at }) => at)
 	}
 
 	/**
@@ -993,26 +1012,27 @@ export class DocumentController {
 	 * by" and the text for one that only took text away (`Highlight.removed`); null when none overlaps it
 	 */
 	highlightTooltipOf(block: Block): string | null {
-		// children taken away from a list or quote are titled on their own lines (`gapsAt`), not on the Block
-		const found = this.#highlightsOf(block).filter(
-			({ highlight }) => !highlight.gaps?.length || highlight.runs?.length
+		// children made new or taken away in a list or quote are titled on their own rows and lines (`rowMarkOf`,
+		// `gapsAt`), not on the Block
+		const found = this.#highlightsOf(block).filter(({ highlight }) =>
+			highlight.runs?.length ? highlight.runs.some((run) => !run.whole) : !highlight.gaps?.length
 		)
 		if (found.length === 0) return null
-		return found
-			.map(({ highlight, agent }) => {
-				const name = agent?.name ?? highlight.author.name
-				// text taken away inside the Block is titled as editmd titles a deletion (highlights.ts:189-219)
-				return highlight.removed === undefined || highlight.gaps?.length
-					? highlightTooltip(name, highlight.at, this.#timeFormat)
-					: deletionTooltip(name, highlight.at, highlight.removed, this.#timeFormat)
-			})
-			.join('\n')
+		return found.map((each) => this.#tooltipLineOf(each)).join('\n')
+	}
+
+	/** one highlight's tooltip line, with its Agent's shown name, renamed or not */
+	#tooltipLineOf({ highlight, agent }: FoundHighlight) {
+		const name = agent?.name ?? highlight.author.name
+		// text taken away inside the Block is titled as editmd titles a deletion (highlights.ts:189-219)
+		return highlight.removed === undefined || highlight.gaps?.length
+			? highlightTooltip(name, highlight.at, this.#with.timeFormat)
+			: deletionTooltip(name, highlight.at, highlight.removed, this.#with.timeFormat)
 	}
 
 	/** a Deletion line's colour class: `agent-<slot>-deleted`, or `agent-unknown-deleted` for Outside edit */
 	deletionClassOf(deletion: Deletion): string {
-		const slot = this.agents.find(({ id }) => id === deletion.author.id)?.slot ?? null
-		return slot === null ? 'agent-unknown-deleted' : `agent-${slot}-deleted`
+		return `${slotClassOf(this.#agentOf(deletion.author.id) ?? { slot: null })}-deleted`
 	}
 
 	/**
@@ -1020,19 +1040,20 @@ export class DocumentController {
 	 * <time>:" and the removed text, the name as the legend shows it
 	 */
 	deletionTooltipOf(deletion: Deletion): string {
-		const name =
-			this.agents.find(({ id }) => id === deletion.author.id)?.name ?? deletion.author.name
-		return deletionTooltip(name, deletion.at, deletion.text, this.#timeFormat)
+		const name = this.#agentOf(deletion.author.id)?.name ?? deletion.author.name
+		return deletionTooltip(name, deletion.at, deletion.text, this.#with.timeFormat)
 	}
 
 	/** every Agent highlight overlapping `block`, in document order, each with the legend's row for its Agent */
-	#highlightsOf(block: Block): { highlight: Highlight; agent: LegendAgent | undefined }[] {
+	#highlightsOf(block: Block): FoundHighlight[] {
 		return this.highlights
 			.filter(({ start, end }) => start < block.end && end > block.start)
-			.map((highlight) => ({
-				highlight,
-				agent: this.agents.find(({ id }) => id === highlight.author.id)
-			}))
+			.map((highlight) => ({ highlight, agent: this.#agentOf(highlight.author.id) }))
+	}
+
+	/** the legend's row for the Agent `id`, undefined when it has none */
+	#agentOf(id: string): LegendAgent | undefined {
+		return this.agents.find((agent) => agent.id === id)
 	}
 
 	/**
@@ -1147,7 +1168,7 @@ export class DocumentController {
 			y !== undefined &&
 			Math.hypot(x - pressed.x, y - pressed.y) > DRAG_DISTANCE
 		if (cmd && href !== null) this.#followLink(href)
-		else if (!dragged) this.openBlock(index)
+		else if (!dragged) this.#afterFieldWork(() => this.openBlock(index))
 	}
 
 	/**
@@ -1176,10 +1197,10 @@ export class DocumentController {
 		const action =
 			destination.kind === 'ignore'
 				? destination
-				: linkAction(destination.href, this.#describeFile, this.#isTextName)
-		if (action.kind === 'confirm') this.#showOverlay({ kind: 'confirmLink', url: action.url })
-		else if (action.kind === 'ignore') this.#run('osascript', ['-e', 'beep'])
-		else carryOutLink(action, this.#run, this.#openInEditor)
+				: linkAction(destination.href, this.#with.describeFile, this.#with.isTextName)
+		if (action.kind === 'confirm') this.overlay = { kind: 'confirmLink', url: action.url }
+		else if (action.kind === 'ignore') this.#with.run('osascript', ['-e', 'beep'])
+		else carryOutLink(action, this.#with.run, this.#with.openInEditor)
 	}
 
 	/**
@@ -1204,16 +1225,8 @@ export class DocumentController {
 	 */
 	async #openInNewWindow(path: string): Promise<void> {
 		const real = realPathOf(path)
-		if (await focusWindowFor(this.#socketsDirectory, real, this.#ownSocket)) return
-		this.#openWindow(path)
-	}
-
-	/**
-	 * the one way a dialog opens, so a second replaces the first instead of stacking on it; a notice waits its
-	 * turn instead (`#showNotice`)
-	 */
-	#showOverlay(overlay: Overlay): void {
-		this.overlay = overlay
+		if (await focusWindowFor(this.#with.socketsDirectory, real, this.#ownSocket)) return
+		this.#with.openWindow(path)
 	}
 
 	/**
@@ -1221,14 +1234,14 @@ export class DocumentController {
 	 * AppKit queues a sheet begun while another is up
 	 */
 	#showNotice(message: string): void {
-		if (this.overlay === null) this.#showOverlay({ kind: 'saveNotice', message })
+		if (this.overlay === null) this.overlay = { kind: 'saveNotice', message }
 		else this.#pendingNotices.push(message)
 	}
 
 	/** the oldest queued notice, once no dialog is up */
 	#showNextNotice(): void {
 		const message = this.overlay === null ? this.#pendingNotices.shift() : undefined
-		if (message !== undefined) this.#showOverlay({ kind: 'saveNotice', message })
+		if (message !== undefined) this.overlay = { kind: 'saveNotice', message }
 	}
 
 	/** Cancel, Escape, or a dialog done with its work; a queued notice shows next */
@@ -1247,12 +1260,150 @@ export class DocumentController {
 		this.#showNextNotice()
 	}
 
+	/**
+	 * the open dialog as an alert (`Alert`): its text and buttons, Return pressing the primary button and Escape
+	 * `oncancel`; null for a dialog that is no alert
+	 */
+	alert = $derived.by(() => {
+		const overlay = this.overlay
+		const close = () => this.closeOverlay()
+		switch (overlay?.kind) {
+			/**
+			 * editmd's question before a link of another scheme opens in whichever app claims it, its own NSAlert in its
+			 * words (LinkOpener.swift:25-30): Open first, so Return presses it
+			 */
+			case 'confirmLink':
+				return {
+					testid: 'confirm-link',
+					notice: true,
+					title: 'Open this link?',
+					message: `It opens in another app:\n\n${overlay.url}`,
+					buttons: [
+						{ label: 'Cancel', testid: 'confirm-link-cancel', onclick: close },
+						{
+							label: 'Open',
+							testid: 'confirm-link-open',
+							onclick: () => this.openConfirmedLink(),
+							primary: true
+						}
+					],
+					oncancel: close
+				}
+			// NSDocument's close alert, in its words (AppKit Document.loctable); Save… when it leads to Save As
+			case 'saveChanges':
+				return {
+					testid: 'save-changes',
+					title: `Do you want to save the changes made to the document “${overlay.documentName}”?`,
+					message: 'Your changes will be lost if you don’t save them.',
+					buttons: [
+						{
+							label: 'Don’t Save',
+							testid: 'save-changes-dont-save',
+							onclick: () => this.discardChanges()
+						},
+						{ label: 'Cancel', testid: 'save-changes-cancel', onclick: close },
+						{
+							label: overlay.untitled ? 'Save…' : 'Save',
+							testid: 'save-changes-save',
+							onclick: () => this.saveChanges(),
+							primary: true
+						}
+					],
+					oncancel: close
+				}
+			// NSDocument's revert alert, in its words (AppKit Document.loctable)
+			case 'revert':
+				return {
+					testid: 'revert',
+					title: `Do you want to revert to the most recently saved version of the document “${overlay.documentName}”?`,
+					message: 'Your current changes will be lost.',
+					buttons: [
+						{ label: 'Cancel', testid: 'revert-cancel', onclick: close },
+						{
+							label: 'Revert',
+							testid: 'revert-revert',
+							onclick: () => this.revertConfirmed(),
+							primary: true
+						}
+					],
+					oncancel: close
+				}
+			/**
+			 * NSDocumentController's alert, in its words (AppKit Document.loctable and Common.loctable's OK, Foundation
+			 * FoundationErrors.loctable); after a launch that opened nothing, dismissing it ends the window
+			 */
+			case 'openFailed': {
+				const dismiss = () => this.dismissOpenFailure()
+				return {
+					testid: 'open-failed',
+					title: overlay.title,
+					message: overlay.message,
+					buttons: [{ label: 'OK', testid: 'open-failed-ok', onclick: dismiss, primary: true }],
+					oncancel: dismiss
+				}
+			}
+			/**
+			 * NSDocument's alert for File > Save's error, as editmd presents it (Document.swift:171-176): AppKit
+			 * Document.loctable's "could not be saved", Foundation FoundationErrors.loctable's reason, and Common.loctable's OK
+			 */
+			case 'saveFailed':
+				return {
+					testid: 'save-failed',
+					title: overlay.title,
+					message: overlay.message,
+					buttons: [{ label: 'OK', testid: 'save-failed-ok', onclick: close, primary: true }],
+					oncancel: close
+				}
+			/**
+			 * NSDocument's question for a locked file (editmd measured: the edit is written, the mode stays 444): Cancel is
+			 * the default, so Return and Escape both cancel; Save Anyway writes the file all the same
+			 */
+			case 'saveLocked':
+				return {
+					testid: 'save-locked',
+					title: `The document “${overlay.documentName}” could not be saved. The file is locked.`,
+					message: 'Do you want to save your changes to it anyway?',
+					buttons: [
+						{ label: 'Cancel', testid: 'save-locked-cancel', onclick: close, primary: true },
+						{ label: 'Save Anyway', testid: 'save-locked-anyway', onclick: () => this.saveAnyway() }
+					],
+					oncancel: close
+				}
+			// editmd's notice sheet (EditorWindowController `showNotice`): an NSAlert with only AppKit's default OK
+			case 'saveNotice':
+				return {
+					testid: 'save-notice',
+					notice: true,
+					title: 'Saved in a Different Encoding',
+					message: overlay.message,
+					buttons: [{ label: 'OK', testid: 'save-notice-ok', onclick: close, primary: true }],
+					oncancel: close
+				}
+			default:
+				return null
+		}
+	})
+
 	/** the link dialog's Open: the URL goes to `open`, as editmd hands it to NSWorkspace */
 	openConfirmedLink(): void {
 		if (this.overlay?.kind !== 'confirmLink') return
 		const { url } = this.overlay
 		this.closeOverlay()
-		this.#run('open', [url])
+		this.#with.run('open', [url])
+	}
+
+	/**
+	 * `action` after the field work in flight, in the queue of `#onField`, else at once: editmd takes the keys and the
+	 * clicks in order, so a Tab typed fast sinks its item before Escape or a click on another Block closes the field
+	 */
+	#afterFieldWork(action: () => void): void {
+		if (this.#fieldWork) this.#queued.push(async () => action())
+		else action()
+	}
+
+	/** Escape in the open Block field closes it once the field work in flight is done (`#afterFieldWork`) */
+	escapeField(): void {
+		this.#afterFieldWork(() => this.closeEdit())
 	}
 
 	closeEdit(): void {
@@ -1329,7 +1480,7 @@ export class DocumentController {
 	#breakAfterTyping(field: string, at: number): void {
 		this.#writeField(field)
 		this.#pendingReturn = { base: field, returns: [], shiftAt: at }
-		this.#sendKeys('shift-enter')
+		this.#with.sendKeys('shift-enter')
 	}
 
 	/**
@@ -1403,7 +1554,7 @@ export class DocumentController {
 			return
 		}
 		this.#pendingReturn = { base: this.#field, returns: [], shiftAt: null }
-		this.#sendKeys('shift-enter')
+		this.#with.sendKeys('shift-enter')
 	}
 
 	/**
@@ -1560,7 +1711,7 @@ export class DocumentController {
 		if (at === text.length) return
 		const session = this.#session
 		void this.#fieldReady(() => this.#session === session).then((ready) => {
-			if (ready) this.#sendKeys(caretKeys(text, at))
+			if (ready) this.#with.sendKeys(caretKeys(text, at))
 		})
 	}
 
@@ -1627,7 +1778,7 @@ export class DocumentController {
 		const fenced = lines.length > 2 && /^\s*(`{3,}|~{3,})\s*$/.test(lines.at(-1) ?? '')
 		// from the field's end, up past a last empty line and the closing fence, then to that line's end
 		const ups = (trailing ? 1 : 0) + (fenced ? 1 : 0)
-		this.#sendKeys(`cmd-down${' up'.repeat(ups)}${ups > 0 ? ' cmd-right' : ''}`)
+		this.#with.sendKeys(`cmd-down${' up'.repeat(ups)}${ups > 0 ? ' cmd-right' : ''}`)
 	}
 
 	/** where each Block paints, one row per Block in order, as the view measures them; none until a view sets it */
@@ -1677,7 +1828,7 @@ export class DocumentController {
 	 */
 	#probeKeys(keys: string, accept: (value: string) => boolean): Promise<string | null> {
 		return new Promise((resolve) => {
-			const timer = setTimeout(() => finish(null), this.#fieldReplyMs)
+			const timer = setTimeout(() => finish(null), this.#with.fieldReplyMs)
 			const finish = (value: string | null) => {
 				clearTimeout(timer)
 				this.#probeListener = null
@@ -1688,7 +1839,7 @@ export class DocumentController {
 				if (taken) finish(value)
 				return taken
 			}
-			this.#sendKeys(keys)
+			this.#with.sendKeys(keys)
 		})
 	}
 
@@ -1731,7 +1882,7 @@ export class DocumentController {
 				if (restored !== before) {
 					this.#remountField(before)
 					if (!settled || !(await this.#fieldReady())) return null
-					this.#sendKeys(selectKeys(before, settled))
+					this.#with.sendKeys(selectKeys(before, settled))
 					return settled
 				}
 				if (settled) return settled
@@ -1762,7 +1913,7 @@ export class DocumentController {
 	async #settleProbe(range: Range): Promise<void> {
 		const text = this.#field
 		this.#remountField(text)
-		if (await this.#fieldReady()) this.#sendKeys(selectKeys(text, range))
+		if (await this.#fieldReady()) this.#with.sendKeys(selectKeys(text, range))
 	}
 
 	/**
@@ -1812,7 +1963,7 @@ export class DocumentController {
 			const keys = toggleInlineKeys(state, format)
 			// a selection of whitespace only gets no marks: no keys, and the probe settled so ⇧⌘Z brings no sentinel back
 			if (keys === '') await this.#settleProbe(range)
-			else this.#sendKeys(keys)
+			else this.#with.sendKeys(keys)
 		})
 	}
 
@@ -1853,7 +2004,7 @@ export class DocumentController {
 		void this.#onField(async () => {
 			try {
 				if (await this.#fieldReady())
-					this.#sendKeys([caretKeys(state.text, at), keys, ...typed].join(' '))
+					this.#with.sendKeys([caretKeys(state.text, at), keys, ...typed].join(' '))
 			} finally {
 				this.#keysBeforeField = null
 			}
@@ -1893,7 +2044,7 @@ export class DocumentController {
 	#fieldKey(command: FieldCommand | 'copy', editing: boolean): void {
 		if (editing || !this.#refocusField()) return
 		if (command === 'copy' || command === 'paste') this.#echo = { command, at: Date.now() }
-		this.#sendKeys(command === 'copy' ? 'cmd-c' : FIELD_KEYS[command])
+		this.#with.sendKeys(command === 'copy' ? 'cmd-c' : FIELD_KEYS[command])
 	}
 
 	/**
@@ -1917,7 +2068,7 @@ export class DocumentController {
 		const text = this.#field
 		void this.#onField(async () => {
 			if (!(await this.#fieldReady())) return
-			this.#sendKeys(caretKeys(text, at))
+			this.#with.sendKeys(caretKeys(text, at))
 			this.#fieldKey('paste', false)
 		})
 	}
@@ -1948,16 +2099,17 @@ export class DocumentController {
 	#commands: Record<Exclude<MenuCommand, FormatCommand>, (options: Required<RunOptions>) => void> =
 		{
 			revert: () => this.revert(),
-			openRecent: () => this.#showOverlay({ kind: 'openRecent', paths: this.#recentFiles.list() }),
+			openRecent: () =>
+				(this.overlay = { kind: 'openRecent', paths: this.#with.recentFiles.list() }),
 			table: () => this.#insertBlock(TABLE),
 			horizontalRule: () => this.#insertBlock(HORIZONTAL_RULE),
 			loadRemoteImages: () => this.allowRemoteImages(),
-			commandPalette: () => this.#showOverlay({ kind: 'commandPalette' }),
+			commandPalette: () => (this.overlay = { kind: 'commandPalette' }),
 			save: () => this.#save(),
 			saveAs: () => this.#showSaveAs(false),
 			open: () => void this.#open(),
 			// one Document per window and process (ADR-0008), so New is a new editor with no file
-			new: () => this.#openWindow(null),
+			new: () => this.#with.openWindow(null),
 			close: () => this.#close(),
 			/**
 			 * ⌘Q: one Document per process (ADR-0008), so quitting is closing this window as NSDocument's quit closes each
@@ -1990,23 +2142,27 @@ export class DocumentController {
 			link: () => this.#showAddLink(),
 			toggleSource: () => this.#toggleSource(),
 			// AppKit's View > Enter Full Screen, ⌃⌘F
-			toggleFullScreen: () => this.#toggleFullScreen(),
+			toggleFullScreen: () => this.#with.toggleFullScreen(),
 			// View > Zoom scales the window's whole page, so it goes to the window's ThemeController
 			zoomIn: () => themeController.zoomIn(),
 			zoomOut: () => themeController.zoomOut(),
 			actualSize: () => themeController.actualSize()
 		}
 
+	/** the window's selection holds text: the menus rebuild only as a selection starts or ends, not on every drag move */
+	#hasSelection = $derived(this.selectedText !== null)
+
+	/** what titles and enables the menu items for this Document, as editmd's `validateMenuItem` reads it */
+	#menuState = $derived({
+		sourceMode: this.sourceMode,
+		remoteImagesAllowed: this.remoteImagesAllowed,
+		hasFile: this.hasFile,
+		hasSelection: this.#hasSelection,
+		fieldFocused: this.#fieldOpen
+	})
+
 	/** every menu item for the command palette, titled and enabled for this Document as editmd's `validateMenuItem` */
-	paletteEntries = $derived(
-		menuEntries({
-			sourceMode: this.sourceMode,
-			remoteImagesAllowed: this.remoteImagesAllowed,
-			hasFile: this.hasFile,
-			hasSelection: this.selectedText !== null,
-			fieldFocused: this.#fieldOpen
-		})
-	)
+	paletteEntries = $derived(menuEntries(this.#menuState))
 
 	/**
 	 * the command palette's Return or click on the entry for `command`: the palette closes first, so a command
@@ -2025,21 +2181,12 @@ export class DocumentController {
 	recent = $state.raw<readonly string[]>([])
 
 	/** the in-window menu bar's menus (gap G2), titled and enabled for this Document as editmd's `validateMenuItem` */
-	menus = $derived(
-		menuBar({
-			sourceMode: this.sourceMode,
-			remoteImagesAllowed: this.remoteImagesAllowed,
-			recent: this.recent,
-			hasFile: this.hasFile,
-			hasSelection: this.selectedText !== null,
-			fieldFocused: this.#fieldOpen
-		})
-	)
+	menus = $derived(menuBar({ ...this.#menuState, recent: this.recent }))
 
 	/** a click on menu `index`'s title, or the pointer moving onto it while another menu is open: it drops down */
 	openMenu(index: number): void {
-		this.recent = this.#recentFiles.list()
-		this.#showOverlay({ kind: 'menu', index })
+		this.recent = this.#with.recentFiles.list()
+		this.overlay = { kind: 'menu', index }
 	}
 
 	/**
@@ -2069,13 +2216,13 @@ export class DocumentController {
 
 	/** what a menu bar item does: a window action, an Open Recent entry, or a MenuCommand through `run` */
 	#runBarCommand(command: BarCommand, path: string | undefined): void {
-		if (command === 'minimize') this.#minimizeWindow()
-		else if (command === 'zoomWindow') this.#zoomWindow()
+		if (command === 'minimize') this.#with.minimizeWindow()
+		else if (command === 'zoomWindow') this.#with.zoomWindow()
 		// every window comes forward, as editmd's `arrangeInFront` raises every window of its one process (MainMenu.swift:121)
 		else if (command === 'bringAllToFront') {
-			this.#activateWindow()
-			void bringAllToFront(this.#socketsDirectory, this.#ownSocket)
-		} else if (command === 'clearRecent') this.#recentFiles.clear()
+			this.#with.activateWindow()
+			void bringAllToFront(this.#with.socketsDirectory, this.#ownSocket)
+		} else if (command === 'clearRecent') this.#with.recentFiles.clear()
 		else if (command === 'cut' || command === 'pasteAndMatchStyle' || command === 'selectAll')
 			this.#fieldKey(command, false)
 		// an Open Recent file opens as the Open Recent list's choosing does
@@ -2092,7 +2239,7 @@ export class DocumentController {
 	#history(direction: 'undo' | 'redo', editing: boolean): void {
 		if (editing) return
 		if (this.#fieldOpen) {
-			if (this.#refocusField()) this.#sendKeys(direction === 'undo' ? 'cmd-z' : 'cmd-shift-z')
+			if (this.#refocusField()) this.#with.sendKeys(direction === 'undo' ? 'cmd-z' : 'cmd-shift-z')
 			return
 		}
 		const changed = direction === 'undo' ? this.#document.undo() : this.#document.redo()
@@ -2109,7 +2256,8 @@ export class DocumentController {
 	 */
 	#copy(editing: boolean): void {
 		if (editing) return
-		if (this.selectedText !== null) this.#writeClipboard(copiedText(this.text, this.selectedText))
+		if (this.selectedText !== null)
+			this.#with.writeClipboard(copiedText(this.text, this.selectedText))
 		else if (this.#fieldOpen) this.#fieldKey('copy', false)
 	}
 
@@ -2134,8 +2282,8 @@ export class DocumentController {
 	 */
 	#showSaveError(error: Error, closeAfter: boolean): void {
 		if (error instanceof FileLockedError)
-			this.#showOverlay({ kind: 'saveLocked', documentName: this.#documentName, closeAfter })
-		else this.#showOverlay({ kind: 'saveFailed', ...saveFailure(this.#documentName, error) })
+			this.overlay = { kind: 'saveLocked', documentName: this.#documentName, closeAfter }
+		else this.overlay = { kind: 'saveFailed', ...saveFailure(this.#documentName, error) }
 	}
 
 	/**
@@ -2149,15 +2297,14 @@ export class DocumentController {
 		const { closeAfter } = this.overlay
 		this.#closeOverlayFor(() => {
 			const error = documentFile.saveAnyway()
-			if (error)
-				this.#showOverlay({ kind: 'saveFailed', ...saveFailure(this.#documentName, error) })
-			else if (closeAfter && !this.#document.isDirty) this.#closeWindow()
+			if (error) this.overlay = { kind: 'saveFailed', ...saveFailure(this.#documentName, error) }
+			else if (closeAfter && !this.#document.isDirty) this.#with.closeWindow()
 		})
 	}
 
 	/** File > Open…: every picked file opens as a Document of its own (`#openDocument`); a cancel opens nothing */
 	async #open(): Promise<void> {
-		const paths = await this.#choosePaths()
+		const paths = await this.#with.choosePaths()
 		for (const path of paths ?? []) this.#openDocument(path)
 	}
 
@@ -2172,7 +2319,7 @@ export class DocumentController {
 	#openDocument(path: string): void {
 		// a window File > New opened is never the launch's untitled one, so AppKit opens beside it
 		const intoThisWindow =
-			!this.#startedByNew && this.#documentFile === null && !this.#document.isDirty
+			!this.#with.startedByNew && this.#documentFile === null && !this.#document.isDirty
 		try {
 			// the window stays the same window, so what it was set to (Load Remote Images) holds for the file
 			if (intoThisWindow) this.#openFile(path, this.#options)
@@ -2181,9 +2328,9 @@ export class DocumentController {
 			this.#showOpenFailure(path, error)
 			return
 		}
-		if (intoThisWindow) this.#setWindowTitle(basename(path))
+		if (intoThisWindow) this.#with.setWindowTitle(basename(path))
 		else void this.#openInNewWindow(path)
-		this.#recentFiles.add(path)
+		this.#with.recentFiles.add(path)
 	}
 
 	/** an entry of the Open Recent list: it opens as Open… would open it, and the list closes */
@@ -2195,7 +2342,7 @@ export class DocumentController {
 	/** Open Recent's Clear Menu: the list is emptied for every window, and closes */
 	clearRecentFiles(): void {
 		if (this.overlay?.kind !== 'openRecent') return
-		this.#recentFiles.clear()
+		this.#with.recentFiles.clear()
 		this.closeOverlay()
 	}
 
@@ -2210,7 +2357,7 @@ export class DocumentController {
 	 * the view last painted the Blocks (`onBlockRows`), for a drop on an element inside a Block
 	 */
 	dropFiles(paths: readonly string[], y: number, rows: readonly Row[] = this.#blockRows()): void {
-		const { markdown, others } = sortDrop(paths, this.folder, this.#isImageName)
+		const { markdown, others } = sortDrop(paths, this.folder, this.#with.isImageName)
 		if (markdown !== null) {
 			if (!this.sourceMode) this.closeEdit()
 			if (this.sourceMode) this.#dropIntoSource(markdown)
@@ -2234,9 +2381,13 @@ export class DocumentController {
 
 	/** a dropped file that is no image: a text file opens as a Document, anything else is shown in Finder (LinkPolicy) */
 	#openDropped(path: string): void {
-		const action = linkAction(pathToFileURL(path).href, this.#describeFile, this.#isTextName)
+		const action = linkAction(
+			pathToFileURL(path).href,
+			this.#with.describeFile,
+			this.#with.isTextName
+		)
 		if (action.kind === 'openInEditor') this.#openDocument(action.path)
-		else carryOutLink(action, this.#run, this.#openInEditor)
+		else carryOutLink(action, this.#with.run, this.#with.openInEditor)
 	}
 
 	/**
@@ -2245,14 +2396,14 @@ export class DocumentController {
 	 */
 	#showSaveAs(closeAfter: boolean): void {
 		const path = this.#documentFile?.path ?? null
-		this.#showOverlay({
+		this.overlay = {
 			kind: 'saveAs',
 			name: path ? basename(path) : `${this.#documentName}.md`,
 			folder: path ? dirname(path) : join(homedir(), 'Documents'),
 			replacing: null,
 			failure: null,
 			closeAfter
-		})
+		}
 	}
 
 	/**
@@ -2264,14 +2415,14 @@ export class DocumentController {
 		if (this.#document.isDirty) this.#documentFile?.save()
 		this.#sync()
 		if (!this.#document.isDirty) {
-			this.#closeWindow()
+			this.#with.closeWindow()
 			return
 		}
-		this.#showOverlay({
+		this.overlay = {
 			kind: 'saveChanges',
 			documentName: this.#documentName,
 			untitled: this.#documentFile === null
-		})
+		}
 	}
 
 	/**
@@ -2294,7 +2445,7 @@ export class DocumentController {
 		}
 		if (this.#document.isDirty) return
 		this.closeOverlay()
-		this.#closeWindow()
+		this.#with.closeWindow()
 	}
 
 	/** the close question's Don't Save: the window closes, the edits go with it, the exit that follows saving nothing */
@@ -2302,7 +2453,7 @@ export class DocumentController {
 		if (this.overlay?.kind !== 'saveChanges') return
 		this.#discarded = true
 		this.closeOverlay()
-		this.#closeWindow()
+		this.#with.closeWindow()
 	}
 
 	/**
@@ -2323,7 +2474,7 @@ export class DocumentController {
 	 * markdown engine and titled with the Document's name, handed to `open`, so the browser prints it
 	 */
 	#print(): void {
-		this.#run('open', [this.#writePrintable(this.text, this.#documentName, this.folder)])
+		this.#with.run('open', [this.#with.writePrintable(this.text, this.#documentName, this.folder)])
 	}
 
 	/**
@@ -2332,7 +2483,7 @@ export class DocumentController {
 	 */
 	revert(): void {
 		if (!this.#documentFile || !this.#document.isDirty) return
-		this.#showOverlay({ kind: 'revert', documentName: this.#documentName })
+		this.overlay = { kind: 'revert', documentName: this.#documentName }
 	}
 
 	/**
@@ -2353,7 +2504,7 @@ export class DocumentController {
 
 	/** the Save As dialog's folder button: the picker's choice replaces the folder, a cancel keeps it */
 	async chooseSaveFolder(): Promise<void> {
-		const folder = await this.#chooseFolder()
+		const folder = await this.#with.chooseFolder()
 		if (folder === null || this.overlay?.kind !== 'saveAs') return
 		this.overlay = { ...this.overlay, folder, failure: null }
 	}
@@ -2428,10 +2579,10 @@ export class DocumentController {
 		}
 		this.closeOverlay()
 		// NSDocument notes a saved-as file as recent, as it does an opened one
-		this.#recentFiles.add(path)
+		this.#with.recentFiles.add(path)
 		// the window's title follows the file through the sync, its name and no Edited mark now it is saved
 		this.#sync()
-		if (overlay.closeAfter) this.#closeWindow()
+		if (overlay.closeAfter) this.#with.closeWindow()
 	}
 
 	/**
@@ -2458,7 +2609,7 @@ export class DocumentController {
 		this.#sync()
 		// editmd puts Source mode's caret at the start (`setSelectionRange(0, 0)`, editor.ts:318-322)
 		void this.#fieldReady(() => this.sourceMode).then((ready) => {
-			if (ready) this.#sendKeys('cmd-up')
+			if (ready) this.#with.sendKeys('cmd-up')
 		})
 	}
 
@@ -2556,7 +2707,7 @@ export class DocumentController {
 	tabInField(key: string, modifiers: Modifiers): boolean {
 		const kind = this.activeIsNew ? undefined : this.blocks[this.activeIndex ?? -1]?.kind
 		const effects: TabEffects = {
-			type: this.#sendKeys,
+			type: this.#with.sendKeys,
 			focus: () => this.#refocusField(),
 			format: (command, refused) => this.#format(command, refused)
 		}
@@ -2586,8 +2737,9 @@ export class DocumentController {
 	 * a Format command rewrites the Active block's field; with none open it acts at editmd's load caret
 	 * (`#openAtLoadCaret`). in Source mode it does nothing, and so does a command editmd refuses or that changes nothing
 	 * (`formatBlock` gives null): no remount, no change, and a field opened for it closes again. on an open field it is an
-	 * Undo step of its own (`#cutUndoStep`). the open field's caret is read first (`readSelection`), as it decides what
-	 * the command does in an item or a paragraph of a list or quote, and the caret is put back where the command moved
+	 * Undo step of its own (`#cutUndoStep`). the open field's selection is read first (`readSelection`), as its caret
+	 * decides what the command does in an item or a paragraph of a list or quote, and Indent and Outdent act on every
+	 * item a selection spans; the caret is put back where the command moved
 	 * its text; a command no caret changes still runs when the field does not answer. `refused` runs once an open field's
 	 * command gives null
 	 */
@@ -2616,7 +2768,8 @@ export class DocumentController {
 			if (!range && !caretFree) return
 			const before = this.#sourceOf(this.#field)
 			const caret = range ? range.start + this.#shift : undefined
-			const result = formatBlock(command, before, caret)
+			const end = range ? range.end + this.#shift : undefined
+			const result = formatBlock(command, before, caret, end)
 			if (result === null) {
 				if (range) await this.#settleProbe(range)
 				refused?.()
@@ -2672,11 +2825,11 @@ export class DocumentController {
 	#showAddLink(): void {
 		if (this.sourceMode) return
 		const current = this.activeIndex === null ? this.#linkAtLoadCaret() : null
-		this.#showOverlay({
+		this.overlay = {
 			kind: 'addLink',
-			url: current ?? this.#readClipboardUrl() ?? '',
+			url: current ?? this.#with.readClipboardUrl() ?? '',
 			edit: current !== null
-		})
+		}
 	}
 
 	/**
@@ -2761,7 +2914,7 @@ export class DocumentController {
 			const caret = unlinking
 				? caretThrough(textEdits(before, source), end)
 				: source.length - (before.length - end)
-			this.#sendKeys(caretKeys(this.#field, this.#fieldCaret(caret)))
+			this.#with.sendKeys(caretKeys(this.#field, this.#fieldCaret(caret)))
 		})
 	}
 
@@ -2796,11 +2949,11 @@ export class DocumentController {
 	 */
 	renameAgent(id: string, name: string): void {
 		const trimmed = name.trim()
-		const shown = this.agents.find((agent) => agent.id === id)?.name
+		const shown = this.#agentOf(id)?.name
 		if (trimmed === '' || trimmed === shown || !this.#agentLegend.rename(id, trimmed)) return
 		this.#agentNames.set(id, trimmed)
 		this.agents = this.#agentLegend.agents(this.highlights, this.deletions)
-		void sendRename(this.#socketsDirectory, { id, name: trimmed }, this.#ownSocket)
+		void sendRename(this.#with.socketsDirectory, { id, name: trimmed }, this.#ownSocket)
 	}
 
 	/**
@@ -2831,7 +2984,7 @@ export class DocumentController {
 	 */
 	minimizeLegend(minimized: boolean): void {
 		this.#legendMinimized = minimized
-		this.#legendPreference.setMinimized(minimized)
+		this.#with.legendPreference.setMinimized(minimized)
 	}
 
 	/** a local image's natural size, read once per path while this Document is open; null when unknown */
@@ -2840,8 +2993,8 @@ export class DocumentController {
 	}
 
 	/**
-	 * no file at a local image's path, read once per path as `imageSizeOf`: the View paints its alt text, small, as
-	 * WebKit paints a broken image, where a file of unknown size keeps the fallback box
+	 * no file at a local image's path, read once per path as `imageSizeOf`: the View paints WebKit's broken-image box,
+	 * where a file of unknown size keeps the fallback box
 	 */
 	isImageMissing(path: string): boolean {
 		return this.#imageSizes.isMissing(path)
@@ -2849,44 +3002,45 @@ export class DocumentController {
 
 	/**
 	 * a loaded remote image's natural size, read from its bytes as a local image's header is (`imageSize`), since GPUI's
-	 * <img> needs explicit dimensions; null until they came, or when they hold no image. its bytes are asked for once
-	 * per URL while this Document is open
+	 * <img> needs explicit dimensions, and the bytes themselves when the read holds the whole image, so the <img>
+	 * paints them and fetches nothing again; null until they came, or when they hold no image. its bytes are asked for
+	 * once per URL while this Document is open
 	 */
-	remoteImageSizeOf(url: string): Size | null {
+	remoteImageOf(url: string): RemoteImage | null {
 		if (!this.#remoteAsked.has(url)) {
 			this.#remoteAsked.add(url)
-			const sizes = this.#remoteSizes
+			const images = this.#remoteImages
 			const failed = this.#remoteFailed
-			this.#fetchImage(url).then(
+			this.#with.fetchImage(url).then(
 				(bytes) => {
 					const size = imageSize(bytes)
-					if (size) sizes.set(url, size)
+					// a read stopped at the cap may hold only the image's head, which the <img> fetches whole by its URL
+					if (size) images.set(url, { size, bytes: bytes.length < MAX_BYTES ? bytes : null })
 					else failed.add(url)
 				},
-				// an image that cannot be fetched (a 404, no answer) is a broken one, which paints its alt text
+				// an image that cannot be fetched (a 404, no answer) paints WebKit's broken-image box
 				() => void failed.add(url)
 			)
 		}
-		return this.#remoteSizes.get(url) ?? null
+		return this.#remoteImages.get(url) ?? null
 	}
 
 	/**
 	 * a remote image that could not be loaded once allowed: no answer, an error such as a 404, or bytes that hold no
-	 * image. ImageView paints its alt text, as for a missing local file, where GPUI's <img> would paint its own
-	 * "img: load failed" box in the fixed size and push the text aside
+	 * image. ImageView paints WebKit's broken-image box, as for a missing local file, where GPUI's <img> would paint
+	 * its own "img: load failed" box in the fixed size and push the text aside
 	 */
 	isRemoteImageFailed(url: string): boolean {
 		return this.#remoteFailed.has(url)
 	}
 
-	/** the remote images' sizes as they come, which the views repaint from; reset with each Document */
-	#remoteSizes = new SvelteMap<string, Size>()
+	/** the remote images as they come, which the views repaint from; reset with each Document */
+	#remoteImages = new SvelteMap<string, RemoteImage>()
 	/** the remote images that failed to load (`isRemoteImageFailed`), which the views repaint from */
 	#remoteFailed = new SvelteSet<string>()
 	/** the URLs asked for already, so a repaint never asks again; nothing renders from it */
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders from it
 	#remoteAsked = new Set<string>()
-	#fetchImage: (url: string) => Promise<Uint8Array> = fetchImageHead
 
 	/** View > Load Remote Images: fetch this Document's blocked images */
 	allowRemoteImages(): void {
@@ -2894,37 +3048,10 @@ export class DocumentController {
 	}
 
 	#bind(documentFile: DocumentFile | null, document: Document, options: OpenOptions): void {
-		const {
-			run = runDetached,
-			openInEditor = (path: string) => this.#openLinkedFile(path),
-			chooseFolder = chooseFolderWithPicker,
-			closeWindow = exitProcess,
-			setWindowTitle = set_window_title,
-			writePrintable = writePrintablePage,
-			openWindow = openEditorWindow,
-			choosePaths = choosePathsWithPicker,
-			recentFiles = sharedRecentFiles(),
-			minimizeWindow = minimize_window,
-			zoomWindow = zoom_window,
-			activateWindow = activate_window,
-			toggleFullScreen = toggle_fullscreen,
-			readClipboardUrl: readClipboard = readClipboardUrl,
-			writeClipboard: writeToClipboard = writeClipboard,
-			describeFile: describe = describeFile,
-			isTextName: textName = isTextName,
-			isImageName: imageName = isImageName,
-			startedByNew = false,
-			sendKeys = sendKeystrokes,
-			fieldReplyMs = FIELD_REPLY_MS,
-			fetchImage = fetchImageHead,
-			socketsDirectory = SOCKETS_DIRECTORY,
-			listAgentProcesses: listProcesses = listAgentProcesses,
-			onExit = onProcessExit,
-			legendPreference = sharedLegendPreference(),
-			timeFormat = {},
-			untitledNumbers
-		} = options
 		this.#options = options
+		this.#with = withDefaults(this.#defaults(), options)
+		const { onExit } = this.#with
+		const { untitledNumbers } = options
 		/**
 		 * once per registrar, however often the window rebinds; the handler saves whichever Document is open then, and
 		 * an untitled window's number is free again once it ends
@@ -2943,11 +3070,9 @@ export class DocumentController {
 		this.#discarded = false
 		this.#exiting = false
 		this.#openedNothing = false
-		this.#legendPreference = legendPreference
 		// the store holds what any window chose last, so a new Document reads it again on its first legend
 		this.#legendMinimized = null
 		this.#storedMinimized = null
-		this.#timeFormat = timeFormat
 		this.#unwatch?.()
 		this.#unwatch = null
 		this.#stopReports?.()
@@ -2958,30 +3083,8 @@ export class DocumentController {
 		this.#session = null
 		this.#field = this.#fieldOf('', false)
 		this.#emptyPair = null
-		this.#run = run
-		this.#openInEditor = openInEditor
-		this.#chooseFolder = chooseFolder
-		this.#closeWindow = closeWindow
-		this.#setWindowTitle = setWindowTitle
-		this.#writePrintable = writePrintable
-		this.#openWindow = openWindow
-		this.#choosePaths = choosePaths
-		this.#recentFiles = recentFiles
-		this.#minimizeWindow = minimizeWindow
-		this.#zoomWindow = zoomWindow
-		this.#activateWindow = activateWindow
-		this.#toggleFullScreen = toggleFullScreen
-		this.#readClipboardUrl = readClipboard
-		this.#writeClipboard = writeToClipboard
-		this.#describeFile = describe
-		this.#isTextName = textName
-		this.#isImageName = imageName
-		this.#startedByNew = startedByNew
-		this.#sendKeys = sendKeys
-		this.#fieldReplyMs = fieldReplyMs
-		this.#fetchImage = fetchImage
 		// a fresh cache per Document, as for local images
-		this.#remoteSizes = new SvelteMap()
+		this.#remoteImages = new SvelteMap()
 		this.#remoteFailed = new SvelteSet()
 		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders from it
 		this.#remoteAsked = new Set()
@@ -2991,9 +3094,8 @@ export class DocumentController {
 		this.documentGeneration++
 		this.#pressedAt = null
 		this.selectedText = null
-		this.#socketsDirectory = socketsDirectory
 		// a file's own takes over in `#follow`
-		this.#attribution = new Attribution(listProcesses)
+		this.#attribution = new Attribution(this.#with.listAgentProcesses)
 		this.#listen()
 		this.#clickedLink = null
 		// the notices were about the file this window has let go of
@@ -3082,7 +3184,7 @@ export class DocumentController {
 		const title = `${this.#documentName}${this.#document.isDirty ? EDITED : ''}`
 		if (title === this.#shownTitle || this.#exiting) return
 		this.#shownTitle = title
-		this.#setWindowTitle(title)
+		this.#with.setWindowTitle(title)
 	}
 }
 

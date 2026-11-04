@@ -50,15 +50,14 @@
 	/**
 	 * the typed name: transient dialog text, so it lives here (ADR-0011), starting from the prefill. read once:
 	 * choosing a folder or answering the replace question hands the dialog a new overlay, which must not put
-	 * the prefill back over what was typed (a `$derived` did, measured headlessly)
+	 * the prefill back over what was typed
 	 */
 	let name = $state(untrack(() => initialName))
 
 	/**
 	 * NSSavePanel opens with the name's base selected, so typing replaces "render" of "render.md" and keeps the
 	 * extension: the field's own keys select it (gap G1), from the line's start one shift-arrow per character, once the
-	 * field has the keys. the prefill is read once, so a
-	 * later name never selects again
+	 * field has the keys. the prefill is read once, so a later name never selects again
 	 */
 	const selectBase = untrack(() => {
 		const dot = initialName.lastIndexOf('.')

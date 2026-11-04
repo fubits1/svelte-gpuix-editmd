@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       gpuix-svelte:
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: 0.4.1
+        version: 0.4.1
       pele:
         specifier: 1.10.0
         version: 1.10.0
@@ -1003,8 +1003,8 @@ packages:
     resolution: {integrity: sha512-RwMTC61u7hrG3ZJMkZQOK4JLJrKS8QtoTii63EmWvFXHqycY9FObBJQCbsLxSO8kjKhWE5kV1GC+Vb1g3RI0Zg==}
     engines: {node: '>=18'}
 
-  gpuix-svelte@0.3.0:
-    resolution: {integrity: sha512-imi90pPPL8JEBTtOID8x5fly2eWTlcG3YYKL38w3twzkJI1/IL/vKeSOBhn23PQmTL3S4RoCXqIMPIbV7qtiTg==}
+  gpuix-svelte@0.4.1:
+    resolution: {integrity: sha512-DVFMNSpELkwC+j8FJvUtIpwJS2T1gtvn3ckRcjzP/iv8YkM3eH5yqhAuSjIk8XfzUfVkoHOfzaH2CbMuVPE4sw==}
     engines: {bun: '>=1.4.0', node: '>=24.0.0'}
     hasBin: true
     bundledDependencies:
@@ -2433,7 +2433,7 @@ snapshots:
 
   globals@17.13.0: {}
 
-  gpuix-svelte@0.3.0:
+  gpuix-svelte@0.4.1:
     dependencies:
       '@gpuix/native': 0.11.0
       acorn: 8.19.0
