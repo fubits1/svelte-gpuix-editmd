@@ -218,7 +218,7 @@ function unlinked(
 }
 
 /** an inline code span: its backtick run, the run again closing it, and the code between them */
-const CODE_SPAN = /(?<!`)(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g
+export const CODE_SPAN = /(?<!`)(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g
 
 /** the code span whose code holds all of `[start, end)`, with where it and its code start and end; null for none */
 function codeSpanAround(source: string, start: number, end: number) {

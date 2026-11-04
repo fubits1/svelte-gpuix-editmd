@@ -35,10 +35,21 @@ describe('Document', () => {
 		expect(document.text).toBe('one\n\ntwo\n')
 	})
 
-	test('a new Block closed untouched leaves the text and the undo history as they were', () => {
+	// editmd's Return makes an empty paragraph that stays, one undo step; only the document's last goes unwritten
+	test('a new Block closed untouched stays as an empty paragraph, one undo step; the last one leaves nothing', () => {
 		const document = new Document('one\n\nthree\n')
 		document.openEditAfter(0).close()
-		expect([document.text, document.undo()]).toEqual(['one\n\nthree\n', false])
+		const closed = document.text
+		const undone = document.undo()
+		const last = new Document('one\n')
+		last.openEditAfter(0).close()
+		expect([closed, undone, document.text, last.text, last.undo()]).toEqual([
+			'one\n\n<br />\n\nthree\n',
+			true,
+			'one\n\nthree\n',
+			'one\n',
+			false
+		])
 	})
 
 	// editmd's undo is y-prosemirror's Y.UndoManager with Yjs's default captureTimeout of 500ms (UndoManager.js:166,239):
@@ -781,6 +792,43 @@ describe('Document', () => {
 			'~~~~\nx\n~~~~\n',
 			'```\nin source mode\n',
 			'```\nx\n```\n\nPara two.\n'
+		])
+	})
+
+	// editmd keeps an empty paragraph and writes it `<br />`, all but the last one at the end of the document
+	// (@milkdown/preset-commonmark empty-line-br.ts, inline-br.spec.ts "skips only the last trailing empty paragraph")
+	test('a new empty Block with Blocks after it is kept as `<br />`; at the end it goes', () => {
+		const middle = new Document('one\n\nSecond\n')
+		middle.openEditAfter(0)
+		const saving = middle.textToSave
+		middle.openEdit(1).close()
+		const end = new Document('one\n')
+		end.openEditAfter(0)
+		const savingAtEnd = end.textToSave
+		end.openEdit(0).close()
+		expect([saving, middle.text, savingAtEnd, end.text]).toEqual([
+			'one\n\n<br />\n\nSecond\n',
+			'one\n\n<br />\n\nSecond\n',
+			'one\n',
+			'one\n'
+		])
+	})
+
+	// editmd writes no hard break at a paragraph's end and keeps a heading's break by writing it setext
+	test('a Block’s field closes with its hard breaks as editmd writes them, in the same undo step', () => {
+		const ended = new Document('Hello world\n\nSecond\n')
+		ended.openEdit(0).update('Hello world\\\n')
+		ended.openEdit(1).close()
+		const heading = new Document('# Title\n\nSecond\n')
+		const field = heading.openEdit(0)
+		field.update('# Title\\\nmore')
+		field.close()
+		const closed = heading.text
+		heading.undo()
+		expect([ended.text, closed, heading.text]).toEqual([
+			'Hello world\n\nSecond\n',
+			'Title\\\nmore\n====\n\nSecond\n',
+			'# Title\n\nSecond\n'
 		])
 	})
 

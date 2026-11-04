@@ -6,7 +6,10 @@
 <script lang="ts">
 	import type { Component } from 'svelte'
 	import type { BlockKind } from '../../engine/blocks.ts'
-	import type { BlockViewProps } from './DocumentView.model.ts'
+	import { useTheme } from '../../app/theme.svelte.ts'
+	import { isEmptyParagraph } from '../../core/returnKey.ts'
+	import { documentController } from './controller.svelte.ts'
+	import { BLANK_LINE, type BlockViewProps } from './DocumentView.model.ts'
 	import CodeBlock from './Views/CodeBlock.svelte'
 	import FootnoteBlock from './Views/FootnoteBlock.svelte'
 	import FrontmatterBlock from './Views/FrontmatterBlock.svelte'
@@ -20,6 +23,13 @@
 	import TableBlock from './Views/TableBlock.svelte'
 
 	let { block, index, testKey }: BlockViewProps = $props()
+
+	const theme = useTheme()
+
+	// editmd's empty paragraph, `<br />` in the file, paints as one blank line of body text, not as its HTML source
+	const emptyParagraph = $derived(
+		block.kind === 'html' && isEmptyParagraph(documentController.sliceOf(block))
+	)
 
 	const VIEW_BY_KIND: Partial<Record<BlockKind, Component<BlockViewProps>>> = {
 		blockquote: QuoteBlock,
@@ -49,4 +59,8 @@
 	)
 </script>
 
-<View {block} {index} {testKey} />
+{#if emptyParagraph}
+	<markdown testid={`markdown-${testKey}`} source={BLANK_LINE} theme={theme().textTheme}></markdown>
+{:else}
+	<View {block} {index} {testKey} />
+{/if}

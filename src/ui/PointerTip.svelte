@@ -46,7 +46,7 @@
 	/** what the tip says with the pointer at window point (`x`, `y`), null for none */
 	const textAt = (x: number, y: number) => (typeof text === 'function' ? text(x, y) : text)
 
-	/** gpuix Tooltip's hover delay, kept from the tips this replaces */
+	/** how long the pointer rests on the trigger before its tip shows: gpuix Tooltip's hover delay */
 	const DELAY_MS = 300
 
 	/**

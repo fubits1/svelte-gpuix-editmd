@@ -457,6 +457,94 @@ check(
 	await typeKeys('Hello\n', ['enter', 'backspace', '!'], true),
 	['Hello!\n', ['paragraph'], false]
 )
+{
+	const emptyThenList = ['enter', '-', 'space', 'enter', '*', '*', 'x', '*', '*']
+	const listBackspace = ['x', 'enter', 'backspace', 'enter', 'enter']
+	check(
+		'a batch holding Returns, an input rule and a Backspace between them keeps every key, in order, as one key at a time does: Return, `- `, Return, `**x**` in an empty Document is editmd’s `<br />` then `**x**`',
+		[
+			await typeKeys('', emptyThenList, true),
+			await typeKeys('', emptyThenList, false),
+			await typeKeys('- one\n- two\n', listBackspace, true),
+			await typeKeys('- one\n- two\n', listBackspace, false)
+		].map(([text]) => text),
+		[
+			'<br />\n\n**x**\n',
+			'<br />\n\n**x**\n',
+			'- one\n- twox\n\n<br />\n\n',
+			'- one\n- twox\n\n<br />\n\n'
+		]
+	)
+}
+check(
+	'Return twice at a paragraph’s end, then `x`, keeps the empty paragraph between as editmd’s `<br />`; Return then Shift-Return, then `x`, is a hard break in the new paragraph',
+	[
+		await typeKeys('Hello world\n', ['enter', 'enter', 'x'], false),
+		await typeKeys('Hello world\n', ['enter', 'enter', 'x'], true),
+		await typeKeys('Hello world\n', ['enter', 'shift-enter', 'x'], false)
+	].map(([text]) => text),
+	['Hello world\n\n<br />\n\nx\n', 'Hello world\n\n<br />\n\nx\n', 'Hello world\n\n\\\nx\n']
+)
+
+/**
+ * a lone `<br>` Block, editmd's empty paragraph, in `<br/>` spelling here: painted as one blank body line, not as its
+ * HTML; opened, its field is empty, and typing there replaces it, Escape with nothing typed keeps it, and Return there
+ * makes another empty paragraph after it (splitBlock)
+ */
+documentController.load('one\n\n<br/>\n\ntwo\n')
+settle()
+const emptyParagraphLook = [
+	painted().includes('<br'),
+	bounds(find_test_id('markdown-1') ?? 0)?.height ===
+		bounds(find_test_id('markdown-0') ?? 0)?.height
+]
+click_test_id('block-1')
+const emptyParagraphField = propOf('block-editor', 'value')
+type('x')
+press('escape')
+settle()
+const typedOverEmpty = documentController.text
+documentController.load('one\n\n<br/>\n\ntwo\n')
+settle()
+click_test_id('block-1')
+press('escape')
+settle()
+const leftEmpty = documentController.text
+check(
+	'a lone `<br/>` Block paints as an empty paragraph line, opens an empty field, is replaced by typing, and stays when left empty; Return in it adds another empty paragraph',
+	[
+		emptyParagraphLook,
+		emptyParagraphField,
+		typedOverEmpty,
+		leftEmpty,
+		(await typeKeys('<br />\n\ntwo\n', ['enter', 'x'], false))[0]
+	],
+	[[false, true], '', 'one\n\nx\n\ntwo\n', 'one\n\n<br/>\n\ntwo\n', '<br />\n\nx\n\ntwo\n']
+)
+
+/**
+ * Backspace in the new empty paragraph right after Return joins it back (joinBackward), even when the Backspace before
+ * the Return was heard going up before its deletion was reported, as a window can deliver them
+ */
+documentController.load('')
+settle()
+for (const key of ['a', 'l', 'p', 'h', 'a']) type(key)
+documentController.backspaceUp()
+type('backspace')
+type('enter')
+await wait(40)
+get_native()?.simulateKeyDown('backspace')
+get_native()?.simulateKeyUp('backspace')
+pump()
+await wait(40)
+type('x')
+press('escape')
+settle()
+check(
+	'`alpha`, Backspace, Return, Backspace, `x` joins the new paragraph back: `alphx` (editmd differential case 8)',
+	documentController.text,
+	'alphx\n'
+)
 
 /**
  * Shift-Return, then `more`, in one batch as a window delivers it: the field takes every key first, then each of its
@@ -9221,6 +9309,53 @@ check(
 	['😀 next\n', 'a **😀b** c\n', '😀zx\n']
 )
 
+/**
+ * a mark's shortcut and the keys after it in one batch, as fast typing delivers them: the field takes them all before
+ * the toggle's probe types its sentinel, so the reports of the typed keys come in while it waits. `before` goes in one
+ * call first; with no field open (`click` false) the batch opens the field at editmd's load caret
+ */
+async function markThenType(
+	source: string,
+	before: string,
+	burst: string,
+	click = true
+): Promise<string> {
+	documentController.load(source, r9Options)
+	settle()
+	if (click) click_test_id('block-0')
+	if (before !== '') type(before)
+	type(burst)
+	await fieldIdle()
+	press('escape')
+	return documentController.text
+}
+const selectTwo = 'cmd-left right right right right shift-right shift-right shift-right'
+const afterOne = 'cmd-left right right right right'
+check(
+	'a mark’s shortcut and the keys after it in one batch keep every key and the mark: ⌘B twice on `two` takes the mark off, ⌘B or ⌘I then typing at a caret types between the marks, ⌘B on `two`, Right, ` x` keeps ` x`, ⇧⌘X then `x` too, ⌘E at a caret takes no mark and keeps `x`, and with no field open ⌘B then `x` types at editmd’s load caret',
+	[
+		await markThenType('one two three\n', selectTwo, 'cmd-b cmd-b'),
+		await markThenType('one two\n', '', 'cmd-b x'),
+		await markThenType('one two\n', afterOne, 'cmd-i x'),
+		await markThenType('one two three\n', afterOne, 'cmd-b b o l d'),
+		// Right moved the selection before the probe could read it, so only the keys are sure to land, not the marks
+		(await markThenType('one two three\n', selectTwo, 'cmd-b right space x')).replaceAll('*', ''),
+		await markThenType('one two\n', afterOne, 'cmd-shift-x x'),
+		await markThenType('one two\n', afterOne, 'cmd-e x'),
+		await markThenType('one two three\n', '', 'cmd-b x', false)
+	],
+	[
+		'one two three\n',
+		'one two**x**\n',
+		'one _x_two\n',
+		'one **bold**two three\n',
+		'one two x three\n',
+		'one ~~x~~two\n',
+		'one xtwo\n',
+		'**x**one two three\n'
+	]
+)
+
 // with no field open, Table goes in after the Block last edited, while it is as its Edit session left it
 documentController.load('One.\n\nTwo.\n\nThree.\n', r9Options)
 settle()
@@ -10699,4 +10834,4 @@ check(
 
 rmSync(parityDirectory, { recursive: true, force: true })
 
-finish('document', 530)
+finish('document', 535)

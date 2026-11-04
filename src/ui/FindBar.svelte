@@ -5,9 +5,9 @@
   and window chrome, so it does not zoom. State lives in `findController`.
 -->
 <script lang="ts">
-	import { focused_element, type ShadowNode } from 'gpuix-svelte'
+	import type { ShadowNode } from 'gpuix-svelte'
 	import { untrack } from 'svelte'
-	import { keysOnceFocused } from '../app/fieldKeys.ts'
+	import { keysOnceFocused, trackFocus } from '../app/fieldKeys.ts'
 	import { findController } from '../app/find.svelte.ts'
 	import { magnifierGlyph } from '../app/glyphs.ts'
 	import { useTheme } from '../app/theme.svelte.ts'
@@ -72,31 +72,6 @@
 	 */
 	let fieldFocused = $state(false)
 
-	/** the field mounted now, whose focus the ring follows; nothing renders from it */
-	let fieldNode: ShadowNode | null = null
-
-	function trackField(node: ShadowNode) {
-		fieldNode = node
-		return () => {
-			if (fieldNode === node) fieldNode = null
-		}
-	}
-
-	/** how often the field's focus is read, as Find reads its matches */
-	const FOCUS_POLL_MS = 100
-
-	/**
-	 * the field's focus read from native: an autofocused field reports no focus event (measured headless: native held
-	 * the field focused, no `focus` reached it), and gpuix has no focus-change event to listen to, so the bar polls
-	 * while it shows
-	 */
-	$effect(() => {
-		const poll = setInterval(() => {
-			fieldFocused = fieldNode !== null && focused_element()?.nativeId === fieldNode.nativeId
-		}, FOCUS_POLL_MS)
-		return () => clearInterval(poll)
-	})
-
 	const CLEAR_GLYPH = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path fill-rule="evenodd" d="M6 0A6 6 0 1 1 6 12A6 6 0 1 1 6 0Z${crossOutline()}"/></svg>`
 </script>
 
@@ -121,7 +96,7 @@
 				onkeydown={(event) => {
 					if (event.key === 'escape') findController.close()
 				}}
-				{@attach trackField}
+				{@attach trackFocus((has) => (fieldFocused = has))}
 				{@attach selectQuery}></textarea>
 		{/key}
 		{#if findController.query !== ''}

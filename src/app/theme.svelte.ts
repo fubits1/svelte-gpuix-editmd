@@ -163,12 +163,9 @@ export class ThemeController {
 			const keep = (ring: string | null) => {
 				if (!stopped && this.appearance === askedFor) this.focusRing = ring
 			}
-			return new Promise<string | null>((resolve) => resolve(this.#readFocusRing())).then(
-				keep,
-				() => keep(null)
-			)
+			Promise.try(() => this.#readFocusRing()).then(keep, () => keep(null))
 		}
-		void readRing()
+		readRing()
 		const poll = setInterval(() => {
 			// one read at a time: a slow `defaults` skips the ticks it overlaps instead of stacking spawns
 			if (reading) return
@@ -183,7 +180,7 @@ export class ThemeController {
 						this.appearance = appearance
 						// the ring read for the last appearance is that one's, so it goes until the new one is read
 						this.focusRing = null
-						void readRing()
+						readRing()
 					},
 					() => {}
 				)

@@ -7,9 +7,9 @@
   chrome in editmd, so it does not zoom; render it inside `Portal`, so it paints over the Document.
 -->
 <script lang="ts">
-	import { focused_element, type ShadowNode } from 'gpuix-svelte'
+	import type { ShadowNode } from 'gpuix-svelte'
 	import { untrack } from 'svelte'
-	import { keysOnceFocused } from '../../../app/fieldKeys.ts'
+	import { keysOnceFocused, trackFocus } from '../../../app/fieldKeys.ts'
 	import { useTheme } from '../../../app/theme.svelte.ts'
 	import Alert from './Alert.svelte'
 
@@ -43,21 +43,10 @@
 	}
 
 	/**
-	 * the field has the keys, so it shows AppKit's focus ring (e-link-dialog-source.png); transient UI (ADR-0011). read
-	 * from native on a poll, as the find field's: an autofocused field reports no focus event and gpuix has no
-	 * focus-change event (FindBar.svelte)
+	 * the field has the keys, so it shows AppKit's focus ring (e-link-dialog-source.png); transient UI (ADR-0011), read
+	 * from native on a poll (`trackFocus`)
 	 */
 	let fieldFocused = $state(false)
-
-	/** how often the field's focus is read, as the find field's */
-	const FOCUS_POLL_MS = 100
-
-	function trackFocus(node: ShadowNode) {
-		const poll = setInterval(() => {
-			fieldFocused = focused_element()?.nativeId === node.nativeId
-		}, FOCUS_POLL_MS)
-		return () => clearInterval(poll)
-	}
 
 	/** NSAlert paints its first button (Add or Update) rightmost, the second left of it, a third (Remove Link) leftmost */
 	const buttons = $derived([
@@ -97,7 +86,7 @@
 		onchange={(event) => (url = event.value ?? '')}
 		onsubmit={() => onadd(url)}
 		{@attach selectPrefill}
-		{@attach trackFocus}
+		{@attach trackFocus((has) => (fieldFocused = has))}
 	/>
 </Alert>
 

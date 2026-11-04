@@ -101,7 +101,17 @@
 			 */
 			// null for ordinary typing, which stays with the focused field
 			const command = commandFor(event.key, event.modifiers)
+			const { cmd, ctrl, alt, shift } = event.modifiers
 			if (command) documentController.runShortcut(command, { editing: event.editing })
+			// a character no field took: a field opening at editmd's caret takes it once it has the keys
+			else if (
+				!event.editing &&
+				!cmd &&
+				!ctrl &&
+				!alt &&
+				(event.key.length === 1 || event.key === 'space')
+			)
+				documentController.typeWithoutField(shift ? `shift-${event.key}` : event.key)
 		})
 	)
 
@@ -524,28 +534,31 @@
 	}
 
 	/**
-	 * each Block holding a link with its links as runs of its painted text (`linkRunsOf`), by index: what ⌘ turns the
-	 * pointer to a hand over. the render source carries the definitions a reference link needs to parse as one
+	 * each Block holding a link with its links as runs of its painted text (`linkRunsOf`), by index and then by `runKey`:
+	 * what ⌘ turns the pointer to a hand over. the render source carries the definitions a reference link needs to parse
+	 * as one
 	 */
 	const linkRuns = $derived.by(() => {
-		const byBlock = new SvelteMap<number, ReturnType<typeof linkRunsOf>>()
+		const byBlock = new SvelteMap<number, SvelteMap<string, ChangedRun & { title?: string }>>()
 		documentController.blocks.forEach((block, index) => {
 			if (!block.links) return
 			const runs = linkRunsOf(documentController.renderSourceOf(block))
-			if (runs.length > 0) byBlock.set(index, runs)
+			if (runs.length > 0)
+				byBlock.set(index, new SvelteMap(runs.map((run) => [runKey(run.text, run.index), run])))
 		})
 		return byBlock
 	})
 
 	/**
 	 * each Block holding an inline code span with its spans as runs of its painted text (`codeRunsOf`), by index: what
-	 * editmd draws its border around. a Block whose text has no backtick holds none, so it is never parsed for them
+	 * editmd draws its border around. a code or mermaid Block, or one whose text has no backtick, holds none, so it is
+	 * never parsed for them
 	 */
 	const codeRuns = $derived.by(() => {
 		const byBlock = new SvelteMap<number, ChangedRun[]>()
 		documentController.blocks.forEach((block, index) => {
-			const source = documentController.text.slice(block.start, block.end)
-			if (!source.includes('`')) return
+			const source = documentController.sliceOf(block)
+			if (block.kind === 'code' || block.kind === 'mermaid' || !source.includes('`')) return
 			// its own text, where the render source writes an empty link and inline HTML as code
 			const runs = codeRunsOf(source)
 			if (runs.length > 0) byBlock.set(index, runs)
@@ -579,7 +592,7 @@
 					.flatMap(({ runs, agentClass }) =>
 						runs.map((run) => washOf(run, theme().palette[`${agentClass}-change`]))
 					),
-				...[...(linkRuns.get(index) ?? []), ...(codeRuns.get(index) ?? [])].map((run) =>
+				...[...(linkRuns.get(index)?.values() ?? []), ...(codeRuns.get(index) ?? [])].map((run) =>
 					washOf(run, NO_FILL)
 				)
 			]
@@ -601,14 +614,22 @@
 			(rect) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
 		)
 
-	/** the link run of Block `index` painted under the window point (`x`, `y`) in `washes`, undefined for none */
-	function linkRunAt(index: number, x: number, y: number, washes: readonly PaintedWash[]) {
+	/**
+	 * the first of `runs`, keyed by `runKey`, that Block `index` washes under the window point (`x`, `y`) in `washes`,
+	 * undefined for none
+	 */
+	function washedRunAt<T>(
+		index: number,
+		x: number,
+		y: number,
+		washes: readonly PaintedWash[],
+		runs: ReadonlyMap<string, T> | undefined
+	): T | undefined {
 		const node = blockNodes.get(index)
-		const runs = linkRuns.get(index)
 		if (!node || !runs) return undefined
 		for (const { text, occurrence, wash } of washedRunsIn(node, washes)) {
-			const run = runs.find((each) => each.text === text && each.index === occurrence)
-			if (run && washHolds(wash, x, y)) return run
+			const run = runs.get(runKey(text, occurrence))
+			if (run !== undefined && washHolds(wash, x, y)) return run
 		}
 		return undefined
 	}
@@ -617,21 +638,26 @@
 	function linkBlockAt(x: number, y: number): number | null {
 		if (linkRuns.size === 0) return null
 		const washes = get_native()?.getPaintedHighlights() ?? []
-		for (const index of linkRuns.keys()) if (linkRunAt(index, x, y, washes)) return index
+		for (const [index, runs] of linkRuns) if (washedRunAt(index, x, y, washes, runs)) return index
 		return null
 	}
 
 	/**
 	 * the tip a painted Block shows: editmd titles a highlight "<name>, <time>", anywhere over a Block marked whole and
-	 * only over the runs of one marked by its changed runs (highlights.ts:184-186), and a titled link with its title over
-	 * that link (links.ts:174), the innermost title as a browser shows it
+	 * only over the runs of one marked by its changed runs, each `.agent-change` run titled (highlights.ts:184-186), and
+	 * a titled link with its title over that link (links.ts:174), the innermost title as a browser shows it
 	 */
 	function blockTipOf(index: number, agentClass: string | null, tooltip: string | null) {
-		const runsOnly = agentClass === null && underlineColours.has(index)
-		if (!runsOnly && !linkRuns.get(index)?.some((run) => run.title)) return tooltip
+		const colours = agentClass === null ? underlineColours.get(index) : undefined
+		const links = linkRuns.get(index)
+		if (!colours && !links?.values().some((run) => run.title)) return tooltip
 		return (x: number, y: number) => {
-			const title = linkRunAt(index, x, y, get_native()?.getPaintedHighlights() ?? [])?.title
-			return title ?? (runsOnly && !onChangedRun(index, x, y) ? null : tooltip)
+			const washes = get_native()?.getPaintedHighlights() ?? []
+			const title = washedRunAt(index, x, y, washes, links)?.title
+			return (
+				title ??
+				(colours && washedRunAt(index, x, y, washes, colours) === undefined ? null : tooltip)
+			)
 		}
 	}
 
@@ -660,20 +686,6 @@
 		})
 		return byBlock
 	})
-
-	/**
-	 * whether the window point (`x`, `y`) is on one of the runs an Agent changed in Block `index`, as painted: editmd
-	 * titles each `.agent-change` run (highlights.ts:184-186), so its native tip shows only over the run
-	 */
-	function onChangedRun(index: number, x: number, y: number): boolean {
-		const node = blockNodes.get(index)
-		const colours = underlineColours.get(index)
-		if (!node || !colours) return false
-		const washes = get_native()?.getPaintedHighlights() ?? []
-		return washedRunsIn(node, washes).some(
-			({ text, occurrence, wash }) => colours.has(runKey(text, occurrence)) && washHolds(wash, x, y)
-		)
-	}
 
 	/** a changed run's underline: where it paints in its Block, in logical px from the Block's box, and its colour */
 	type Underline = {

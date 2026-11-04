@@ -5,7 +5,14 @@
  */
 
 import { describe, expect, test } from 'vitest'
-import { backspaceEdit, joinedBlocks, returnAfterTyping, returnEdit } from './returnKey.ts'
+import {
+	backspaceEdit,
+	isEmptyParagraph,
+	joinedBlocks,
+	returnAfterTyping,
+	returnEdit,
+	settledBreaks
+} from './returnKey.ts'
 
 /**
  * a person types on after Return before the field's newline lands: gpuix hands Return over as a submit, and the
@@ -14,19 +21,14 @@ import { backspaceEdit, joinedBlocks, returnAfterTyping, returnEdit } from './re
  */
 describe('returnAfterTyping', () => {
 	// `base` the field at Return, `before` its last report before the newline, `field` the report bringing the newline
-	test('where Return was, and the keys typed after it: text, and Backspaces it took back', () => {
+	test('where Return was, with keys typed and Backspaces pressed after it', () => {
 		expect([
 			returnAfterTyping('Hello world', 'Hello worldnext', 'Hello worldnext\n'),
 			returnAfterTyping('Hello world', 'Hello world', 'Hello\n world'),
 			returnAfterTyping('- one\n- two', '- one\n- twothree', '- one\n- twothree\n'),
 			// measured in a real window: one batch `enter backspace !` on `- two` left `- tw!` before the newline came
 			returnAfterTyping('- one\n- two', '- one\n- tw!', '- one\n- tw!\n')
-		]).toEqual([
-			{ at: 11, typed: 'next', deleted: 0 },
-			{ at: 5, typed: '', deleted: 0 },
-			{ at: 11, typed: 'three', deleted: 0 },
-			{ at: 11, typed: '!', deleted: 1 }
-		])
+		]).toEqual([11, 5, 11, 11])
 	})
 
 	test('no newline added, or one that replaced a selection, is no Return to place', () => {
@@ -196,6 +198,55 @@ describe('returnEdit', () => {
 			{ kind: 'field', field: '1. one\n2. two\\\n   x\\\n   ', caret: 24 },
 			{ kind: 'field', field: '> quoted\\\n> ', caret: 12 }
 		])
+	})
+
+	// what editmd writes for hard breaks a Block's field leaves (run in editmd's own editor): one at the end of a
+	// paragraph, item or quote line is no break and is not written; a heading keeps its break by turning setext at
+	// levels 1 and 2 (an underline as long as its last line) and writes it as a space below them
+	test('a hard break left at a paragraph’s end goes; a heading with one turns setext', () => {
+		expect([
+			settledBreaks('Hello world\\\n'),
+			settledBreaks('- one\n- two\\\n  '),
+			settledBreaks('> quoted\\\n> '),
+			settledBreaks('a\\\n\nb'),
+			settledBreaks('a\\\nb'),
+			settledBreaks('# Title\\\nmore'),
+			settledBreaks('## Title\\\nmore'),
+			settledBreaks('### Title\\\nmore'),
+			settledBreaks('# Titlex- go\\\n# `go`'),
+			settledBreaks('# a\\\nb\\\nlast'),
+			settledBreaks('# Title\\\n'),
+			settledBreaks('plain \\'),
+			settledBreaks('1. one\n2. two\n3. '),
+			settledBreaks('- a\n-  \n- b')
+		]).toEqual([
+			'Hello world',
+			'- one\n- two',
+			'> quoted',
+			'a\n\nb',
+			'a\\\nb',
+			'Title\\\nmore\n====',
+			'Title\\\nmore\n----',
+			'### Title more',
+			'Titlex- go\\\n# `go`\n======',
+			'a\\\nb\\\nlast\n====',
+			'# Title',
+			'plain \\',
+			'1. one\n2. two\n3.',
+			'- a\n-\n- b'
+		])
+	})
+
+	// splitBlock on an empty paragraph keeps it, which editmd writes `<br />`, and starts another after it (run in
+	// editmd's own editor: `Hello world`, Return, Return, `x` writes `Hello world\n\n<br />\n\nx`)
+	test('Return in an empty paragraph keeps it as `<br />` and starts a new one', () => {
+		expect(typed('|')).toEqual({ kind: 'split', head: '<br />', tail: '' })
+	})
+
+	test('a lone `<br>` in any spelling is an empty paragraph; one beside text is not', () => {
+		expect(
+			['<br />', '<br>', '<BR/>', ' <br  /> ', 'a<br>', '<br>b'].map(isEmptyParagraph)
+		).toEqual([true, true, true, true, false, false])
 	})
 
 	// splitListItem splits the item the caret is in wherever its line is: `1. one\n2. two`, Shift-Return, `x`, Return,

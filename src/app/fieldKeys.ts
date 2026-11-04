@@ -23,3 +23,19 @@ export async function keysOnceFocused(node: ShadowNode, keys: string): Promise<b
 	}
 	return false
 }
+
+/** how often a field's focus is read, as Find reads its matches */
+const FOCUS_POLL_MS = 100
+
+/**
+ * an attachment that tells `focused` whether its field has the keys, read from native on a poll: an autofocused field
+ * reports no focus event (measured headless: native held the field focused, no `focus` reached it), and gpuix has no
+ * focus-change event to listen to
+ */
+export const trackFocus = (focused: (has: boolean) => void) => (node: ShadowNode) => {
+	const poll = setInterval(
+		() => focused(focused_element()?.nativeId === node.nativeId),
+		FOCUS_POLL_MS
+	)
+	return () => clearInterval(poll)
+}

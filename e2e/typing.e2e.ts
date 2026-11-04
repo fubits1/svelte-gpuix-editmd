@@ -12,7 +12,17 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { launch } from 'gpuix-svelte/automation'
-import { agentsIn, check, type Editor, finish, painted, press, reaches, textOf } from './support.ts'
+import {
+	agentsIn,
+	check,
+	type Editor,
+	finish,
+	keysOf,
+	painted,
+	press,
+	reaches,
+	textOf
+} from './support.ts'
 
 // a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
 const folder = mkdtempSync('/tmp/eg-typing-')
@@ -40,10 +50,6 @@ async function openEmpty(name: string): Promise<{ app: Editor; file: string }> {
 async function typeEach(app: Editor, keys: string[]): Promise<void> {
 	for (const key of keys) await app.call('keystrokes', { keys: key })
 }
-
-/** `text` as the keys that type it */
-const keysOf = (text: string) =>
-	[...text].map((character) => (character === ' ' ? 'space' : character))
 
 const has = async (app: Editor, testId: string) => (await app.getByTestId(testId).count()) > 0
 

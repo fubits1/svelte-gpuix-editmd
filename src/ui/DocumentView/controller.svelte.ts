@@ -42,6 +42,7 @@ import {
 	caretPastInsertions,
 	caretThrough
 } from '../../core/document.ts'
+import { commonEnds } from '../../core/diff.ts'
 import { insertAfterIndexAt, type Row } from '../../core/dropTarget.ts'
 import {
 	applyKeys,
@@ -66,6 +67,7 @@ import { linkAction, type LinkTarget } from '../../core/linkPolicy.ts'
 import { labelDetail, labelText, type SaveLabel } from '../../core/persistence.ts'
 import {
 	backspaceEdit,
+	isEmptyParagraph,
 	joinedBlocks,
 	type ReturnEdit,
 	returnAfterTyping,
@@ -98,6 +100,7 @@ import { RecentFiles } from '../../host/recent.ts'
 import { type UntitledNumbers, untitledName } from '../../host/untitledNumbers.ts'
 import { watchFile } from '../../host/watch.ts'
 import { openWindow, type Spawn } from '../../host/windows.ts'
+import { type TypedSince, typedSince } from './typedSince.ts'
 
 export type RunOptions = {
 	/** a text field has focus and gets the same key (`GpuixEvent.editing`) */
@@ -277,6 +280,12 @@ const DRAG_DISTANCE = 3
 /** where the view scrolls a Block it reveals: a followed link's to the top, an Agent's change to the middle */
 export type RevealPlace = 'top' | 'middle'
 
+/**
+ * the view scrolls Block `index` to `place`; `inside` is a changed run's text to scroll to, or the Document offset
+ * where a heading inside the Block starts, whose own row goes to the top
+ */
+type RevealBlock = (index: number, place: RevealPlace, inside?: ChangedRun | number) => void
+
 /** what File > New's opener tells the process it starts, read at launch as `startedByNew` */
 export const NEW_WINDOW_ENV = 'EDITMD_GPUIX_NEW'
 
@@ -361,6 +370,9 @@ const onProcessExit = (handler: () => void) => void process.on('exit', handler)
  */
 const exitProcess = () => process.exit(0)
 
+/** a Return whose newline has not come back from the field yet (`#pendingReturn`) */
+type PendingReturn = { base: string; returns: string[]; shiftAt: number | null }
+
 /** reactive mirror of the one open Document (one window per process, ADR-0008) */
 export class DocumentController {
 	#document = new Document('')
@@ -377,12 +389,17 @@ export class DocumentController {
 	#newBlockSession: EditSession | null = null
 	/**
 	 * Return was pressed in the open Block field (`pressReturn`) and its newline has not come back yet: `base` is the
-	 * field's text when it was pressed, `extra` the Returns pressed since, whose newlines are made here. it holds until a
-	 * report brings the newline, however many reports of keys typed behind it come first. `shiftAt` is where the user's
-	 * own Shift-Return put its newline in `base`, whose hard break waits for the newline sent after it
-	 * (`#breakAfterTyping`), else null; nothing renders from it
+	 * field's text when it was pressed, `returns` the field's text at each Return pressed since, whose newlines are made
+	 * here, in order with the typing between them. it holds until a report brings the newline, however many reports of
+	 * keys typed behind it come first. `shiftAt` is where the user's own Shift-Return put its newline in `base`, whose hard
+	 * break waits for the newline sent after it (`#breakAfterTyping`), else null; nothing renders from it
 	 */
-	#pendingReturn: { base: string; extra: number; shiftAt: number | null } | null = null
+	#pendingReturn: PendingReturn | null = null
+	/**
+	 * the `<br>` source the open field stands for while it shows editmd's empty paragraph empty (`isEmptyParagraph`), so
+	 * an empty field writes it back and typing replaces it; null for any other field
+	 */
+	#emptyParagraph: string | null = null
 	/**
 	 * the open field lost text since Backspace last went up: a Backspace whose key-up finds none took nothing, so it
 	 * was pressed at the field's start (`keyUpInField`); nothing renders from it
@@ -428,13 +445,16 @@ export class DocumentController {
 	 */
 	#focusField: ((revision: number) => boolean) | null = null
 	/**
-	 * while a probe reads the field's selection, what the field reports goes here and never reaches the Edit session:
-	 * the sentinel and its cmd-z are no edit, so they neither autosave nor mark the Document edited
+	 * while a probe reads the field's selection, what the field reports goes here first, and the reply it takes never
+	 * reaches the Edit session: the sentinel and its cmd-z are no edit, so they neither autosave nor mark the Document
+	 * edited. a report it does not take (false) is typing
 	 */
 	#probing = false
-	#probeListener: ((value: string) => void) | null = null
-	/** field work in flight (a probe and the keys or value it leads to), which a second command waits out by doing nothing */
+	#probeListener: ((value: string) => boolean) | null = null
+	/** field work in flight (a probe and the keys or value it leads to), which a second command waits out in `#queued` */
 	#fieldWork = $state(false)
+	/** the commands that came while field work ran, oldest first, each run once the one before it is done */
+	#queued: (() => Promise<void>)[] = []
 	/** where the pointer went down on a Block, so the click its release makes can be told from a drag's */
 	#pressedAt: { x: number; y: number } | null = null
 	/** kept from `load`, so an untitled Document saved later listens where the window was told to */
@@ -446,12 +466,8 @@ export class DocumentController {
 	 * click, which GPUI delivers right after it, carries the modifiers that decide whether it is followed
 	 */
 	#clickedLink: string | null = null
-	/**
-	 * set by the view, which alone holds the Blocks' nodes to scroll; `inside` is a changed run's text to scroll to, or
-	 * the Document offset where a heading inside the Block starts, whose own row goes to the top
-	 */
-	#revealBlock: ((index: number, place: RevealPlace, inside?: ChangedRun | number) => void) | null =
-		null
+	/** set by the view, which alone holds the Blocks' nodes to scroll */
+	#revealBlock: RevealBlock | null = null
 	/**
 	 * the registrars the exit handler has gone to, so each takes it once however often the window rebinds; nothing
 	 * renders from it, so it is no SvelteSet
@@ -1067,6 +1083,8 @@ export class DocumentController {
 		this.activeIsNew = false
 		this.activeKind = this.#document.blocks[index]?.kind ?? 'paragraph'
 		this.activeSource = this.#field = this.#fieldOf(this.#session.source, this.#codeKind)
+		// editmd's empty paragraph is a paragraph, empty, to type in
+		if (this.#emptyParagraph !== null) this.activeKind = 'paragraph'
 		this.#lastCaret = this.#field.length
 		this.#sessionEnd = this.#session.end
 	}
@@ -1136,9 +1154,7 @@ export class DocumentController {
 	 * the view scrolls Block `index` into view when a link points at it (to the top) or the legend reveals an
 	 * Agent's change in it (to the middle); returns the unsubscribe
 	 */
-	onRevealBlock(
-		reveal: (index: number, place: RevealPlace, inside?: ChangedRun | number) => void
-	): () => void {
+	onRevealBlock(reveal: RevealBlock): () => void {
 		this.#revealBlock = reveal
 		return () => {
 			if (this.#revealBlock === reveal) this.#revealBlock = null
@@ -1265,7 +1281,8 @@ export class DocumentController {
 	#lastPlace: { index: number; text: string } | null = null
 
 	/**
-	 * the open field reported `field`; while a probe reads its selection, the probe takes it instead. `revision` is the
+	 * the open field reported `field`; while a probe reads its selection, the probe takes its own reply, and any other
+	 * report is typing (`readSelection`). `revision` is the
 	 * `fieldRevision` the reporting field was mounted at: a field since mounted afresh (a probe that gave up sets the
 	 * field to its text again) is no longer the open one, so what it still reports, a late sentinel included, is dropped,
 	 * but for a key the field took on its way out, after an outside change or typing replaced it (`#typeLate`).
@@ -1276,10 +1293,7 @@ export class DocumentController {
 			this.#typeLate(field, revision)
 			return
 		}
-		if (this.#probing) {
-			this.#probeListener?.(field)
-			return
-		}
+		if (this.#probing && this.#probeListener?.(field)) return
 		this.#deleted ||= field.length < this.#field.length
 		const caret = caretAfterTyping(this.#field, field)
 		this.#lastCaret = caret
@@ -1297,13 +1311,12 @@ export class DocumentController {
 			field[at] === '\n' &&
 			field.slice(0, at) + field.slice(caret) === this.#field
 		// keys typed behind Return before its newline came back are typing until it does (`#typeAfterReturn`)
-		if (moved) this.#typeAfterReturn(pending!, moved)
+		if (moved !== null) this.#typeAfterReturn(pending!, moved)
 		// Return reads the Block's kind from its text, so a field holding code alone hands it the fences too; a newline
 		// with no Return pending is the user's own Shift-Return
 		else if (typedNewline) {
-			this.#pendingReturn = null
-			const edit = returnEdit(this.#sourceOf(field), at + this.#shift, !pending)
-			if (!pending && edit.kind === 'field') this.#breakAfterTyping(field, at)
+			const edit = returnEdit(this.#sourceOf(field), at + this.#shift, true)
+			if (edit.kind === 'field') this.#breakAfterTyping(field, at)
 			else this.#typeReturn(edit, field, caret)
 		} else this.#typeField(field, caret)
 	}
@@ -1315,7 +1328,7 @@ export class DocumentController {
 	 */
 	#breakAfterTyping(field: string, at: number): void {
 		this.#writeField(field)
-		this.#pendingReturn = { base: field, extra: 0, shiftAt: at }
+		this.#pendingReturn = { base: field, returns: [], shiftAt: at }
 		this.#sendKeys('shift-enter')
 	}
 
@@ -1351,13 +1364,15 @@ export class DocumentController {
 	 * no longer the rule kind it shows (`# Title` lost its `# `), it takes the kind the text now is, as editmd's heading
 	 * turns back into a paragraph. only a deletion: text typed in front of the syntax passes through other kinds on the
 	 * way (`-` then a space before `- Body`), and each remount's caret comes back by keys a frame later. keys a command
-	 * sends the field (`#fieldWork`) change no look
+	 * sends the field (`#fieldWork`) change no look, and neither do keys typed behind a Return still pending: a remount
+	 * would drop the reports of the keys after them, and the Return's newline with them (`#typeAfterReturn` places them)
 	 */
 	#typeField(field: string, caret: number): void {
 		const before = this.#field
 		const deleted = field.length < before.length
 		this.#writeField(field)
-		if (this.#fieldWork || this.sourceMode || this.activeIndex === null) return
+		if (this.#fieldWork || this.sourceMode || this.activeIndex === null || this.#pendingReturn)
+			return
 		// Backspace at a list item's start joins it to the item above (`backspaceEdit`); code shows no items
 		const joined = this.activeKind === 'list' ? backspaceEdit(before, field) : null
 		if (joined) {
@@ -1379,40 +1394,44 @@ export class DocumentController {
 	 * Shift-Return is sent to the field in its place, so the newline it types shows where the caret was (gpuix reports no
 	 * caret, gap G1), and the report that brings it is read as Return's (`typeInActive`). a newline the field reports
 	 * with no Return pressed came from the user's own Shift-Return. a Return pressed before the last one's newline came
-	 * back sends none of its own: the field would put both newlines after the keys typed between them
+	 * back sends none of its own: the field would put both newlines after the keys typed between them, so the field's
+	 * text then is kept to tell which typing came before it
 	 */
 	pressReturn(): void {
 		if (this.#pendingReturn) {
-			this.#pendingReturn.extra++
+			this.#pendingReturn.returns.push(this.#field)
 			return
 		}
-		this.#pendingReturn = { base: this.#field, extra: 0, shiftAt: null }
+		this.#pendingReturn = { base: this.#field, returns: [], shiftAt: null }
 		this.#sendKeys('shift-enter')
 	}
 
 	/**
-	 * Return's newline came back after keys typed behind it (`returnAfterTyping`: `at` is where Return was pressed in
-	 * `base`, `typed` what came after it, `deleted` the characters Backspaces took before it), as fast typing delivers
-	 * them: Return is made at `at` as editmd's Enter, each Return pressed meanwhile at the caret the last one left, then
-	 * each Backspace at the caret as a person's there (`#backspaceAtCaret`), and `typed` goes in after them, as editmd
-	 * took the keys in order. one report cannot tell which Return the typing came between, so it goes after the last.
-	 * a Shift-Return's newline, already in `base` at `shiftAt`, is made its hard break there instead
+	 * Return's newline came back after keys typed behind it, as fast typing delivers them; `at` is where it landed in the
+	 * field's text before it (`returnAfterTyping`). Return is made where it was pressed, as editmd's Enter: at the start
+	 * of the field's first change, the first typing after it, else at `at`. then each change the field took up to the
+	 * next Return pressed meanwhile, and on to its text now, is made at the caret the last step left, its Backspaces as a
+	 * person's there (`#backspaceAtCaret`) and its typing after them, and that Return after it, as editmd took the keys
+	 * in order. a Shift-Return's newline, already in `base` at `shiftAt`, is made its hard break there instead
 	 */
-	#typeAfterReturn(
-		{ base, extra, shiftAt }: { base: string; extra: number; shiftAt: number | null },
-		{ at, typed, deleted }: { at: number; typed: string; deleted: number }
-	): void {
+	#typeAfterReturn({ base, returns, shiftAt }: PendingReturn, at: number): void {
 		this.#pendingReturn = null
-		if (shiftAt === null) this.#returnAt(`${base.slice(0, at)}\n${base.slice(at)}`, at)
+		const texts = [base, ...returns, this.#field]
+		const changed = texts.find((text) => text !== base)
+		const pressed = changed === undefined ? at : commonEnds(base, changed).aEnd
+		if (shiftAt === null)
+			this.#returnAt(`${base.slice(0, pressed)}\n${base.slice(pressed)}`, pressed)
 		else this.#returnAt(base, shiftAt, true)
-		for (let more = 0; more < extra; more++) {
+		for (let step = 1; step < texts.length; step++) {
+			const { start, aEnd, bEnd } = commonEnds(texts[step - 1]!, texts[step]!)
+			for (let gone = start; gone < aEnd; gone++) this.#backspaceAtCaret()
+			// the field still shows the keys before the newline; a Return made here remounts it but in code, whose field
+			// then lacks that newline until the next key rewrites it
+			if (bEnd > start) this.#typeAtCaret(texts[step]!.slice(start, bEnd))
+			if (step === texts.length - 1) continue
 			const caret = this.#lastCaret!
 			this.#returnAt(`${this.#field.slice(0, caret)}\n${this.#field.slice(caret)}`, caret)
 		}
-		for (let gone = 0; gone < deleted; gone++) this.#backspaceAtCaret()
-		// the field still shows the keys before the newline; a Return made here remounts it but in code, whose field then
-		// lacks that newline until the next key rewrites it
-		if (typed !== '') this.#typeAtCaret(typed)
 	}
 
 	/**
@@ -1500,7 +1519,7 @@ export class DocumentController {
 	 * a new Block after it holding `tail`, its caret at the start, the split one Undo step with the field's last change
 	 * when that came within 500ms, as editmd's one transaction Yjs captures with it (`EditSession.split`); with no
 	 * `tail`, an empty field opens after the Block (`openEditAfter`), which leaves nothing in the text when closed
-	 * untouched. Return at the field's start splits nothing: the field keeps its text, the caret before it
+	 * untouched. Return at the start of a field splits nothing: the field keeps its text, the caret before it
 	 */
 	#splitField(head: string, tail: string): void {
 		const session = this.#session
@@ -1510,6 +1529,8 @@ export class DocumentController {
 			this.#putCaret(head + tail, head.length)
 			return
 		}
+		// the new field has lost no text, so its first Backspace's key-up joins it back (`backspaceUp`)
+		this.#deleted = false
 		if (head !== this.#field) this.#writeField(head)
 		if (tail.trim() === '') {
 			const end = session.end
@@ -1561,12 +1582,17 @@ export class DocumentController {
 	 */
 	#fieldOf(source: string, fenced: boolean): string {
 		this.#fence = fenced ? fenceParts(source) : null
-		return this.#fence?.code ?? source
+		this.#emptyParagraph = isEmptyParagraph(source) ? source : null
+		return this.#fence?.code ?? (this.#emptyParagraph === null ? source : '')
 	}
 
-	/** the Block source the open field's text `field` stands for: its code back between its fences (`withFences`) */
+	/**
+	 * the Block source the open field's text `field` stands for: its code back between its fences (`withFences`), and
+	 * an empty paragraph's `<br />` while the field is empty
+	 */
 	#sourceOf(field: string): string {
-		return this.#fence ? withFences(this.#fence, field) : field
+		if (this.#fence) return withFences(this.#fence, field)
+		return field === '' && this.#emptyParagraph !== null ? this.#emptyParagraph : field
 	}
 
 	/** how far into its Block source the open field's text starts: past the opening fence of a field holding code alone */
@@ -1647,20 +1673,20 @@ export class DocumentController {
 
 	/**
 	 * send `keys` to the focused field and wait for the first value it reports that `accept` takes, while a probe
-	 * holds what it reports; the last value reported, or null for none, when none is taken within `fieldReplyMs`
+	 * holds what it reports; null when none is taken within `fieldReplyMs`
 	 */
 	#probeKeys(keys: string, accept: (value: string) => boolean): Promise<string | null> {
 		return new Promise((resolve) => {
-			let last: string | null = null
-			const timer = setTimeout(() => finish(last), this.#fieldReplyMs)
+			const timer = setTimeout(() => finish(null), this.#fieldReplyMs)
 			const finish = (value: string | null) => {
 				clearTimeout(timer)
 				this.#probeListener = null
 				resolve(value)
 			}
 			this.#probeListener = (value) => {
-				last = value
-				if (accept(value)) finish(value)
+				const taken = accept(value)
+				if (taken) finish(value)
+				return taken
 			}
 			this.#sendKeys(keys)
 		})
@@ -1671,28 +1697,33 @@ export class DocumentController {
 	 * over the selection shows where it was in the value the field reports, and cmd-z puts the text and the selection
 	 * back. a second sentinel settles a first that matched the text beside it, or that was the selection itself: typed
 	 * over itself it leaves the value as it was, which the field still reports, and its cmd-z still puts the selection
-	 * back, so any report is the sentinel's answer. what the field reports meanwhile never
-	 * reaches the Edit session. a cmd-z that took more than the sentinel (the field grouped it with typing just before
-	 * it, as headless GPUI does) leaves the field set to its text again programmatically, the selection put back by keys.
-	 * null when no field has the keys or the field did not answer. HAZARD: ⇧⌘Z after a probe brings the sentinel back,
-	 * so a probe must be followed by an edit, or by `#settleProbe` when the command changes nothing
+	 * back. the sentinel's answer is the report that holds it: keys typed fast behind the command reached the field
+	 * before the sentinel, so their reports come first, and they are typing, which the probe reads on. the sentinel's
+	 * answer and its cmd-z's never reach the Edit session. a cmd-z that took more than the sentinel (the field grouped
+	 * it with typing just before it, as headless GPUI does) leaves the field set to its text again programmatically, the
+	 * selection put back by keys. null when no field has the keys or the field did not answer. HAZARD: ⇧⌘Z after a probe
+	 * brings the sentinel back, so a probe must be followed by an edit, or by `#settleProbe` when the command changes
+	 * nothing
 	 */
 	async readSelection(): Promise<Range | null> {
 		if (this.#probing || !this.#refocusField()) return null
-		const before = this.#field
 		const probes: Range[][] = []
 		this.#probing = true
 		try {
 			for (const sentinel of SENTINELS) {
-				const typed = await this.#probeKeys(sentinel, () => true)
+				const typed = await this.#probeKeys(
+					sentinel,
+					(value) => selectionCandidates(this.#field, value, sentinel).length > 0
+				)
 				if (typed === null) {
 					/**
 					 * no reply in time: the sentinel may still be in the field and report late, so the field is set to the
-					 * text from before the probe, mounted afresh, and the old field's reports are dropped (`typeInActive`)
+					 * text it held as last typed, mounted afresh, and the old field's reports are dropped (`typeInActive`)
 					 */
-					this.#remountField(before)
+					this.#remountField(this.#field)
 					return null
 				}
+				const before = this.#field
 				probes.push(selectionCandidates(before, typed, sentinel))
 				const settled = settleSelection(probes)
 				// cmd-z's one report, whatever it took back
@@ -1734,13 +1765,21 @@ export class DocumentController {
 		if (await this.#fieldReady()) this.#sendKeys(selectKeys(text, range))
 	}
 
-	/** `work` on the open field, one at a time: a command that comes while one runs does nothing */
+	/**
+	 * `work` on the open field, one at a time: a command that comes while one runs waits its turn, as ⌘B twice typed
+	 * fast takes the mark off again
+	 */
 	async #onField(work: () => Promise<void>): Promise<void> {
-		if (this.#fieldWork) return
+		if (this.#fieldWork) {
+			this.#queued.push(work)
+			return
+		}
 		this.#fieldWork = true
 		try {
-			await work()
+			for (let next: (() => Promise<void>) | undefined = work; next; next = this.#queued.shift())
+				await next()
 		} finally {
+			this.#queued = []
 			this.#fieldWork = false
 		}
 	}
@@ -1761,14 +1800,35 @@ export class DocumentController {
 		if (!takesMarks(this.#sourceOf(this.#field))) return
 		void this.#onField(async () => {
 			this.#cutUndoStep()
+			const base = this.#field
 			const range = await this.readSelection()
 			if (!range) return
+			const since = typedSince(base, this.#field, range)
+			if (since) {
+				this.#toggleThenType(base, since, format)
+				return
+			}
 			const state = { text: this.#field, anchor: range.start, focus: range.end }
 			const keys = toggleInlineKeys(state, format)
 			// a selection of whitespace only gets no marks: no keys, and the probe settled so ⇧⌘Z brings no sentinel back
 			if (keys === '') await this.#settleProbe(range)
 			else this.#sendKeys(keys)
 		})
+	}
+
+	/**
+	 * the inline toggle on `base`, the field's text when the command came, then `typed`, the keys typed fast behind it,
+	 * which reached the field before the probe did (`typedSince`): they go in after the toggle's marks, as typed after it
+	 */
+	#toggleThenType(base: string, { replaced, typed }: TypedSince, format: InlineFormat): void {
+		const state = { text: base, anchor: replaced.start, focus: replaced.end }
+		const toggled = applyKeys(state, toggleInlineKeys(state, format))
+		const start = Math.min(toggled.anchor, toggled.focus)
+		const end = Math.max(toggled.anchor, toggled.focus)
+		this.#replaceField(
+			this.#sourceOf(toggled.text.slice(0, start) + typed + toggled.text.slice(end))
+		)
+		this.#putCaret(this.#field, start + typed.length)
 	}
 
 	/**
@@ -1788,9 +1848,30 @@ export class DocumentController {
 			return
 		}
 		this.#emptyPair = { text: applyKeys(state, keys).text, without: state.text }
+		const typed: string[] = []
+		this.#keysBeforeField = typed
 		void this.#onField(async () => {
-			if (await this.#fieldReady()) this.#sendKeys(`${caretKeys(state.text, at)} ${keys}`)
+			try {
+				if (await this.#fieldReady())
+					this.#sendKeys([caretKeys(state.text, at), keys, ...typed].join(' '))
+			} finally {
+				this.#keysBeforeField = null
+			}
 		})
+	}
+
+	/**
+	 * the keys typed while a field opens at the load caret and has none yet (`#toggleInlineAtLoadCaret`), which it takes
+	 * after the toggle's own; null while no field opens. nothing renders from it
+	 */
+	#keysBeforeField: string[] | null = null
+
+	/**
+	 * the window heard `keys`, typing no field took: a field opening at the load caret gets them once it has the keys,
+	 * as editmd's caret took them there; with none opening they go nowhere
+	 */
+	typeWithoutField(keys: string): void {
+		this.#keysBeforeField?.push(keys)
 	}
 
 	/**
@@ -1966,8 +2047,11 @@ export class DocumentController {
 	 * sheets do, while an open menu closes first, as AppKit's menu tracking ends on a key equivalent
 	 */
 	runShortcut(command: MenuCommand, options: RunOptions = {}): void {
-		// a probe's cmd-z, and the ⌘C or ⌘V a command sent the field, are the field's own, whichever listener hears them too
-		if (this.#probing) return
+		/**
+		 * a probe's cmd-z, and the ⌘C or ⌘V a command sent the field, are the field's own, whichever listener hears them
+		 * too; any other command that comes during a probe waits its turn (`#onField`)
+		 */
+		if (this.#probing && command === 'undo') return
 		if (command === this.#echo?.command && Date.now() - this.#echo.at < ECHO_MS) return
 		if (this.overlay?.kind === 'menu') this.#closeOverlayFor(() => this.run(command, options))
 		else if (this.overlay === null) this.run(command, options)
@@ -2691,6 +2775,7 @@ export class DocumentController {
 	 */
 	#replaceField(source: string): void {
 		this.#fence = null
+		this.#emptyParagraph = null
 		this.#writeField(source)
 		const kind = this.activeIndex === null ? undefined : this.blocks[this.activeIndex]?.kind
 		if (kind) this.activeKind = kind

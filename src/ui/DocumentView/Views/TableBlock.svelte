@@ -89,7 +89,7 @@
 	import { useCommandHeld, useQuoteColour, useTheme } from '../../../app/theme.svelte.ts'
 	import { documentController } from '../controller.svelte.ts'
 	import { dropFiles } from '../fileDrop.ts'
-	import type { BlockViewProps } from '../DocumentView.model.ts'
+	import { BLANK_LINE, type BlockViewProps } from '../DocumentView.model.ts'
 
 	let { block, index, testKey }: BlockViewProps = $props()
 
@@ -125,9 +125,6 @@
 		return out
 	}
 
-	/** a no-break space: a paragraph of it paints one empty line, where a blank cell would paint none */
-	const EMPTY_LINE = '\u00a0'
-
 	/**
 	 * what a cell paints: its own text as native <markdown> paints it (`paintedSliceOf`), its `\|` as pipes, a header's
 	 * in `**` since `th` is bold (600; native <markdown> has bold only). an empty cell paints one empty line, as editmd's
@@ -135,7 +132,7 @@
 	 */
 	function sourceOf(cell: Cell, header: boolean): string {
 		const painted = unescapedPipes(documentController.paintedSliceOf(block, cell.start, cell.end))
-		if (painted === '') return EMPTY_LINE
+		if (painted === '') return BLANK_LINE
 		return header ? `**${painted}**` : painted
 	}
 

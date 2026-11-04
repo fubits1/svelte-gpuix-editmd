@@ -12,19 +12,17 @@
  * the files, the app's support folder and the agents it counts live in a temp folder, so nothing reaches the real ones
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { launch } from 'gpuix-svelte/automation'
+import { mkdtempSync, rmSync } from 'node:fs'
 import {
-	agentsIn,
 	check,
 	type Editor,
 	finish,
-	openEditor,
+	keystrokes,
+	keysOf,
+	openOn,
 	painted,
 	pause,
-	press,
-	reaches
+	saveAfterEscape
 } from './support.ts'
 
 // a short root: the window's agent socket inside it must fit macOS's 104-byte socket path limit
@@ -54,10 +52,6 @@ type Case = {
 	/** no field open when the sequence starts: the existing file is opened and nothing clicked (no empty-file run) */
 	closed?: boolean
 }
-
-/** `text` as the keys that type it, one per character */
-const keysOf = (text: string) =>
-	[...text].map((character) => (character === ' ' ? 'space' : character))
 
 /** the caret after `one two` in `one two three`, then `two` selected word-wise, as a person selects it */
 const SELECT_TWO = 'cmd-left right right right right right right right shift-alt-left'
@@ -178,38 +172,6 @@ const CASES: Case[] = [
 const AFTER = '\n\nSecond\n'
 
 /**
- * a window on `text` in `name`.md: an existing file's Block 0 clicked open (left closed with `closed`), or an empty
- * file's own field
- */
-async function openOn(
-	name: string,
-	text: string,
-	closed: boolean
-): Promise<{ app: Editor; file: string }> {
-	const file = join(folder, `${name}.md`)
-	writeFileSync(file, text)
-	if (text !== '') {
-		const app = await openEditor(file, folder)
-		if (!closed) {
-			await app.getByTestId('block-0').click()
-			await app.getByTestId('block-editor').waitFor()
-		}
-		return { app, file }
-	}
-	const app = await launch({
-		entry: 'standalone.ts',
-		args: [file],
-		env: { EDITMD_GPUIX_SUPPORT: join(folder, 'support'), ...agentsIn(folder) }
-	})
-	const field = app.getByTestId('block-editor')
-	await field.waitFor({ timeoutMs: 10_000 })
-	await field.click()
-	return { app, file }
-}
-
-const keystrokes = (app: Editor, keys: string) => app.call('keystrokes', { keys })
-
-/**
  * one call per key, two frames apart as automation waits, and a pause for a remounted field's caret; a command key
  * (⌘, ⇧⌘) waits longer, as a person who presses a shortcut does, so its probe settles before the next key
  */
@@ -258,21 +220,6 @@ async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<str
 	return shown
 }
 
-/** Escape and ⌘S: the file once it differs from `before`, or as it stands after 4s, and whether a field is still open */
-async function saveAfterEscape(
-	app: Editor,
-	file: string,
-	before: string
-): Promise<[string, boolean]> {
-	await pause(300)
-	await keystrokes(app, 'escape')
-	await pause(200)
-	const open = (await app.getByTestId('block-editor').count()) > 0
-	await press(app, 'cmd-s')
-	await reaches(() => readFileSync(file, 'utf8') !== before, 4000)
-	return [readFileSync(file, 'utf8'), open]
-}
-
 /** whether the saved file is what the case wants, the Blocks after it (`suffix`) as they were */
 function holds(saved: string, want: Want, suffix: string): boolean {
 	if (typeof want === 'string') return saved === `${want}${suffix}`
@@ -297,9 +244,10 @@ try {
 						? JSON.stringify(`${each.saved}${suffix}`)
 						: `${JSON.stringify(each.saved.without)} with one ${each.saved.mark} pair`
 				const { app, file } = await openOn(
+					folder,
 					`case-${index}-${existing}-${batch}`,
 					text,
-					each.closed === true
+					each.closed ? null : 0
 				)
 				try {
 					if (!existing) await typeEach(app, each.setup, [])

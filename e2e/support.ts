@@ -65,18 +65,22 @@ export function agentsIn(folder: string): Record<string, string> {
 	return { EDITMD_GPUIX_AGENT_ROOT: folder }
 }
 
-/** the app on `file`, in a window, with everything it keeps outside the document under `folder` */
+/**
+ * the app on `file`, in a window, with everything it keeps outside the document under `folder`, once the test id
+ * `ready` shows
+ */
 export async function openEditor(
 	file: string,
 	folder: string,
-	env: Record<string, string> = {}
+	env: Record<string, string> = {},
+	ready = 'block-0'
 ): Promise<Editor> {
 	const app = await launch({
 		entry: 'standalone.ts',
 		args: [file],
 		env: { EDITMD_GPUIX_SUPPORT: join(folder, 'support'), ...agentsIn(folder), ...env }
 	})
-	await app.getByTestId('block-0').waitFor({ timeoutMs: 10_000 })
+	await app.getByTestId(ready).waitFor({ timeoutMs: 10_000 })
 	return app
 }
 
@@ -92,35 +96,31 @@ export async function editBlock(app: App, index: number, source: string): Promis
 export const press = (app: App, keys: string) => app.getByTestId('block-0').press(keys)
 
 /**
- * a window on `text` in `folder`/`name`.md: an existing file's Block `block` clicked open, or an empty file's own
- * field
+ * a window on `text` in `folder`/`name`.md: an existing file's Block `block` clicked open, none with null, or an empty
+ * file's own field
  */
 export async function openOn(
 	folder: string,
 	name: string,
 	text: string,
-	block: number
+	block: number | null
 ): Promise<{ app: Editor; file: string }> {
 	const file = join(folder, `${name}.md`)
 	writeFileSync(file, text)
-	if (text !== '') {
-		const app = await openEditor(file, folder)
+	const app = await openEditor(file, folder, {}, text === '' ? 'block-editor' : 'block-0')
+	if (text === '') await app.getByTestId('block-editor').click()
+	else if (block !== null) {
 		await app.getByTestId(`block-${block}`).click()
 		await app.getByTestId('block-editor').waitFor()
-		return { app, file }
 	}
-	const app = await launch({
-		entry: 'standalone.ts',
-		args: [file],
-		env: { EDITMD_GPUIX_SUPPORT: join(folder, 'support'), ...agentsIn(folder) }
-	})
-	const field = app.getByTestId('block-editor')
-	await field.waitFor({ timeoutMs: 10_000 })
-	await field.click()
 	return { app, file }
 }
 
 export const keystrokes = (app: App, keys: string) => app.call('keystrokes', { keys })
+
+/** `text` as the keys that type it, one per character */
+export const keysOf = (text: string) =>
+	[...text].map((character) => (character === ' ' ? 'space' : character))
 
 /** one call per key, two frames apart as automation waits, and a pause for a remounted field's caret */
 export async function typeEach(app: App, keys: string[]): Promise<void> {
@@ -128,6 +128,17 @@ export async function typeEach(app: App, keys: string[]): Promise<void> {
 		await keystrokes(app, key)
 		await pause(60)
 	}
+}
+
+/**
+ * a Backspace as a person presses it, key down then up, with `held` typed while it is down; the port hears a
+ * Backspace in an empty field only from its key up, so a plain keystroke cannot stand in for it
+ */
+export async function pressBackspace(app: App, held?: string): Promise<void> {
+	await app.call('keyDown', { key: 'backspace' })
+	if (held) await keystrokes(app, held)
+	await app.call('keyUp', { key: 'backspace' })
+	await pause(150)
 }
 
 /** Escape and ⌘S: the file once it differs from `before`, or as it stands after 4s, and whether a field is still open */

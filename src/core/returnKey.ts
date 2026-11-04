@@ -2,22 +2,15 @@ import { type BlockKind, blockKindOf } from '../engine/blocks.ts'
 import { commonEnds } from './diff.ts'
 
 /**
- * Return placed where it was pressed. `base` is the field's text when Return was pressed, `before` the field's last
+ * where in `base` Return was pressed. `base` is the field's text when Return was pressed, `before` the field's last
  * report before the newline typed for Return landed, and `field` the report that brought it: keys the user typed
- * after Return reach the field first, so what changed from `base` to `before` came after Return. `at` is where Return
- * was in `base`, `typed` the text typed after it and `deleted` how many characters Backspaces took before it. null
- * when `field` is not `before` with one newline put in, as when the newline replaced a selection
+ * after Return reach the field first, so what changed from `base` to `before` came after Return. null when `field` is
+ * not `before` with one newline put in, as when the newline replaced a selection
  */
-export function returnAfterTyping(
-	base: string,
-	before: string,
-	field: string
-): { at: number; typed: string; deleted: number } | null {
+export function returnAfterTyping(base: string, before: string, field: string): number | null {
 	const landed = commonEnds(before, field)
 	if (landed.aEnd !== landed.start || field.slice(landed.start, landed.bEnd) !== '\n') return null
-	if (before === base) return { at: landed.start, typed: '', deleted: 0 }
-	const { start, aEnd, bEnd } = commonEnds(base, before)
-	return { at: aEnd, typed: before.slice(start, bEnd), deleted: aEnd - start }
+	return before === base ? landed.start : commonEnds(base, before).aEnd
 }
 
 /**
@@ -31,8 +24,21 @@ export type ReturnEdit =
 	| { kind: 'split'; head: string; tail: string }
 	| { kind: 'field'; field: string; caret: number }
 
+/**
+ * an empty paragraph as editmd writes it, all but the last at the document's end (@milkdown/preset-commonmark
+ * empty-line-br.ts), which keeps it from folding away
+ */
+export const EMPTY_PARAGRAPH = '<br />'
+
+/** a Block source that is editmd's empty paragraph: a lone `<br>` in any spelling, which it paints as one blank line */
+export const isEmptyParagraph = (source: string): boolean => /^<br\s*\/?\s*>$/i.test(source.trim())
+
 /** a list item's marker line: indent, bullet or number with its delimiter, the space after it, a task box, its text */
 const ITEM_LINE = /^(\s*)(?:([-+*])|(\d+)([.)]))(\s+)(\[[ xX]\]\s)?(.*)$/
+
+/** the spaces that indent a line under the text of the item whose marker line is `line`, its task box left out */
+const textIndent = (line: string, item: RegExpExecArray) =>
+	' '.repeat(line.length - item[7]!.length - (item[6]?.length ?? 0))
 
 /**
  * Backspace typed at a list item's start, which took the space after its marker out of the field (`before` to
@@ -59,8 +65,7 @@ export function backspaceEdit(
 	if (previous === undefined) {
 		return { field: before.slice(0, lineStart) + text + rest, caret: lineStart }
 	}
-	const marker = ITEM_LINE.exec(previous)!
-	const indent = ' '.repeat(previous.length - marker[7]!.length - (marker[6]?.length ?? 0))
+	const indent = textIndent(previous, ITEM_LINE.exec(previous)!)
 	const field = `${before.slice(0, lineStart)}\n${indent}${text}${rest}`
 	return { field, caret: lineStart + 1 + indent.length }
 }
@@ -83,6 +88,35 @@ export function joinedBlocks(
 		return null
 	const text = kind === 'heading' ? block.replace(/^ {0,3}#{1,6}[ \t]+/, '') : block
 	return { source: previous + text, caret: previous.length }
+}
+
+/** an ATX heading's first line: its hashes and its text */
+const ATX_LINE = /^ {0,3}(#{1,6})[ \t]+(.*)$/
+
+/**
+ * the Block `source` its field leaves, with its hard breaks as editmd writes them (run in editmd's own editor): a
+ * break with nothing after it in its paragraph, at the Block's end or before a blank line, is no break and goes; an
+ * ATX heading's break, which would end the heading, turns the heading setext at levels 1 and 2 (remark's underline,
+ * as long as its last line) and becomes a space below them; an empty list item keeps no space after its marker
+ */
+export function settledBreaks(source: string): string {
+	const ended = source
+		.replace(/\\\n[ \t>]*$/, '')
+		.replace(/\\(?=\n[ \t>]*\n)/g, '')
+		// an empty item is written as its marker alone
+		.replace(/^([ \t]*(?:[-+*]|\d{1,9}[.)]))[ \t]+$/gm, '$1')
+	const lines = ended.split('\n')
+	const heading = ATX_LINE.exec(lines[0]!)
+	const blank = lines.findIndex((line, index) => index > 0 && line.trim() === '')
+	const end = blank < 0 ? lines.length : blank
+	if (!heading || !lines[0]!.endsWith('\\') || end < 2) return ended
+	const [, hashes, text] = heading
+	const body = [text!, ...lines.slice(1, end)]
+	const settled =
+		hashes!.length <= 2
+			? `${body.join('\n')}\n${(hashes === '#' ? '=' : '-').repeat(body.at(-1)!.length)}`
+			: `${hashes} ${body.map((line) => line.replace(/\\$/, '').trim()).join(' ')}`
+	return [settled, ...lines.slice(end)].join('\n')
 }
 
 /** a quote line: its `>` marks and the text after them */
@@ -118,9 +152,7 @@ export function returnEdit(field: string, at: number, shift = false): ReturnEdit
 
 	if (shift) {
 		// the next line is indented to the item's text, its task box left out, or keeps the quote's marks
-		const continued = item
-			? ' '.repeat(markerLine!.length - item[7]!.length - (item[6]?.length ?? 0))
-			: (quote?.[1] ?? '')
+		const continued = item ? textIndent(markerLine!, item) : (quote?.[1] ?? '')
 		return {
 			kind: 'field',
 			field: `${head}\\\n${continued}${tail}`,
@@ -152,6 +184,9 @@ export function returnEdit(field: string, at: number, shift = false): ReturnEdit
 		return { kind: 'field', field, caret: at + 2 + blank.length + marks!.length }
 	}
 
+	// splitBlock on an empty paragraph keeps it, written as editmd writes one, and starts another after it
+	if (head.trim() === '' && tail.trim() === '')
+		return { kind: 'split', head: EMPTY_PARAGRAPH, tail: '' }
 	// splitBlock keeps the node's type for a split inside it, so the rest of a heading is a heading of its level
 	const hashes =
 		kind === 'heading' && tail.trim() !== '' ? /^(#{1,6})[ \t]/.exec(head)?.[1] : undefined

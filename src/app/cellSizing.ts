@@ -3,6 +3,8 @@
  * of the cell's text sizes its column, as `width: max-content` does. its sans text goes in a <text>; its code spans
  * paint in SF Mono at the cell's size (measured headless), wider than the sans, so they are measured apart
  */
+import { CODE_SPAN } from '../core/linkInsert.ts'
+
 export type CellSizing = { plain: string; code: string[] }
 
 /** the common named entities, as the characters they paint; any other stays as written */
@@ -14,9 +16,6 @@ const NAMED_ENTITIES: Record<string, string> = {
 	apos: "'",
 	nbsp: ' '
 }
-
-/** a code span: a run of backticks, its text, and a closing run of the same length */
-const CODE_SPAN = /(?<!`)(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g
 
 /** a code span's text as it paints: one space off each end when both ends have one and it is not all spaces */
 function codeText(inner: string): string {

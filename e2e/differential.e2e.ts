@@ -1,7 +1,7 @@
 /**
  * end to end: the seeded typing sequences in test/fixtures/differential/editmd-typing.json, typed into a real window
- * on an existing file and on an empty one, one key per call and as one batch, against what editmd saves for the same
- * keys in its own editor (kit harness scripts/parity/editmd-differential.test.mjs). every check asserts the file ⌘S
+ * on an existing file and on an empty one, one key per call (each Backspace pressed as a person does, key down then up)
+ * and as one batch, against what editmd saves for the same keys in its own editor (kit harness scripts/parity/editmd-differential.test.mjs). every check asserts the file ⌘S
  * saves exactly and that Escape leaves no field open; EDITMD_GPUIX_DIFF_OUT, when set, names a JSON file that gets
  * every result, so the two editors can be compared case by case
  *
@@ -10,7 +10,16 @@
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { check, finish, keystrokes, openOn, pause, saveAfterEscape, typeEach } from './support.ts'
+import {
+	check,
+	finish,
+	keystrokes,
+	openOn,
+	pause,
+	pressBackspace,
+	saveAfterEscape,
+	typeEach
+} from './support.ts'
 
 type Case = {
 	name: string
@@ -64,7 +73,12 @@ try {
 					if (existing) await keystrokes(app, each.caret)
 					else await typeEach(app, each.setup)
 					await pause(200)
-					await (batch ? keystrokes(app, each.steps.join(' ')) : typeEach(app, each.steps))
+					if (batch) await keystrokes(app, each.steps.join(' '))
+					else {
+						for (const step of each.steps) {
+							await (step === 'backspace' ? pressBackspace(app) : typeEach(app, [step]))
+						}
+					}
 					const [saved, open] = await saveAfterEscape(app, file, text)
 					results.push({ name: each.name, existing, batch, expected, saved, open })
 					check(

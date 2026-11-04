@@ -3,6 +3,7 @@ import { type AgentAuthor, OUTSIDE_EDIT } from './agentEdits.ts'
 import { diff } from './diff.ts'
 import { mergeText, mergeTextMapping, type TextEdit, textEdits } from './merge.ts'
 import { settleReferences } from './references.ts'
+import { EMPTY_PARAGRAPH, settledBreaks } from './returnKey.ts'
 import { blockChange, type ChangedRun, describedText, type Gap, mappedRuns } from './changedText.ts'
 
 /** the Active block's text field, from click until blur or Escape; see CONTEXT.md "Edit session" */
@@ -208,13 +209,25 @@ export class Document {
 	}
 
 	/**
-	 * the text a save writes: `text` without the blank line of a new Block that holds nothing yet (`openEditAfter`), as
-	 * editmd never writes its empty paragraph. the Edit session stays open, so typing there brings the Block back
+	 * the text a save writes with a new Block that holds nothing yet (`openEditAfter`) as editmd writes its empty
+	 * paragraph: `<br />`, or nothing when it is the document's last. the Edit session stays open, so typing there
+	 * fills the Block
 	 */
 	get textToSave(): string {
 		const session = this.#session
 		if (session?.opened == null || session.start !== session.end) return this.#text
-		return this.#text.slice(0, session.start - 2) + this.#text.slice(session.start)
+		const { start, end, insert } = this.#emptyBlockEdit(session.start)
+		return this.#text.slice(0, start) + insert + this.#text.slice(end)
+	}
+
+	/**
+	 * the edit that leaves the empty new Block at `at` as editmd writes its empty paragraph: `<br />`, or its blank line
+	 * gone when it is the document's last
+	 */
+	#emptyBlockEdit(at: number): TextEdit {
+		return this.#text.slice(at).trim() === ''
+			? { start: at - 2, end: at, insert: '' }
+			: { start: at, end: at, insert: EMPTY_PARAGRAPH }
 	}
 
 	get isDirty(): boolean {
@@ -404,7 +417,11 @@ export class Document {
 		this.#session = null
 		if (!session) return
 		if (session.opened !== null && session.end === session.start) {
-			return this.#splice([{ start: session.start - 2, end: session.start, insert: '' }])
+			const blankless = this.#text.slice(0, session.start - 2) + this.#text.slice(session.start)
+			const edit = this.#emptyBlockEdit(session.start)
+			this.#splice([edit])
+			if (edit.insert !== '') this.#push([{ before: blankless, after: this.#text }])
+			return
 		}
 		if (session.changes.length === 0) return
 		const typed = this.#text
@@ -414,6 +431,12 @@ export class Document {
 		if (fence) {
 			const ending = this.#text.slice(session.start, session.end).endsWith('\n') ? '' : '\n'
 			this.#splice([{ start: session.end, end: session.end, insert: `${ending}${fence}` }])
+		}
+		if (!session.whole) {
+			const field = this.#text.slice(session.start, session.end)
+			const settled = settledBreaks(field)
+			if (settled !== field)
+				this.#splice([{ start: session.start, end: session.end, insert: settled }])
 		}
 		this.#settleReferences(withOutsideChanges(session.changes, typed))
 		if (this.#text !== typed) session.changes.push({ before: typed, after: this.#text })

@@ -13,6 +13,9 @@ export type BlockViewProps = {
 	testKey: string
 }
 
+/** a no-break space: native <markdown> paints a blank source as no line at all, and a paragraph of this as one */
+export const BLANK_LINE = String.fromCharCode(0xa0)
+
 /**
  * a code card's language label, `pre[data-language]::before { top: 0.35rem }` (5.6px), less the 2px GPUI sets 11px
  * text lower in its line than WebKit: editmd's ink starts 8px below the card's top, the port's started 10px below it
