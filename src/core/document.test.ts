@@ -35,7 +35,8 @@ describe('Document', () => {
 		expect(document.text).toBe('one\n\ntwo\n')
 	})
 
-	// editmd's Return makes an empty paragraph that stays, one undo step; only the document's last goes unwritten
+	// editmd's Return makes an empty paragraph that stays, one undo step; Milkdown's serializer leaves the document's
+	// last empty paragraph unwritten (inline-br.spec.ts "skips only the last trailing empty paragraph")
 	test('a new Block closed untouched stays as an empty paragraph, one undo step; the last one leaves nothing', () => {
 		const document = new Document('one\n\nthree\n')
 		document.openEditAfter(0).close()
@@ -795,8 +796,9 @@ describe('Document', () => {
 		])
 	})
 
-	// editmd keeps an empty paragraph and writes it `<br />`, all but the last one at the end of the document
-	// (@milkdown/preset-commonmark empty-line-br.ts, inline-br.spec.ts "skips only the last trailing empty paragraph")
+	// editmd keeps an empty paragraph and writes it `<br />`; Milkdown's serializer leaves the document's last one
+	// unwritten (empty-line-br.ts, inline-br.spec.ts "skips only the last trailing empty paragraph"), which in editmd is
+	// often its hidden trailing paragraph, so it can still write a final `<br />` the port leaves out
 	test('a new empty Block with Blocks after it is kept as `<br />`; at the end it goes', () => {
 		const middle = new Document('one\n\nSecond\n')
 		middle.openEditAfter(0)

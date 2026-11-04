@@ -14,9 +14,9 @@
 	type TrackRow = (start: number, node: ShadowNode) => () => void
 
 	/** the page's row tracker, which scrolls a followed link's heading inside a quote or a list to its own row */
-	const [useRowTracker, setRowTracker] = createContext<TrackRow>()
+	const [useRowTracker, provideRowTracker] = createContext<TrackRow>()
 
-	export const provideRowTracker = setRowTracker
+	export { provideRowTracker }
 </script>
 
 <script lang="ts">

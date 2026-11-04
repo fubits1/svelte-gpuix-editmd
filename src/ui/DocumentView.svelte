@@ -187,25 +187,22 @@
 	/** each painted Block's node by index, for scrolling a followed link's target; nothing renders from it */
 	const blockNodes = new SvelteMap<number, ShadowNode>()
 
-	function trackBlock(index: number, node: ShadowNode) {
-		blockNodes.set(index, node)
-		return () => {
-			if (blockNodes.get(index) === node) blockNodes.delete(index)
-		}
-	}
-
 	/**
 	 * the rows of the Blocks inside quotes and lists by the Document offset each Block starts at, for scrolling a followed
 	 * link's heading among them (NestedBlocks reports them); nothing renders from it
 	 */
 	const rowNodes = new SvelteMap<number, ShadowNode>()
 
-	provideRowTracker((start, node) => {
-		rowNodes.set(start, node)
+	/** keys a node into `nodes`; its release leaves the key alone once a newer node holds it */
+	const trackIn = (nodes: SvelteMap<number, ShadowNode>) => (key: number, node: ShadowNode) => {
+		nodes.set(key, node)
 		return () => {
-			if (rowNodes.get(start) === node) rowNodes.delete(start)
+			if (nodes.get(key) === node) nodes.delete(key)
 		}
-	})
+	}
+
+	const trackBlock = trackIn(blockNodes)
+	provideRowTracker(trackIn(rowNodes))
 
 	/**
 	 * scroll the nearest scrolling ancestor (App's Scroller) so `node`'s top meets its top, as a browser's

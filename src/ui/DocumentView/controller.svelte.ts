@@ -1311,7 +1311,7 @@ export class DocumentController {
 			field[at] === '\n' &&
 			field.slice(0, at) + field.slice(caret) === this.#field
 		// keys typed behind Return before its newline came back are typing until it does (`#typeAfterReturn`)
-		if (moved !== null) this.#typeAfterReturn(pending!, moved)
+		if (pending && moved !== null) this.#typeAfterReturn(pending, moved)
 		// Return reads the Block's kind from its text, so a field holding code alone hands it the fences too; a newline
 		// with no Return pending is the user's own Shift-Return
 		else if (typedNewline) {
