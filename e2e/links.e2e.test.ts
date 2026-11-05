@@ -1,6 +1,7 @@
 /**
- * end to end: editmd's SelfTest `links` (Sources/editmd/SelfTest.swift@9e889e6, lines 350-405) in a
- * real window, where the order of GPUI's link and Block click events is the one a user gets
+ * end to end: editmd's SelfTest `links` (Sources/editmd/SelfTest.swift@9e889e6, lines 350-405) in the
+ * app's window (headless by default, a real one with `test:e2e:window`), clicked through GPUI, so its link and Block
+ * click events arrive in GPUI's own order
  *
  * EDITMD_GPUIX_DRY_RUN logs what the app would start, so nothing opens in Finder or the browser.
  * editmd puts the five links in one paragraph; here each has its own, so a Cmd-click at the start

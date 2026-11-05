@@ -72,7 +72,7 @@ describe('UntitledNumbers', () => {
 		}
 	})
 
-	// an Untitled window must open even when the support folder cannot be written
+	// An Untitled window must open even when the support folder cannot be made.
 	test('a folder that cannot be kept gives the first number', () => {
 		const blocked = join(root, 'a-file')
 		writeFileSync(blocked, '')

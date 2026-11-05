@@ -4,6 +4,7 @@ import {
 	caretKeys,
 	type FieldState,
 	lineEndsOf,
+	rewriteKeys,
 	selectKeys,
 	selectionCandidates,
 	settleSelection,
@@ -11,9 +12,11 @@ import {
 	toggleInlineKeys
 } from './fieldSelection.ts'
 
-// GPUI's field moves one character per arrow, an emoji included (measured headless: `x😀yéz`,
-// right right Z gives `x😀Zyéz`), so the model and the keys count characters: counting UTF-16 units makes unbolding
-// `**😀**` cut a space
+/**
+ * GPUI's field moves one character per arrow, an emoji included (measured headless: `x😀yéz`,
+ * right right Z gives `x😀Zyéz`), so the model and the keys count characters: counting UTF-16 units makes unbolding
+ * `**😀**` cut a space.
+ */
 describe('characters, not UTF-16 units', () => {
 	test('an arrow, delete and backspace step over a whole character', () => {
 		const at = (text: string, keys: string) => applyKeys({ text, anchor: 0, focus: 0 }, keys).text
@@ -32,6 +35,31 @@ describe('characters, not UTF-16 units', () => {
 			after(bold, toggleInlineKeys(bold, 'bold')).text,
 			caretKeys('a😀b', 3)
 		]).toEqual(['😀 next', 'a **😀b** c', 'cmd-down left'])
+	})
+})
+
+// A block command or Add Link in an open field changes its text; typed as keys, the change stays in the field's own
+// undo, as editmd's command is one undoable step (editor.ts:505-511), where a new value would clear that undo.
+describe('rewriteKeys', () => {
+	const rewritten = (before: string, after: string, caret: number) => {
+		const keys = rewriteKeys(before, after, caret)
+		return keys === null ? null : applyKeys({ text: before, anchor: 2, focus: 2 }, keys)
+	}
+
+	test('the keys turn the field into the new text and leave the caret where the command put it', () => {
+		expect([
+			rewritten('Title', '## Title', 8),
+			rewritten('## Title', 'Title', 0),
+			rewritten('see 😀 docs', 'see 😀 [docs](https://a.example)', 32)
+		]).toEqual([
+			{ text: '## Title', anchor: 8, focus: 8 },
+			{ text: 'Title', anchor: 0, focus: 0 },
+			{ text: 'see 😀 [docs](https://a.example)', anchor: 32, focus: 32 }
+		])
+	})
+
+	test('a change that types a newline, which Return would take, has no keys', () => {
+		expect(rewriteKeys('x', '```\nx\n```', 0)).toBe(null)
 	})
 })
 
@@ -163,8 +191,6 @@ describe('caretKeys', () => {
 	})
 })
 
-// what editmd's Format > Bold, Italic, Strikethrough and Inline Code write (Milkdown toggles, serialized with
-// strong `**`, emphasis `_`, editor.ts:82-99); measured in editmd's own editor
 describe('selectKeys', () => {
 	test('selects the range from any caret, an emoji one step', () => {
 		const text = 'one x😀y two'
@@ -187,6 +213,8 @@ describe('lineEndsOf', () => {
 	})
 })
 
+// what editmd's Format > Bold, Italic, Strikethrough and Inline Code write (Milkdown toggles, serialized with
+// strong `**`, emphasis `_`, editor.ts:82-99); measured in editmd's own editor
 describe('toggleInlineKeys', () => {
 	test('wraps the selection in the format’s marks and keeps it selected', () => {
 		const state = field('one two three', 'two')

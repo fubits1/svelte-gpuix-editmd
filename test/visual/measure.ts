@@ -43,7 +43,10 @@ type AutomationNode = {
 	children?: AutomationNode[]
 }
 
-/** waits until the page's height holds still for 300ms, as `--snapshot` does before its first picture */
+/**
+ * waits until the automation tree holds still for 300ms, 3s at most; `--snapshot` waits as long for the page's height
+ * before its first picture (`settledHeight` in src/app/snapshot.ts)
+ */
 async function settle(): Promise<void> {
 	const heightNow = () => {
 		const tree = automation_tree() as AutomationNode | null

@@ -1,5 +1,5 @@
 /**
- * A text file: its bytes, and the text they hold with LF line endings.
+ * a text file: its bytes, and the text they hold with LF line endings
  *
  * The file's format (encoding, byte order mark, line endings) belongs here,
  * not to the editor: the text handed out always uses LF, and new text is
@@ -28,7 +28,7 @@ const ENCODING_NAMES: Record<Encoding, string> = {
 
 type LineEnding = '\n' | '\r\n' | '\r'
 
-/** In tie-break order: ties go to LF, then CRLF. */
+/** in tie-break order: ties go to LF, then CRLF */
 const LINE_ENDINGS: readonly LineEnding[] = ['\n', '\r\n', '\r']
 
 export type Format = { encoding: Encoding; lineEnding: LineEnding }
@@ -45,7 +45,7 @@ const RECOVERY_SUGGESTIONS: Record<ReadErrorReason, string> = {
 	unknownEncoding: 'editmd reads UTF-8, UTF-16 with a byte order mark, and Windows-1252.'
 }
 
-/** Why a file can't be opened as text. */
+/** why a file can't be opened as text */
 export class TextFileReadError extends Error {
 	readonly reason: ReadErrorReason
 	readonly failureReason: string
@@ -63,10 +63,10 @@ export class TextFileReadError extends Error {
 const DEFAULT_FORMAT: Format = { encoding: 'utf8', lineEnding: '\n' }
 
 export class TextFile {
-	/** The text, with LF line endings. */
+	/** the text, with LF line endings */
 	readonly text: string
 	readonly format: Format
-	/** The bytes on disk. */
+	/** the bytes on disk */
 	readonly data: Uint8Array
 
 	private constructor(text: string, format: Format, data: Uint8Array) {
@@ -76,8 +76,9 @@ export class TextFile {
 	}
 
 	/**
-	 * `text` written in `format`. If the encoding can't represent the text,
-	 * it is written as UTF-8 instead, which `format` then says.
+	 * `text` written in `format`
+	 *
+	 * If the encoding can't represent the text, it is written as UTF-8 instead, which `format` then says.
 	 */
 	static fromText(text = '', format: Format = DEFAULT_FORMAT): TextFile {
 		const normalized = normalizingLineEndings(text)
@@ -89,7 +90,7 @@ export class TextFile {
 	}
 
 	/**
-	 * Reads UTF-8 (with or without a byte order mark), UTF-16 with a byte
+	 * reads UTF-8 (with or without a byte order mark), UTF-16 with a byte
 	 * order mark, and Windows-1252 for anything that isn't valid UTF-8.
 	 */
 	static fromData(data: Uint8Array): TextFile {
@@ -101,21 +102,25 @@ export class TextFile {
 		)
 	}
 
-	/** The file with `text` as its contents, in the same format. Unchanged text keeps the original bytes. */
+	/**
+	 * the file with `text` as its contents, in the same format
+	 *
+	 * Unchanged text keeps the original bytes.
+	 */
 	replacingText(text: string): TextFile {
 		return text === this.text ? this : TextFile.fromText(text, this.format)
 	}
 
 	/**
-	 * What to tell the user when saving `this` over `previous` changed the
-	 * file's encoding, which happens when an edit can't be represented in it.
+	 * what to tell the user when saving `this` over `previous` changed the
+	 * file's encoding, which happens when an edit can't be represented in it
 	 */
 	conversionNotice(previous: TextFile): string | null {
 		if (this.format.encoding === previous.format.encoding) return null
 		return `The file was saved as ${ENCODING_NAMES[this.format.encoding]}, because it now contains characters ${ENCODING_NAMES[previous.format.encoding]} can't represent.`
 	}
 
-	/** Same text, format and bytes: what Swift's synthesized `Equatable` compared. */
+	/** same text, format and bytes: what Swift's synthesized `Equatable` compared */
 	equals(other: TextFile): boolean {
 		return (
 			this.text === other.text &&
@@ -132,7 +137,7 @@ const UTF8_BOM = [0xef, 0xbb, 0xbf]
 const UTF16_LITTLE_ENDIAN_BOM = [0xff, 0xfe]
 const UTF16_BIG_ENDIAN_BOM = [0xfe, 0xff]
 
-/** Windows-1252 0x80-0x9F; `null` marks the five bytes the code page leaves undefined. */
+/** Windows-1252 0x80-0x9F; `null` marks the five bytes the code page leaves undefined */
 const WINDOWS_1252_HIGH: readonly (number | null)[] = [
 	0x20ac,
 	null,
@@ -216,7 +221,7 @@ function decode(data: Uint8Array): { text: string; encoding: Encoding } {
 	try {
 		return { text: UTF8_FATAL.decode(body), encoding: hasBOM ? 'utf8BOM' : 'utf8' }
 	} catch {
-		// Not UTF-8.
+		// not UTF-8
 	}
 
 	// Control characters other than whitespace and escape mean binary data rather than a legacy text file.
@@ -316,13 +321,17 @@ function encode(text: string, encoding: Encoding): Uint8Array | null {
 
 // MARK: Line endings
 
-/** `text` with every CRLF and lone CR turned into LF. */
+/** `text` with every CRLF and lone CR turned into LF */
 function normalizingLineEndings(text: string): string {
 	if (!text.includes('\r')) return text
 	return text.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
 }
 
-/** The most common line ending in `text`, LF if it has none. Ties go to LF, then CRLF. */
+/**
+ * the most common line ending in `text`, LF if it has none
+ *
+ * Ties go to LF, then CRLF.
+ */
 function dominantLineEnding(text: string): LineEnding {
 	const counts = new Map<LineEnding, number>()
 	const count = (ending: LineEnding) => counts.set(ending, (counts.get(ending) ?? 0) + 1)

@@ -1,26 +1,20 @@
-import {
-	AgentEditClaims,
-	type AgentAuthor,
-	type AgentEditReport,
-	type AgentProcess,
-	processAuthorOfChange
-} from '../core/agentEdits.ts'
+import { AgentEditClaims, type AgentAuthor, type AgentEditReport } from '../core/agentEdits.ts'
 
-/** who changed a file: the latest live Claim from a Report, else the agent process working above it (editmd's order) */
+/**
+ * who changed a file: the latest live Claim from a Report, else nobody (an Outside edit)
+ *
+ * editmd guesses an agent from the processes working above the file (AgentEdits.swift:29-37); the port does not, so the
+ * user's own edit in another editor is never credited to an agent.
+ */
 export class Attribution {
 	#claims = new AgentEditClaims()
-	#listProcesses: () => AgentProcess[]
 	#now: () => number
 
 	/**
 	 * `now` is in seconds, like the Claims' policy: by default the process's uptime, as editmd's claims run on the
 	 * system's (AgentEdits.swift:33,74), so a wall clock that is set never stretches or cuts a claim
 	 */
-	constructor(
-		listProcesses: () => AgentProcess[],
-		now: () => number = () => performance.now() / 1000
-	) {
-		this.#listProcesses = listProcesses
+	constructor(now: () => number = () => performance.now() / 1000) {
 		this.#now = now
 	}
 
@@ -31,12 +25,8 @@ export class Attribution {
 		)
 	}
 
-	/** both lookups take the resolved path, as editmd's (AgentEdits.swift:32-34): lsof reports folders resolved */
+	/** The lookup takes the resolved path, as editmd's (AgentEdits.swift:32-33). */
 	authorOfChange(path: string): AgentAuthor | null {
-		const key = AgentEditClaims.key(path)
-		return (
-			this.#claims.authorOfChange(key, this.#now()) ??
-			processAuthorOfChange(key, this.#listProcesses())
-		)
+		return this.#claims.authorOfChange(AgentEditClaims.key(path), this.#now())
 	}
 }

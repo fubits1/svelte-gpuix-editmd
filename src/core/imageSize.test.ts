@@ -235,7 +235,7 @@ describe('imageSize', () => {
 		])
 	})
 
-	// WebKit sizes an SVG of 300×150pt at 400×200 px; CSS absolute units, 96 px to the inch
+	// WebKit sizes an SVG of 300×150pt at 400×200px: CSS absolute units, 96px to the inch.
 	test('SVG lengths in absolute units convert to px as CSS converts them', () => {
 		const svg = (attributes: string) =>
 			new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" ${attributes}/>`)
@@ -250,8 +250,8 @@ describe('imageSize', () => {
 		])
 	})
 
-	// the root may come after the first 4096 bytes, a commented-out <svg> is not the root, and a JPEG marker
-	// may follow 0xFF fill bytes
+	// The root may follow a long comment, a commented-out <svg> is not the root, and a JPEG marker may follow
+	// 0xFF fill bytes.
 	test('a late root, a commented-out <svg> and JPEG fill bytes', () => {
 		const encode = (text: string) => new TextEncoder().encode(text)
 		const late = encode(`<!--${'x'.repeat(5000)}-->\n<svg width="30" height="20"/>`)

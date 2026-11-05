@@ -4,20 +4,15 @@ import {
 	type Direction,
 	type Match,
 	matchesFrom,
-	steppedIndex,
-	type Wash
+	steppedIndex
 } from './findMatches.ts'
 import type { Palette } from './palette.ts'
 
-type FindOptions = {
-	/** the washes the last frame painted; native's `getPaintedHighlights` by default */
-	readWashes?: () => readonly Wash[]
-	/** ms between two reads of the paint while a query is set */
-	pollInterval?: number
-}
-
 /** the `highlight` washes the last frame painted, as native reports them; none before the window is up */
 export const paintedWashes = () => get_native()?.getPaintedHighlights() ?? []
+
+/** ms between two reads of the paint while a query is set */
+const FIND_POLL_MS = 100
 
 /**
  * editmd's Find (Edit > Find, Cmd-F, Cmd-G, Cmd-Shift-G): the find bar's state and the matches it steps
@@ -29,8 +24,6 @@ export const paintedWashes = () => get_native()?.getPaintedHighlights() ?? []
  */
 class FindController {
 	#search = new TextSearch()
-	#readWashes: () => readonly Wash[]
-	#pollInterval: number
 	/** the match active when the query last changed, which the next read re-finds (`anchoredIndex`) */
 	#anchor: Match | null = null
 	#reanchor = false
@@ -38,7 +31,10 @@ class FindController {
 	#skipEmpty = false
 	/** set by the view, which alone holds the Blocks' nodes to scroll */
 	#revealMatch: ((match: Match) => void) | null = null
-	/** the texts other highlights wash in the same paint (an Agent's changed runs), which are no match of Find's */
+	/**
+	 * the texts other highlights wash in the same paint (an Agent's changed runs, link runs, code spans), which are no
+	 * match of Find's
+	 */
 	#foreignTexts: ReadonlySet<string> = new Set()
 	/** the bar shows, above the document */
 	visible = $state(false)
@@ -53,11 +49,6 @@ class FindController {
 	total = $derived(this.matches.length)
 	/** editmd turns the field's text red when the query matches nothing (`setResult(found: false)`) */
 	notFound = $derived(this.#search.query !== '' && this.matches.length === 0)
-
-	constructor({ readWashes = paintedWashes, pollInterval = 100 }: FindOptions = {}) {
-		this.#readWashes = readWashes
-		this.#pollInterval = pollInterval
-	}
 
 	get query(): string {
 		return this.#search.query
@@ -151,9 +142,10 @@ class FindController {
 	}
 
 	/**
-	 * the texts the view washes with highlights of its own (an Agent's changed runs, which paint every occurrence of
-	 * their text, transparent but the one): native lists those washes with Find's, so `matchesFrom` counts one only
-	 * where it finishes or goes on with a match
+	 * the texts the view washes with highlights of its own: an Agent's changed runs, which paint every occurrence of
+	 * their text, transparent but the one, and link runs and code spans, transparent
+	 *
+	 * Native lists those washes with Find's, so `matchesFrom` counts one only where it finishes or goes on with a match.
 	 */
 	setForeignTexts(texts: Iterable<string>): void {
 		this.#foreignTexts = new Set(texts)
@@ -173,7 +165,7 @@ class FindController {
 	 * highlight calls it from an `$effect`
 	 */
 	start(): () => void {
-		const poll = setInterval(() => this.#read(), this.#pollInterval)
+		const poll = setInterval(() => this.#read(), FIND_POLL_MS)
 		return () => clearInterval(poll)
 	}
 
@@ -200,7 +192,7 @@ class FindController {
 			this.active = 0
 			return
 		}
-		const matches = matchesFrom(this.#readWashes(), query, this.#foreignTexts)
+		const matches = matchesFrom(paintedWashes(), query, this.#foreignTexts)
 		if (!matches) return
 		if (matches.length === 0 && this.#skipEmpty) {
 			this.#skipEmpty = false

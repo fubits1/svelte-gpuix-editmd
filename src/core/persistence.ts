@@ -1,6 +1,6 @@
 /**
- * When a document saves itself, when it rereads its file, and what its
- * save-status label says.
+ * when a document saves itself, when it rereads its file, and what its
+ * save-status label says
  *
  * A pure state machine: the document feeds it events with the current time
  * (in seconds) and carries out the `Decision` it returns. It never touches a
@@ -8,11 +8,11 @@
  */
 
 export type Policy = {
-	/** Save once the user has paused this long... */
+	/** save once the user has paused this long... */
 	idle: number
-	/** ...or once changes have waited this long, even while typing. */
+	/** ...or once changes have waited this long, even while typing */
 	maxWait: number
-	/** How long "Saved" stays up after a save. */
+	/** how long "Saved" stays up after a save */
 	savedVisible: number
 }
 
@@ -31,19 +31,19 @@ export type PersistenceEvent =
 	| { type: 'diskChanged' }
 	/** A check of the file asked for by a decision is done. */
 	| { type: 'diskChecked' }
-	/** A wake-up asked for by a decision. */
+	/** a wake-up asked for by a decision */
 	| { type: 'tick' }
 
-/** What the window's save-status label shows. */
+/** what the window's save-status label shows */
 export type SaveLabel =
 	{ kind: 'none' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'failed'; message: string }
 
 export type Decision = {
-	/** Start saving now. */
+	/** start saving now */
 	save: boolean
-	/** Read the file and merge in anything new. */
+	/** read the file and merge in anything new */
 	checkDisk: boolean
-	/** Send `tick` at this time (replacing any earlier request), or never. */
+	/** send `tick` at this time (replacing any earlier request), or never */
 	wake: number | null
 	label: SaveLabel
 }
@@ -59,7 +59,7 @@ export function labelText(label: SaveLabel): string {
 	return LABEL_TEXT[label.kind]
 }
 
-/** More detail, for a tooltip. */
+/** more detail, for a tooltip */
 export function labelDetail(label: SaveLabel): string | null {
 	return label.kind === 'failed' ? label.message : null
 }
@@ -70,7 +70,7 @@ export class Persistence {
 	readonly policy: Policy
 	#autosaves = false
 	#dirty = false
-	/** When the content last changed, and when the oldest unsaved change was made. */
+	/** when the content last changed, and when the oldest unsaved change was made */
 	#lastChange = 0
 	#firstUnsaved: number | null = null
 	/** A save has been asked for but has not started yet. */
@@ -104,7 +104,7 @@ export class Persistence {
 					this.#lastChange = now
 					this.#firstUnsaved ??= now
 				} else {
-					// Nothing left to save, so no failure left to report.
+					// nothing left to save, so no failure left to report
 					this.#firstUnsaved = null
 					this.#failure = null
 				}
@@ -118,8 +118,8 @@ export class Persistence {
 				if (event.error !== null) {
 					this.#failure = { message: event.error, at: now }
 				} else {
-					// Clean until the editor says otherwise: it reports right
-					// after a save, including any edits made while it ran.
+					// clean until the editor says otherwise: it reports right
+					// after a save, including any edits made while it ran
 					this.#failure = null
 					this.#savedAt = now
 					this.#dirty = false
@@ -171,10 +171,10 @@ export class Persistence {
 		return { kind: 'none' }
 	}
 
-	/** When the next autosave should happen, if one is needed. */
+	/** when the next autosave should happen, if one is needed */
 	#saveDue(): number | null {
 		if (!this.#autosaves || !this.#dirty || this.#firstUnsaved === null) return null
-		// After a failure, wait for another change rather than retry in a loop.
+		// after a failure, wait for another change rather than retry in a loop
 		if (this.#failure && this.#lastChange <= this.#failure.at) return null
 		return Math.min(this.#lastChange + this.policy.idle, this.#firstUnsaved + this.policy.maxWait)
 	}

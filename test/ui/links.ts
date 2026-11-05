@@ -366,16 +366,16 @@ export async function testAddLink(): Promise<void> {
 	settle()
 
 	/**
-	 * Format > Link… (⌘K) is editmd's Add Link sheet (EditorWindowController.swift:115-150): an NSAlert titled Add Link
+	 * Format > Link… (⇧⌘K, editmd's ⌘K) is editmd's Add Link sheet (EditorWindowController.swift:115-150): an NSAlert titled Add Link
 	 * with "Enter the URL for the selected text.", a field with the https:// placeholder prefilled with the pasteboard's
-	 * URL, and Add (the default) then Cancel, which paint right to left
+	 * URL, and Add (the default) then Cancel, which paint right to left.
 	 */
 	documentController.load('See\n', menuOptions)
 	settle()
 	click_test_id('block-0')
 	type('s')
 	setMenuClipboardUrl('https://example.com/a')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	const addLinkShown = [
 		getText('add-link-title'),
@@ -393,7 +393,7 @@ export async function testAddLink(): Promise<void> {
 	press('escape')
 	press('cmd-z')
 	check(
-		'Cmd-K shows Add Link prefilled from the pasteboard, and Return adds the URL as a link at the field’s caret, an Undo step of its own that one Undo takes back, the typing before it kept',
+		'Cmd-Shift-K shows Add Link prefilled from the pasteboard, and Return adds the URL as a link at the field’s caret, an Undo step of its own that one Undo takes back, the typing before it kept',
 		[
 			addLinkShown,
 			addedLinkText,
@@ -420,7 +420,7 @@ export async function testAddLink(): Promise<void> {
 	// Escape is Cancel; an empty pasteboard leaves the field empty; Source mode disables Link… with the rest of Format
 	click_test_id('block-0')
 	setMenuClipboardUrl(null)
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	const emptyPrefill = getProp('add-link-url', 'value')
 	press('escape')
@@ -429,13 +429,13 @@ export async function testAddLink(): Promise<void> {
 	press('escape')
 	documentController.run('toggleSource')
 	settle()
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	const sheetInSource = find_test_id('add-link')
 	documentController.run('toggleSource')
 	settle()
 	check(
-		'Escape cancels Add Link and changes nothing, an empty pasteboard prefills nothing, and Cmd-K in Source mode opens no sheet',
+		'Escape cancels Add Link and changes nothing, an empty pasteboard prefills nothing, and Cmd-Shift-K in Source mode opens no sheet',
 		[emptyPrefill, afterCancel, sheetInSource],
 		['', [null, 'Sees\n'], null]
 	)
@@ -447,7 +447,7 @@ export async function testAddLink(): Promise<void> {
 	documentController.load('First\n\nSecond\n', menuOptions)
 	settle()
 	setMenuClipboardUrl('https://example.com/b')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	press('enter')
 	settle()
@@ -495,8 +495,10 @@ export async function testHeadingLinksDialogsTips(): Promise<void> {
 	settle()
 	await wait(100)
 	clickLinkIn('block-0', 'cmd')
-	// the smooth scroll, the room it lacked and the scroll again each paint in frames of their own: waited out until the
-	// heading stays put for five frames in a row, six seconds at most
+	/**
+	 * the smooth scroll, the room it lacked and the scroll again each paint in frames of their own: waited out until the
+	 * heading stays put for five frames in a row, six seconds at most
+	 */
 	let endHeading = bounds(find_test_id('block-31') ?? 0)
 	for (let frame = 0, still = 0; still < 5 && frame < 150; frame++) {
 		await wait(40)
@@ -556,7 +558,7 @@ export async function testHeadingLinksDialogsTips(): Promise<void> {
 	click_test_id('block-0')
 	type('cmd-left right right right right right right')
 	setMenuClipboardUrl('https://a.example')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	press('enter')
 	await waitForFieldIdle()
@@ -569,14 +571,14 @@ export async function testHeadingLinksDialogsTips(): Promise<void> {
 	)
 
 	/**
-	 * with no field open and editmd's load caret in a link, ⌘K is editmd's Edit Link (EditorWindowController.swift:117-128):
-	 * titled Edit Link, its field holding the link's URL rather than the pasteboard's, Update in place of Add, and Remove
-	 * Link, which takes the link off its text
+	 * With no field open and editmd's load caret in a link, ⇧⌘K (editmd's ⌘K) is editmd's Edit Link
+	 * (EditorWindowController.swift:117-128): titled Edit Link, its field holding the link's URL rather than the
+	 * pasteboard's, Update in place of Add, and Remove Link, which takes the link off its text.
 	 */
 	documentController.load('[docs](https://a.example) x\n', sandboxOptions)
 	settle()
 	setMenuClipboardUrl('https://clip.example')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	const editLinkShown = [
 		getText('add-link-title'),
@@ -627,7 +629,7 @@ export async function testHeadingLinksDialogsTips(): Promise<void> {
 	 */
 	documentController.load('See\n', sandboxOptions)
 	settle()
-	press('cmd-k')
+	press('cmd-shift-k')
 	// the field's ring follows its focus, read on a 100ms poll
 	await settleAfter(250)
 	const addLinkLook = getAlertLook('add-link', 'add-link-add')
@@ -667,9 +669,9 @@ export async function testHeadingLinksDialogsTips(): Promise<void> {
 	)
 
 	/**
-	 * a link's title and an image's are native tips at the pointer, as editmd's page titles its `a` (links.ts:174) and
-	 * `img` (remote.ts:77-78): over the titled link only, and over a titled image, in a paragraph of images or one mixing
-	 * text and images
+	 * A link's title and an image's are native tips at the pointer, as editmd's page titles its `a` (web/src/links.ts:174)
+	 * and `img` (remote.ts:77-78): over the titled link only, and over a titled image, in a paragraph of images or one
+	 * mixing text and images.
 	 */
 	writeFileSync(join(sandboxDirectory, 'titled.png'), createPng(120, 60))
 	const titlesPath = join(sandboxDirectory, 'titles.md')

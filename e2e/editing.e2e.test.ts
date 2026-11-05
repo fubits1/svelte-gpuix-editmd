@@ -1,26 +1,31 @@
 /**
- * end to end: Return and Backspace in a real window, on an existing file and on an empty one, each sequence typed one
- * key per call (as a person types slowly) and as one batch (one call: the field takes every key before the controller
- * hears any of them, as fast typing delivers them), against editmd's own keymaps run in its editor: ProseMirror's base
- * keymap and Milkdown's list, hard break and code keymaps (@milkdown/core src/internal-plugin/keymap.ts:11-17, 32-41;
- * @milkdown/preset-commonmark src/node/list-item.ts:167-206, src/node/hardbreak.ts). every check asserts the file ⌘S
- * saves exactly, so a stray character fails it, and that Escape leaves no field open on raw markdown
+ * end to end: Return and Backspace in the app's window (headless by default, a real one with `test:e2e:window`), on an
+ * existing file and on an empty one, each sequence typed one key per call (as a person types slowly) and as one batch
+ * (one call: the field takes every key before the controller hears any of them, as fast typing delivers them), against
+ * editmd's own keymaps run in its editor: ProseMirror's base keymap and Milkdown's list, hard break and code keymaps
+ * (@milkdown/core src/internal-plugin/keymap.ts:11-17, 32-41; @milkdown/preset-commonmark
+ * src/node/list-item.ts:167-206, src/node/hardbreak.ts)
+ *
+ * Every check asserts the file ⌘S saves exactly, so a stray character fails it, and that Escape leaves no field open on
+ * raw markdown.
  */
 
 import { expect, test } from 'vitest'
 import {
+	AFTER,
 	check,
 	countChecks,
+	describeRun,
 	type Editor,
 	loadPaintedText,
-	openOn,
 	pause,
 	pressBackspace,
 	runInFolder,
 	saveAfterEscape,
 	sendKeystrokes,
 	toKeys,
-	typeEach
+	typeEach,
+	withOpenOn
 } from './support.ts'
 
 /**
@@ -135,9 +140,6 @@ const CASES: Case[] = [
 	}
 ]
 
-/** the existing file's Blocks after the case's, which no key may touch */
-const AFTER = '\n\nSecond\n'
-
 /** the steps one key per call, or every run of keystrokes between Backspace presses as one call */
 async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<void> {
 	const keys: string[] = []
@@ -165,13 +167,8 @@ test('editing', async () => {
 				for (const batch of [false, true]) {
 					const text = existing ? `${testCase.source}${AFTER}` : ''
 					const want = existing ? `${testCase.saved}${AFTER}` : `${testCase.saved}\n`
-					const { app, file } = await openOn(
-						folder,
-						`case-${index}-${existing}-${batch}`,
-						text,
-						testCase.block ?? 0
-					)
-					try {
+					const name = `case-${index}-${existing}-${batch}`
+					await withOpenOn(folder, name, text, testCase.block ?? 0, async (app, file) => {
 						if (existing) {
 							await sendKeystrokes(app, caret)
 						} else {
@@ -185,12 +182,10 @@ test('editing', async () => {
 						const typed = await loadPaintedText(app)
 						const [saved, open] = await saveAfterEscape(app, file, text)
 						check(
-							`${testCase.name}, ${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}: ⌘S saves ${JSON.stringify(want)} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after the keys ${JSON.stringify(typed)})`,
+							`${testCase.name}, ${describeRun(existing, batch)}: ⌘S saves ${JSON.stringify(want)} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after the keys ${JSON.stringify(typed)})`,
 							saved === want && !open
 						)
-					} finally {
-						await app.close().catch(() => {})
-					}
+					})
 				}
 			}
 		}

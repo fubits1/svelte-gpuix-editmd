@@ -5,10 +5,11 @@
  */
 
 import { type ChildProcess, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { type App, launch } from 'gpuix-svelte/automation'
 import { expect } from 'vitest'
+import { keysOf } from '../src/app/menu.ts'
 
 /**
  * the gpuix-svelte bin `pnpm exec gpuix-svelte` resolves, relative to the port folder the suites run from; spawned
@@ -44,16 +45,9 @@ function isKnownToFail(label: string): boolean {
 
 let checks = 0
 
-/**
- * prints `ok`/`FAIL` and the label, then asserts the outcome known-failures.json expects; a `window` check prints
- * `skip` instead under the headless entry and asserts nothing. either way it counts toward `countChecks()`
- */
-export function check(label: string, passed: boolean, { window = false } = {}): void {
+/** prints `ok`/`FAIL` and the label, then asserts the outcome known-failures.json expects */
+export function check(label: string, passed: boolean): void {
 	checks++
-	if (window && headless) {
-		console.log(`skip ${label}`)
-		return
-	}
 	console.log(`${passed ? 'ok  ' : 'FAIL'} ${label}`)
 	expect.soft(passed, label).toBe(!isKnownToFail(label))
 }
@@ -61,8 +55,8 @@ export function check(label: string, passed: boolean, { window = false } = {}): 
 export const countChecks = () => checks
 
 /**
- * `body` in a short temp folder that holds a suite's files, the app's support folder and the agents it counts, so
- * nothing reaches the real ones: an error is one failed check, then the folder goes
+ * `body` in a short temp folder that holds a suite's files and the app's support folder, so nothing reaches the real
+ * ones: an error is one failed check, then the folder goes
  */
 export async function runInFolder(
 	prefix: string,
@@ -107,15 +101,6 @@ export async function waitUntil(
 export type Editor = App & { process: ChildProcess }
 
 /**
- * the running coding agents a launched app sees: only those working in `folder` or below it
- * (EDITMD_GPUIX_AGENT_ROOT), so an unreported write is credited the same on any machine, whatever agents the user
- * runs elsewhere, and a stand-in agent the run starts in its own folder still counts
- */
-export function createAgentEnvironment(folder: string): Record<string, string> {
-	return { EDITMD_GPUIX_AGENT_ROOT: folder }
-}
-
-/**
  * the app on `file` through `getAppEntry()`, with everything it keeps outside the document under `folder`, once the
  * test id `ready` shows
  */
@@ -130,7 +115,6 @@ export async function openEditor(
 		args: [file],
 		env: {
 			EDITMD_GPUIX_SUPPORT: join(folder, 'support'),
-			...createAgentEnvironment(folder),
 			...environment
 		}
 	})
@@ -138,11 +122,16 @@ export async function openEditor(
 	return app
 }
 
+/** Block `index` clicked open, once its field shows */
+export async function openBlock(app: App, index: number): Promise<void> {
+	await app.getByTestId(`block-${index}`).click()
+	await app.getByTestId('block-editor').waitFor()
+}
+
 /** editmd's `type(_:intoFirst: "h1")`: here the Active block's field starts with the whole Slice, so it is replaced */
 export async function editBlock(app: App, index: number, source: string): Promise<void> {
-	await app.getByTestId(`block-${index}`).click()
+	await openBlock(app, index)
 	const field = app.getByTestId('block-editor')
-	await field.waitFor()
 	await field.fill(source)
 	await field.press('escape')
 }
@@ -164,13 +153,39 @@ export async function openOn(
 	const file = join(folder, `${name}.md`)
 	writeFileSync(file, text)
 	const app = await openEditor(file, folder, {}, text === '' ? 'block-editor' : 'block-0')
-	if (text === '') {
-		await app.getByTestId('block-editor').click()
-	} else if (block !== null) {
-		await app.getByTestId(`block-${block}`).click()
-		await app.getByTestId('block-editor').waitFor()
-	}
+	if (text === '') await app.getByTestId('block-editor').click()
+	else if (block !== null) await openBlock(app, block)
+
 	return { app, file }
+}
+
+/** `body` on the window `openOn` opens, closed after it whether it passed or threw */
+export async function withOpenOn(
+	folder: string,
+	name: string,
+	text: string,
+	block: number | null,
+	body: (app: Editor, file: string) => Promise<void>
+): Promise<void> {
+	const { app, file } = await openOn(folder, name, text, block)
+	try {
+		await body(app, file)
+	} finally {
+		await app.close().catch(() => {})
+	}
+}
+
+/** a run's file and keys as a check's label names them; known-failures.json matches the labels word for word */
+export const describeRun = (existing: boolean, batch: boolean) =>
+	`${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}`
+
+/** the existing file's Blocks after a case's, which no key may touch */
+export const AFTER = '\n\nSecond\n'
+
+/** another program saving `file` atomically: a copy written beside it, then renamed over it */
+export function writeAtomically(file: string, data: string | Buffer): void {
+	writeFileSync(`${file}.tmp`, data)
+	renameSync(`${file}.tmp`, file)
 }
 
 export const sendKeystrokes = (app: App, keys: string) => app.call('keystrokes', { keys })
@@ -231,14 +246,15 @@ export async function loadPaintedText(app: App): Promise<string> {
 	return (barFirst ? text.slice(MENU_TITLES.length) : text).join('\n')
 }
 
+/** the label every window paints at its bottom edge after the document's text, naming the palette's key */
+export const PALETTE_HINT = `${keysOf('commandPalette')} Commands`
+
 /** the text of a test id's own <text> nodes, or '' when it is not there */
 export async function loadText(app: App, testId: string): Promise<string> {
-	if (!(await has(app, testId))) return ''
-
 	try {
 		return await app.getByTestId(testId).textContent()
 	} catch (error) {
-		// the element went away between the two calls, as the Saved label does after 2s
+		// not there, or gone as the Saved label goes after 2s: automation reports NotFound at once, without waiting
 		if (!(await has(app, testId))) return ''
 
 		throw error

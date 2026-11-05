@@ -1,9 +1,11 @@
 /**
- * end to end: the seeded typing sequences in test/fixtures/differential/editmd-typing.json, typed into a real window
- * on an existing file and on an empty one, one key per call (each Backspace pressed as a person does, key down then up)
- * and as one batch, against what editmd saves for the same keys in its own editor. every check asserts the file ⌘S saves
- * exactly and that Escape leaves no field open; EDITMD_GPUIX_DIFF_OUT, when set, names a JSON file that gets every
- * result, so the two editors can be compared case by case
+ * end to end: the seeded typing sequences in test/fixtures/differential/editmd-typing.json, typed into the app's window
+ * (headless by default, a real one with `test:e2e:window`) on an existing file and on an empty one, one key per call
+ * (each Backspace pressed as a person does, key down then up) and as one batch, against what editmd saves for the same
+ * keys in its own editor
+ *
+ * Every check asserts the file ⌘S saves exactly and that Escape leaves no field open. EDITMD_GPUIX_DIFF_OUT, when set,
+ * names a JSON file that gets every result, so the two editors can be compared case by case.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -11,13 +13,14 @@ import { expect, test } from 'vitest'
 import {
 	check,
 	countChecks,
-	openOn,
+	describeRun,
 	pause,
 	pressBackspace,
 	runInFolder,
 	saveAfterEscape,
 	sendKeystrokes,
-	typeEach
+	typeEach,
+	withOpenOn
 } from './support.ts'
 
 type Case = {
@@ -62,19 +65,9 @@ test('differential', async () => {
 
 					for (const batch of [false, true]) {
 						const text = existing ? `${testCase.source}${fixture.after}` : ''
-						const { app, file } = await openOn(
-							folder,
-							`case-${index}-${existing}-${batch}`,
-							text,
-							testCase.block
-						)
-						try {
-							if (existing) {
-								await sendKeystrokes(app, testCase.caret)
-							} else {
-								await typeEach(app, testCase.setup)
-							}
-
+						const name = `case-${index}-${existing}-${batch}`
+						await withOpenOn(folder, name, text, testCase.block, async (app, file) => {
+							await (existing ? sendKeystrokes(app, testCase.caret) : typeEach(app, testCase.setup))
 							await pause(200)
 							if (batch) {
 								await sendKeystrokes(app, testCase.steps.join(' '))
@@ -86,12 +79,10 @@ test('differential', async () => {
 							const [saved, open] = await saveAfterEscape(app, file, text)
 							results.push({ name: testCase.name, existing, batch, expected, saved, open })
 							check(
-								`${testCase.name}, ${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}: ⌘S saves editmd's ${JSON.stringify(expected)} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open})`,
+								`${testCase.name}, ${describeRun(existing, batch)}: ⌘S saves editmd's ${JSON.stringify(expected)} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open})`,
 								saved === expected && !open
 							)
-						} finally {
-							await app.close().catch(() => {})
-						}
+						})
 					}
 				}
 			}

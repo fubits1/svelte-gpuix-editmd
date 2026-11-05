@@ -47,11 +47,10 @@ import type { ListItem } from '../../src/engine/blocks.ts'
 type Mounted = ReturnType<typeof mount_headless>
 
 /**
- * what every window in this suite is given instead of the machine's own: no running agents, and no network for image
- * sizes, a size fetch that never answers, as one still on its way when a check reads the window
+ * what every window in this suite is given instead of the machine's own: no network for image sizes, a size fetch
+ * that never answers, as one still on its way when a check reads the window
  */
 export const isolated = {
-	listAgentProcesses: () => [],
 	fetchImage: () => new Promise<Uint8Array>(() => {})
 }
 
@@ -201,8 +200,8 @@ export let linkDirectory: string
 export let linkOptions: OpenOptions
 
 export function initLinkRecorder(): void {
-	// the File menu's effects too, so nothing a link test could reach opens a window or writes the real Open Recent
 	linkDirectory = mkdtempSync(join(tmpdir(), 'eg-link-'))
+	// the File menu's effects too, so nothing a link test could reach opens a window or writes the real Open Recent
 	linkOptions = {
 		...isolated,
 		run: (command: string, args: string[]) => void linkRuns.push([command, args]),
@@ -273,10 +272,12 @@ export async function findQuery(query: string) {
 	return loadFindState()
 }
 
+/** a `#rrggbb` colour's red, green and blue, 0-255 */
+export const toChannels = (hex: string) =>
+	[1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16))
+
 /** whether two `#rrggbb` colours are within `tolerance` on every channel */
 export function isNear(colour: string, other: string, tolerance = 16): boolean {
-	const toChannels = (hex: string) =>
-		[1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16))
 	const [colourChannels, otherChannels] = [toChannels(colour), toChannels(other)]
 	return colourChannels.every(
 		(value, index) => Math.abs(value - otherChannels[index]!) <= tolerance
@@ -333,8 +334,6 @@ export function initMenuRecorders(): void {
 		openWindow: (windowPath: string | null) => void menuWindows.push(windowPath),
 		choosePaths: () => Promise.resolve(menuPicks.shift() ?? null),
 		recentFiles: menuRecent,
-		// no `ps`: a write nobody reported is Outside edit, whatever agents run on this machine
-		listAgentProcesses: () => [],
 		// Window > Minimize, Zoom and Bring All to Front record instead of touching the test window
 		minimizeWindow: () => void menuRuns.push(['minimize', []]),
 		zoomWindow: () => void menuRuns.push(['zoomWindow', []]),
@@ -534,8 +533,6 @@ export function getDevicePixel({ shot }: { shot: Pixels }, x: number, y: number)
 
 /** `foreground` laid over `background` at `alpha`, as a translucent fill paints */
 export function mixColour(foreground: string, background: string, alpha: number): string {
-	const toChannels = (hex: string) =>
-		[1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16))
 	const [front, back] = [toChannels(foreground), toChannels(background)]
 	return `#${front
 		.map((value, index) => Math.round(value * alpha + back[index]! * (1 - alpha)))
@@ -614,7 +611,7 @@ export function findFirstRowNear(
 	y0: number,
 	y1: number,
 	colour: string,
-	tolerance = 24
+	tolerance: number
 ): number {
 	for (let y = y0; y <= y1; y++)
 		if (isNear(getDevicePixel(capture, x, y), colour, tolerance)) return y

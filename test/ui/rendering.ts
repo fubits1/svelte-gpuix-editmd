@@ -357,7 +357,6 @@ export async function testDiagramsImagesFootnotes(): Promise<void> {
 	documentController.open(mermaidPath, {
 		...isolated,
 		socketsDirectory: join(mermaidDirectory, 's'),
-		listAgentProcesses: () => [],
 		legendPreference: new LegendPreference(join(mermaidDirectory, 'legend.json'))
 	})
 	settle()
@@ -665,9 +664,9 @@ export async function testImagesAndUnsizedZoom(): Promise<void> {
 	)
 
 	/**
-	 * a local image whose file is gone paints as WebKit, editmd's renderer, paints a broken image: small, with its alt
-	 * text, not GPUI's "img: load failed" atop the 240px fallback box. a file that is there but of unknown size (not a
-	 * PNG, GIF, JPEG or WebP) keeps the box
+	 * A local image whose file is gone paints as WebKit, editmd's renderer, paints a broken image: small, with its alt
+	 * text, not GPUI's "img: load failed" atop the 240px fallback box. a file that is there but of unknown size (none of
+	 * the PNG, GIF, JPEG, WebP, BMP, TIFF, ICO and SVG headers `imageSize` reads) keeps the box.
 	 */
 	writeFileSync(join(menuDirectory, 'junk.png'), 'not an image')
 	const missingPath = join(menuDirectory, 'missing.md')
@@ -689,8 +688,10 @@ export async function testImagesAndUnsizedZoom(): Promise<void> {
 		['img', 240]
 	)
 
-	// text with no size of its own paints at GPUI's 16px whatever the zoom, so these take size tokens
-	// a numbered item's marker is text; a bullet is a drawn disc, sized by tokens
+	/**
+	 * Text with no size of its own paints at GPUI's 16px whatever the zoom, so these take size tokens.
+	 * A numbered item's marker is text; a bullet is a drawn disc, sized by tokens.
+	 */
 	documentController.load(`1. a\n2. [ ] b\n\n![tracker](${remote}/p.png)\n`, menuOptions)
 	settle()
 
@@ -1120,8 +1121,10 @@ export async function testPageLayout(): Promise<void> {
 	const linkedLayout = getInlineLayout('image-0-0', 'text-run-0-1', 4.4)
 	documentController.load(readFixture('r-image-remote'), parityOptions)
 	settle()
-	// measured from the alt text, since a padded box reports its origin shifted by its padding: then the box's
-	// 6.48px padding, its 1px border and the inline gap
+	/**
+	 * measured from the alt text, since GPUI reports a padded box's origin moved in by its padding: then the box's
+	 * 6.48px padding, its 1px border and the inline gap
+	 */
 	const remoteLayout = getInlineLayout('image-blocked-0-0', 'text-run-0-1', 6.48 + 1 + 4.4)
 	const longRun = Array.from({ length: 24 }, () => 'words that run on').join(' ')
 	documentController.load(`![remote](${remote}/p.png) ${longRun}.\n`, parityOptions)
@@ -1264,9 +1267,8 @@ export async function testPageLayout(): Promise<void> {
 	/**
 	 * rows r-mermaid, r-mermaid-error and r-mermaid-empty: editmd's `.diagram` (style.css:411-455) is a box with no
 	 * fill, `padding: 1rem; border-radius: 8px`, its diagram centred, bordered by `inset 0 0 0 1px var(--border)` as
-	 * editmd shows it under its source; an error left-aligned in the danger colour, mono 12.5px; "Empty diagram"
-	 * centred in the faint colour. per row: the painted part's centre less the Block's (0 is centred), or its left
-	 * edge less the Block's (1px border and 16px padding)
+	 * editmd shows it under its source; an error centred in the danger colour, mono 12.5px; "Empty diagram"
+	 * centred in the faint colour. per row: the painted part's centre less the Block's (0 is centred)
 	 */
 	const getCentreOffset = (testId: string, index: number) => {
 		const part = bounds(find_test_id(testId) ?? 0)
@@ -1728,8 +1730,8 @@ export async function testPixels(): Promise<void> {
 	settle()
 	const codeCapture = captureWindow()
 	/**
-	 * GPUI reports a padded box's origin moved in by its padding, so the card's top-left corner is its Block's, which it
-	 * starts, and its size its own
+	 * The card is a padded box (see `remoteLayout`), so its top-left corner is its Block's, which it starts, and its size
+	 * its own.
 	 */
 	const codeBlockBox = bounds(find_test_id('block-0') ?? 0)
 	const codeCardSize = bounds(find_test_id('code-card-0') ?? 0)
@@ -1860,7 +1862,7 @@ export async function testPixels(): Promise<void> {
 	const findFill = findBar
 		? getDevicePixel(
 				findCapture,
-				// GPUI reports a padded box's origin moved in by its padding, so the bar's right end is the window's
+				// The bar is a padded box (see `remoteLayout`), so its right end is the window's.
 				Math.round(798 * findCapture.scale),
 				Math.round((findBar.y + 3) * findCapture.scale)
 			)
@@ -2751,8 +2753,8 @@ export async function testMermaidPreviewClick(): Promise<void> {
 
 export async function testBrokenRemoteImage(): Promise<void> {
 	/**
-	 * a remote image that fails once load remote images allows it (a 404) paints its alt text, as a missing local file
-	 * does
+	 * A remote image that fails once Load Remote Images allows it (a 404) paints its alt text, as a missing local file
+	 * does.
 	 */
 	documentController.load(`![gone picture](${remote}/404.png) after it.\n`, {
 		...sandboxOptions,
@@ -3109,6 +3111,22 @@ export async function testCodeSpansBaselineUnderline(): Promise<void> {
 				[40, 127, 140.5, 22.5]
 			],
 			[paletteFor('dark')['code-border'], paletteFor('dark')['code-border']]
+		]
+	)
+	const wrapEdges = find_all((node) => node.testId?.startsWith('code-border-') === true).map(
+		({ style }) => [
+			style?.borderLeftWidth ?? style?.borderWidth,
+			style?.borderRightWidth ?? style?.borderWidth,
+			style?.borderTopLeftRadius ?? style?.borderRadius,
+			style?.borderTopRightRadius ?? style?.borderRadius
+		]
+	)
+	check(
+		`a code span wrapped over two rows is open where it breaks, as editmd’s inline border is sliced there: the first row has no right border or right corners, the last no left ones (${JSON.stringify(wrapEdges)})`,
+		wrapEdges,
+		[
+			[1, 0, 5, 0],
+			[0, 1, 0, 5]
 		]
 	)
 

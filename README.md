@@ -51,9 +51,10 @@ the app writes every process it would start (`open` for links and printing, new 
 Open a file with `dist/editmd-gpuix.app/Contents/MacOS/editmd-gpuix <path>`. Finder and `open -a` do not hand the app
 their file yet (gap G6 in [ADR-0009](docs/adr/0009-parity-gaps-native-track.md)).
 
-Every script runs through the `gpuix-svelte` bin, which starts Node (or Bun with `--bun`) with the
-`custom-renderer` condition and the `.svelte` loader; the `ui` and `e2e` Vitest projects pass Node the same flags
-(`vitest.config.ts`). Windows and the headless renderer crash under a sandboxed shell, so run them unsandboxed.
+The app's own scripts (`dev`, `start`, `visual:measure`) and the headless modes run through the `gpuix-svelte` bin,
+which starts Node (or Bun with `--bun`) with the `custom-renderer` condition and the `.svelte` loader; the `ui` and
+`e2e` Vitest projects pass Node the same flags (`vitest.config.ts`). App windows and the headless renderer crash under
+a sandboxed shell, so run them, `pnpm test` included, unsandboxed.
 
 ## Building
 

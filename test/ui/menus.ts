@@ -29,8 +29,10 @@ import {
 	waitUntil
 } from './harness.ts'
 import { check } from './check.ts'
+import { get_native } from 'gpuix-svelte'
 import {
 	bounds,
+	click_at,
 	click_test_id,
 	find_test_id,
 	mouse_move,
@@ -46,6 +48,7 @@ import { type MenuBarItem, type MenuBarMenu, menuBar } from '../../src/app/menu.
 import { themeController } from '../../src/app/theme.svelte.ts'
 import { zoomOut } from '../../src/app/zoom.ts'
 import { TABLE } from '../../src/core/blockCommands.ts'
+import { tableCells } from '../../src/core/tableCells.ts'
 import { listenForReports } from '../../src/host/agentIpc.ts'
 import { documentController } from '../../src/ui/DocumentView/controller.svelte.ts'
 
@@ -55,6 +58,31 @@ function queryPalette(query: string): void {
 	settle()
 	typeQuery(query)
 	settle()
+}
+
+/** the text of the first cell of the table at Block `index`, as the Document holds it */
+function firstCellOf(index: number): string | undefined {
+	const block = documentController.blocks[index]
+	if (!block) return undefined
+	const source = documentController.text.slice(block.start, block.end)
+	const cell = tableCells(source)[0]
+	return cell && source.slice(cell.from, cell.to)
+}
+
+/**
+ * Format > Table after `open` sets the Document up, then `x` typed as a person types it: the Active block and its kind
+ * as typed, and after Escape the first cell of the table at Block `index`.
+ */
+async function typeIntoInsertedTable(open: () => void, index: number): Promise<unknown[]> {
+	open()
+	documentController.run('table')
+	settle()
+	await waitForFieldIdle()
+	type('x')
+	await waitForFieldIdle()
+	const field = [documentController.activeIndex, documentController.activeKind]
+	press('escape')
+	return [...field, firstCellOf(index)]
 }
 
 export async function testFormatTableAndRule(): Promise<void> {
@@ -74,20 +102,31 @@ export async function testFormatTableAndRule(): Promise<void> {
 	type('x')
 	documentController.run('table')
 	settle()
-	/**
-	 * the inserted Block's field stays closed: a focused <textarea> takes Cmd-Z as its own native undo before any listener
-	 * hears it (measured headless), and editmd's one Cmd-Z takes the insert back
-	 */
+	/** The inserted table's field opens, as editmd's insertTableCommand puts its caret in the first cell. */
 	check(
 		'Table after an Active paragraph inserts editmd’s 3x3 table as the Block after it',
 		[documentController.text, documentController.blocks[1]?.kind, documentController.activeIndex],
-		[`Introx\n\n${TABLE}\n\nEnd\n`, 'table', null]
+		[`Introx\n\n${TABLE}\n\nEnd\n`, 'table', 1]
 	)
+	/**
+	 * A focused <textarea> takes Cmd-Z as its own native undo before any listener hears it (measured headless), so
+	 * Escape closes the field before Cmd-Z takes the insert back.
+	 */
+	press('escape')
 	press('cmd-z')
 	check(
 		'Cmd-Z takes the table out again, the typing before it staying',
 		documentController.text,
 		'Introx\n\nEnd\n'
+	)
+	check(
+		'Table from an open paragraph field opens the table’s field, and `x` typed then goes in its first cell',
+		await typeIntoInsertedTable(() => {
+			documentController.load('Intro\n\nEnd\n', menuOptions)
+			settle()
+			click_test_id('block-0')
+		}, 1),
+		[1, 'table', 'x']
 	)
 
 	/**
@@ -145,14 +184,25 @@ export async function testFormatTableAndRule(): Promise<void> {
 	check(
 		'Table with no Active block puts editmd’s 3x3 table before the first Block',
 		[documentController.text, documentController.activeIndex],
-		[`${TABLE}\n\nA\n\nB\n`, null]
+		[`${TABLE}\n\nA\n\nB\n`, 0]
 	)
+	press('escape')
 	press('cmd-z')
 	check(
 		'Cmd-Z takes the inserted table out again as one Undo step',
 		documentController.text,
 		'A\n\nB\n'
 	)
+	check(
+		'Table with no field open opens the table’s field, and `x` typed then goes in its first cell',
+		await typeIntoInsertedTable(() => {
+			documentController.load('A\n\nB\n', menuOptions)
+			settle()
+		}, 0),
+		[0, 'table', 'x']
+	)
+	documentController.load('A\n\nB\n', menuOptions)
+	settle()
 	documentController.run('horizontalRule')
 	settle()
 	const withInsertedRule = documentController.text
@@ -208,18 +258,18 @@ export async function testFormatTableAndRule(): Promise<void> {
 }
 
 export async function testCommandPalette(): Promise<void> {
-	// the command palette (gap G2) on ⇧⌘/, where macOS's Help menu searches menu items; editmd's Help menu is empty
+	// the command palette (gap G2) on ⌘K, editmd's Link…, which moves to ⇧⌘K
 	documentController.load('Title\n\nBody\n', menuOptions)
 	settle()
 	click_test_id('block-0')
-	press('cmd-shift-/')
+	press('cmd-k')
 	settle()
 	check(
-		'Cmd-Shift-/ opens the command palette, its field’s placeholder Search menus',
+		'Cmd-K opens the command palette, its field’s placeholder Search menus',
 		[find_test_id('command-palette') !== null, getProp('command-palette-field', 'placeholder')],
 		[true, 'Search menus']
 	)
-	// the checks after it drive the palette through its command, so a key that misses fails only the Cmd-Shift-/ check
+	// The checks after it drive the palette through its command, so a key that misses fails only the Cmd-K check.
 	if (find_test_id('command-palette') === null) documentController.run('commandPalette')
 
 	settle()
@@ -332,6 +382,83 @@ export async function testCommandPalette(): Promise<void> {
 				selectedRowBox.y + selectedRowBox.height <= paletteListBox.y + paletteListBox.height
 		],
 		['Heading 6', themeController.palette.accent, true]
+	)
+	press('escape')
+	settle()
+
+	// ⇧⌘/ is macOS's Help menu search: the Help menu drops down with its search field taking the keys at once.
+	documentController.load('Title\n\nBody\n', menuOptions)
+	settle()
+	click_test_id('block-0')
+	press('cmd-shift-/')
+	settle()
+	const helpOverlay = documentController.overlay
+	const helpFieldFocused =
+		find_test_id('help-search') !== null &&
+		get_native()?.getFocusedElementId() === find_test_id('help-search')?.id
+	typeQuery('head 2')
+	settle()
+	const helpMatches = getRows('help-result', (index) => getText(`help-result-title-${index}`))
+	press('escape')
+	settle()
+	press('escape')
+	check(
+		'Cmd-Shift-/ opens the Help menu with its search field focused, and `head 2` typed then lists Format ▸ Heading 2',
+		[helpOverlay, helpFieldFocused, helpMatches],
+		[{ kind: 'menu', index: MENU_TITLES.indexOf('Help') }, true, ['Format ▸ Heading 2']]
+	)
+
+	/**
+	 * The window's bottom edge names the palette's key in its middle, and a click on it opens the palette as ⌘K does;
+	 * Source mode keeps it. A click beside it, at its height, still reaches the Block painted there.
+	 */
+	documentController.load(
+		Array.from({ length: 40 }, (_, index) => `Paragraph ${index}.`).join('\n\n') + '\n',
+		menuOptions
+	)
+	settle()
+	const hintText = getText('palette-hint')
+	const hintBox = bounds(find_test_id('palette-hint') ?? 0)
+	const windowBox = bounds(find_test_id('window') ?? 0)
+	const beside = hintBox && {
+		x: hintBox.x + hintBox.width + 120,
+		y: hintBox.y + hintBox.height / 2
+	}
+	const blockBeside = beside
+		? Array.from({ length: 40 }, (_, index) => index).find((index) => {
+				const box = bounds(find_test_id(`block-${index}`) ?? 0)
+				return box !== null && box.y <= beside.y && beside.y < box.y + box.height
+			})
+		: undefined
+	if (beside) click_at(beside.x, beside.y)
+	settle()
+	const openedBeside = documentController.activeIndex
+	press('escape')
+	settle()
+	documentController.run('toggleSource')
+	settle()
+	const hintInSource = getText('palette-hint')
+	clickIfPresent('palette-hint')
+	settle()
+	const paletteFromHint = find_test_id('command-palette') !== null
+	press('escape')
+	settle()
+	documentController.run('toggleSource')
+	settle()
+	check(
+		`the bottom edge reads ⌘K Commands in its middle, in Source mode too, a click on it opens the command palette, and a click beside it opens the Block there (hint ${JSON.stringify(hintBox)}, Block ${blockBeside}, opened ${openedBeside})`,
+		[
+			hintText,
+			hintInSource,
+			hintBox !== null &&
+				windowBox !== null &&
+				Math.abs(hintBox.x + hintBox.width / 2 - (windowBox.x + windowBox.width / 2)) <= 1 &&
+				hintBox.y + hintBox.height <= windowBox.y + windowBox.height &&
+				hintBox.y + hintBox.height > windowBox.y + windowBox.height - 20,
+			paletteFromHint,
+			blockBeside !== undefined && openedBeside === blockBeside
+		],
+		['⌘K Commands', '⌘K Commands', true, true, true]
 	)
 }
 
@@ -481,7 +608,6 @@ export async function testMenuBar(): Promise<void> {
 	const recentRows = getPanelRows('submenu')
 	menuWindows.length = 0
 	clickRow('recent-a.md', 'submenu')
-	// a new window starts once the other windows said none of them has the file (`focusWindowFor`)
 	await waitUntil(() => menuWindows.length > 0, 'the recent file’s window')
 	check(
 		'File > Open Recent ▸ lists the store’s files by name, and choosing one opens it through the opener',
@@ -596,10 +722,10 @@ export async function testMenuBar(): Promise<void> {
 
 	openMenu('Edit')
 	const menuShownBeforePalette = find_test_id('menu-panel') !== null
-	press('cmd-shift-/')
+	press('cmd-k')
 	settle()
 	check(
-		'Cmd-Shift-/ while a menu is open opens the command palette and closes the menu',
+		'Cmd-K while a menu is open opens the command palette and closes the menu',
 		[menuShownBeforePalette, find_test_id('command-palette') !== null, find_test_id('menu-panel')],
 		[true, true, null]
 	)
@@ -655,7 +781,7 @@ export async function testMenuBar(): Promise<void> {
 	)
 	press('escape')
 
-	/** types `query` into Help's search, one key per call so it stays literal, and reads back every match row */
+	/** opens Help, types `query` into its search through `typeQuery` and reads back every match row */
 	function searchHelp(query: string) {
 		openMenu('Help')
 		typeQuery(query)
@@ -694,7 +820,6 @@ export async function testMenuBar(): Promise<void> {
 	const recentHelpRows = searchHelp('recent-a')
 	clickIfPresent('help-result-0')
 	settle()
-	// a new window starts once the other windows said none of them has the file (`focusWindowFor`)
 	await waitUntil(() => menuWindows.length > 0, 'the recent file’s window')
 	const recentHelpWindows = [...menuWindows]
 	const copyHelpRows = searchHelp('copy')

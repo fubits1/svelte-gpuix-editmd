@@ -1,5 +1,3 @@
-// `editmd:` is editmd's own page scheme: `editmd://file/<path>` is a file (EditorBridge.swift `AssetSchemeHandler.fileURL`), any other `editmd:` URL is ignored (LinkPolicyTests.swift)
-
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,6 +35,7 @@ describe('linkAction', () => {
 		expect(action('about:blank')).toEqual({ kind: 'ignore' })
 		expect(action('data:text/html,hi')).toEqual({ kind: 'ignore' })
 		expect(action('javascript:alert(1)')).toEqual({ kind: 'ignore' })
+		// `editmd:` is editmd's own page scheme: `editmd://file/<path>` is a file (EditorBridge.swift `AssetSchemeHandler.fileURL`), any other `editmd:` URL is ignored (LinkPolicyTests.swift).
 		// editmd's own page scheme (LinkPolicy.swift:50-53): a link to it is ignored, not asked about
 		expect(action('editmd://app/index.html')).toEqual({ kind: 'ignore' })
 		expect(action('editmd://app/tools/x.app')).toEqual({ kind: 'ignore' })

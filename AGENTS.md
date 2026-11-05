@@ -17,11 +17,12 @@ pnpm test            # Vitest: unit tests, the headless UI suite (test/ui/), the
 pnpm test:ui         # the headless UI suite alone, through GPUI's real hit testing
 pnpm test:e2e:window # the end-to-end suites in real windows: they take the keyboard, so only on the user's go
 pnpm typecheck       # tsc, then svelte-check against GPUI's element types
+pnpm lint            # prettier --check, eslint, knip, svelte-check
 pnpm build           # dist/editmd-gpuix.app through gpuix-svelte/build; macOS only, needs Bun
 ```
 
-After a change, run `pnpm typecheck` and `pnpm test` (about 10 minutes; `pnpm test:unit` and `pnpm test:ui` are
-the quick part). To see what the window draws,
+After a change, run `pnpm typecheck`, `pnpm lint` and `pnpm test` (about 10 minutes; `pnpm test:unit` and
+`pnpm test:ui` are the quick part). To see what the window draws,
 run `GPUIX_SCREENSHOT=/tmp/app.png pnpm dev`: it writes a PNG after every mount and hot reload.
 
 ## Building
@@ -121,7 +122,8 @@ every `svelte` import to it. Keep `svelte` itself out of `package.json`.
 - `e2e/` — the end-to-end suites (Vitest's `e2e` project over `gpuix-svelte/automation`), headless through
   `e2e/headless-app.ts` unless `EDITMD_E2E_ENTRY` names another entry; `e2e/known-failures.json` lists the checks
   expected to fail (editmd differences, and headless-only ones).
-- `vitest.config.ts` — the projects `unit`, `ui` and `e2e`, which `pnpm test` runs, and `visual-measurements` and
+- `vitest.config.ts` — the projects `unit` (each module's `*.test.ts` beside it in `src/`), `ui` and `e2e`, which
+  `pnpm test` runs, and `visual-measurements` and
   `visual-pictures`, the visual before/after check (`pnpm test:visual`) run only for upgrades and refactors.
 - `standalone.ts`, `build.ts` — the entry and the build script behind `pnpm build`.
 - `startup.ts` — what both entries run before the window opens: the command line's headless modes and agent hook,

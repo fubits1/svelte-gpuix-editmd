@@ -355,7 +355,7 @@ export async function testAppearanceAndZoom(): Promise<void> {
 export async function testSelectionColour(): Promise<void> {
 	/**
 	 * editmd's selection is `--selection`, the accent at 22% (style.css:12, 60-62), where gpuix washes at its accent's 35%:
-	 * the window sets `selection-color` for its whole subtree, the page's painted text and its fields
+	 * the window sets `selection-color` for its whole subtree, which the page's painted text takes and its fields do not.
 	 */
 	documentController.load('Select every word of this line.\n', sandboxOptions)
 	settle()

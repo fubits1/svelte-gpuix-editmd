@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import fc from 'fast-check'
-import { mergeText, mergeTextMapping } from './merge.ts'
+import { mergeText, mergeTextMapping, textEdits } from './merge.ts'
 
 // an edit cut between the two halves of a surrogate pair makes Yjs write U+FFFD for each half, so an
 // agent swapping 👍 for 👎 would corrupt the file at the next save
@@ -26,6 +26,39 @@ describe('characters outside the BMP', () => {
 				expect(mergeText(base, mine, theirs).text.includes('�')).toBe(false)
 			})
 		)
+	})
+})
+
+/**
+ * typing at the end of a line the other side deleted is dropped, as editmd's editor drops it (measured, the kit's
+ * f-merge-open "line two" case); typing anywhere else is kept
+ */
+describe('typing at the end of a line the other side deleted', () => {
+	test('typing inside a word the other side deleted is kept', () => {
+		expect(mergeText('a bigger house\n', 'a bigXger house\n', 'a house\n').text).toContain('X')
+	})
+
+	test('is dropped; typing at a deletion’s edge stays', () => {
+		expect([
+			mergeText(
+				'line one\nline two\nline three\n',
+				'line one\nline two typed\nline three\n',
+				'line one\nline three\n'
+			).text,
+			mergeText('a one\n', 'a one two\n', 'a ONE\n').text,
+			mergeText('keep cut me keep\n', 'keep cut me keep, mine\n', 'keep keep\n').text
+		]).toEqual(['line one\nline three\n', 'a ONE two\n', 'keep keep, mine\n'])
+	})
+
+	test('a cursor in the dropped typing lands where the deletion was', () => {
+		const mine = 'line one\nline two typed\nline three\n'
+		const merged = mergeTextMapping(
+			'line one\nline two\nline three\n',
+			mine,
+			'line one\nline three\n',
+			[mine.indexOf(' typed') + 3]
+		)
+		expect(merged.cursors).toEqual(['line one\n'.length])
 	})
 })
 
@@ -135,15 +168,39 @@ describe('mergeText', () => {
 		).toBe('the slow brown cat\n')
 	})
 
-	test('nothing typed is lost, even when both sides edit the same spot', () => {
+	test('nothing typed is lost, even when both sides edit the same spot, but for typing at the end of a line they deleted', () => {
 		fc.assert(
 			fc.property(text, text, text, (base, mine, theirs) => {
 				const merged = mergeText(base, mine, theirs).text
+				// mine's edits but typing right before the newline of a line theirs deleted whole, which editmd drops
+				const deletedLines = textEdits(base, theirs).filter(
+					({ start, end, insert }) =>
+						insert === '' && (start === 0 || base[start - 1] === '\n') && base[end - 1] === '\n'
+				)
+				const atLineEnd = ({
+					start,
+					end,
+					insert
+				}: {
+					start: number
+					end: number
+					insert: string
+				}) =>
+					start === end &&
+					insert !== '' &&
+					base[start] === '\n' &&
+					deletedLines.some((line) => line.start < start && start < line.end)
+				const kept = textEdits(base, mine)
+					.filter((edit) => !atLineEnd(edit))
+					.reduce(
+						(text, { start, end, insert }) => text.slice(0, start) + insert + text.slice(end),
+						base
+					)
 				// Every character the user inserted (by multiset) is still there.
 				const count = (s: string) =>
 					[...s].reduce((m, c) => m.set(c, (m.get(c) ?? 0) + 1), new Map<string, number>())
 				const b = count(base),
-					m = count(mine),
+					m = count(kept),
 					r = count(merged)
 				for (const [c, n] of m) expect(r.get(c) ?? 0).toBeGreaterThanOrEqual(n - (b.get(c) ?? 0))
 			})

@@ -1,6 +1,7 @@
 /**
  * end to end: editmd's SelfTest `remoteImages` (Sources/editmd/SelfTest.swift@9e889e6, lines 422-483)
- * in a real window, against a loopback server like editmd's PixelServer that counts requests
+ * in the app's window (headless by default, a real one with `test:e2e:window`), against a loopback
+ * server like editmd's PixelServer that counts requests
  *
  * editmd's paragraph mixes a remote and a local image with text; here each image has its own
  * paragraph, and the mermaid image shape is left out: pele draws no remote images
@@ -48,9 +49,9 @@ afterAll(() => {
 })
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 
-/** ⇧⌘/ opens the command palette, `load remote` filters it, and Return runs the selected entry */
+/** ⌘K opens the command palette, `load remote` filters it, and Return runs the selected entry. */
 async function loadRemoteImages(app: Editor): Promise<void> {
-	await press(app, 'cmd-shift-/')
+	await press(app, 'cmd-k')
 	const field = app.getByTestId('command-palette-field')
 	await field.waitFor()
 	await field.fill('load remote')

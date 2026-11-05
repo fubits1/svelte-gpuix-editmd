@@ -1,11 +1,12 @@
 <!--
   @component
-  The window: the open Document in a scrolling column, with the save-status label, and the menu bar and the find bar
-  above it.
+  The window: the open Document in a scrolling column, with the save-status label and the command palette's hint, and
+  the menu bar and the find bar above it.
 -->
 <script lang="ts">
 	import Scroller from 'gpuix-svelte/components/Scroller.svelte'
 	import { findController } from './src/app/find.svelte.ts'
+	import { keysOf } from './src/app/menu.ts'
 	import { provideTheme, type ThemeController, themeController } from './src/app/theme.svelte.ts'
 	import DocumentView from './src/ui/DocumentView.svelte'
 	import FindBar from './src/ui/FindBar.svelte'
@@ -34,6 +35,8 @@
 		animate: { opacity: documentController.statusShown ? 1 : 0 },
 		transition: { duration: documentController.statusShown ? 0.15 : 0.4 }
 	})
+
+	const paletteHint = `${keysOf('commandPalette')} Commands`
 </script>
 
 <div class="window" testid="window">
@@ -43,10 +46,7 @@
 	{#if findController.visible}
 		<FindBar />
 	{/if}
-	<!--
-	  the label sits in the page's corner, below the find bar, as editmd's sits in the title bar beside it. a wheel over
-	  the page shows an overlay scroller's thumb for a while (`ThemeController.pageScrolled`)
-	-->
+	<!-- A wheel over the page shows an overlay scroller's thumb for a while (`ThemeController.pageScrolled`). -->
 	<div class="page" onscroll={() => theme.pageScrolled()}>
 		<!--
 		  Source mode's field grows to its whole text, as editmd's `field-sizing: content`, so the column scrolls it as it
@@ -58,8 +58,24 @@
 			</div>
 		</Scroller>
 		<!--
-		  its text stays while it fades out, so it goes once the fade is over; a failed save's reason is the label's
-		  native tip at the pointer (EditorWindowController.swift:360), which the corner box hears for the label
+		  The palette's key sits in the middle of the bottom edge, as the save status floats in the top right corner. The
+		  strip lets clicks through to the page; the label alone takes them. It has no tab stop, so a click opens the
+		  palette as ⌘K does and leaves the keys with the open field.
+		-->
+		<div class="palette-hint-strip">
+			<div
+				class="palette-hint"
+				role="button"
+				hitbox="self"
+				onclick={() => documentController.run('commandPalette')}
+			>
+				<text class="status" testid="palette-hint">{paletteHint}</text>
+			</div>
+		</div>
+		<!--
+		  The label sits in the page's corner, below the find bar, as editmd's sits in the title bar beside it. Its text
+		  stays while it fades out, so it goes once the fade is over. A failed save's reason is the label's native tip at
+		  the pointer (EditorWindowController.swift:360), which the corner box hears for the label.
 		-->
 		{#if documentController.statusText}
 			<PointerTip text={documentController.statusDetail} testid="save-status-tooltip">
@@ -112,6 +128,20 @@
 		position: absolute;
 		top: 8px;
 		right: 10px;
+	}
+	/* across the bottom, 8px up as the save status sits 8px down; gpuix drops `left: 50%` and ignores `transform` */
+	.palette-hint-strip {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 8px;
+		display: flex;
+		justify-content: center;
+		pointer-events: none;
+	}
+	.palette-hint {
+		pointer-events: auto;
+		cursor: default;
 	}
 	/*
 	 * editmd's `NSFont.smallSystemFontSize` in `secondaryLabelColor`, window chrome that never zooms

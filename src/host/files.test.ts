@@ -105,8 +105,8 @@ describe('openTextFile', () => {
 		expect(JSON.parse(out)).toEqual(['refused', 'refused'])
 	})
 
-	// a symlink planted at a predictable copy name (`.<name>.<pid>.editmd-gpuix`) must not make the save
-	// overwrite the file it points to
+	// A symlink planted where a copy could go (`.<name>.<id>.editmd-gpuix`) must not make the save overwrite the
+	// file it points to.
 	test('a save never writes through a link someone planted where its copy could go', () => {
 		const folder = mkdtempSync(join(directory, 'planted-'))
 		const path = join(folder, 'doc.md')

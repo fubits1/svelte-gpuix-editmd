@@ -8,6 +8,7 @@ import {
 	clickIfPresent,
 	filler,
 	findQuery,
+	getDevicePixel,
 	getField,
 	getInkColour,
 	getPalette,
@@ -31,8 +32,8 @@ import {
 	wait
 } from 'gpuix-svelte/test'
 import { findController } from '../../src/app/find.svelte.ts'
+import { paletteFor } from '../../src/app/palette.ts'
 import { themeController } from '../../src/app/theme.svelte.ts'
-import type { Pixels } from '../../src/host/png.ts'
 import { documentController } from '../../src/ui/DocumentView/controller.svelte.ts'
 
 export async function testFindBar(): Promise<void> {
@@ -58,6 +59,57 @@ export async function testFindBar(): Promise<void> {
 				findBarBox.y + findBarBox.height <= firstBlockBox.y
 		],
 		['textarea', 'Find', true]
+	)
+
+	/**
+	 * editmd's chevrons are a small NSSegmentedControl and Done a small push button (EditorWindowController.swift:241-266),
+	 * read as raw bytes from editmd's dark picture at 2x: 16pt bezels with a 4pt radius in
+	 * #545556, a 0.5pt highlight along the top in #767777 and a 0.5pt shadow round them in #181819; the chevrons' divider
+	 * 1pt wide and 10pt tall, centred, in #474848.
+	 */
+	const getBezelLook = (testId: string) => {
+		const style = find_test_id(testId)?.style
+		return [
+			style?.height,
+			style?.borderTopLeftRadius ?? style?.borderRadius,
+			style?.backgroundColor,
+			[style?.borderTopWidth, style?.borderBottomWidth],
+			style?.borderColor,
+			style?.outlineWidth,
+			style?.outlineColor
+		]
+	}
+	const findPalette = themeController.palette
+	const bezelLook = [
+		16,
+		4,
+		findPalette['find-button'],
+		[0.5, 0],
+		findPalette['find-button-highlight'],
+		0.5,
+		findPalette['find-button-shadow']
+	]
+	const dividerStyle = find_test_id('find-divider')?.style
+	const darkPalette = paletteFor('dark')
+	check(
+		'the chevrons and Done are AppKit’s small bezels as editmd paints them: 16px tall, radius 4, filled, a 0.5px top highlight and shadow ring, the chevrons’ divider 1px by 10px',
+		[
+			getBezelLook('find-arrows'),
+			getBezelLook('find-done'),
+			[dividerStyle?.width, dividerStyle?.height, dividerStyle?.backgroundColor],
+			[
+				darkPalette['find-button'],
+				darkPalette['find-button-highlight'],
+				darkPalette['find-button-shadow'],
+				darkPalette['find-button-divider']
+			]
+		],
+		[
+			bezelLook,
+			bezelLook,
+			[1, 10, findPalette['find-button-divider']],
+			['#545556', '#767777', '#181819', '#474848']
+		]
 	)
 
 	/**
@@ -218,12 +270,6 @@ export async function testFindBar(): Promise<void> {
 	)
 	press('escape')
 
-	/** a pixel's colour in a decoded screenshot, as `#rrggbb`, at logical point (`x`, `y`) */
-	function getShotColourAt(shot: Pixels, scale: number, x: number, y: number): string {
-		const at = (Math.round(y * scale) * shot.width + Math.round(x * scale)) * 4
-		return `#${[shot.data[at]!, shot.data[at + 1]!, shot.data[at + 2]!].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
-	}
-
 	/**
 	 * NSSearchField's clear button is `xmark.circle.fill`: a disc with the × cut out of it, so the × shows the field's
 	 * own background, dark on a light disc in dark mode and the reverse in light. read off a real paint: the glyph's
@@ -234,22 +280,15 @@ export async function testFindBar(): Promise<void> {
 	type('b')
 	await loadFindState()
 	const clearBox = bounds(find_test_id('find-clear') ?? 0)
-	const { shot: clearShot, scale: clearScale } = captureWindow()
+	const clearCapture = captureWindow()
 	const clearColours = clearBox
-		? [
-				getShotColourAt(
-					clearShot,
-					clearScale,
-					clearBox.x + clearBox.width / 2,
-					clearBox.y + clearBox.height / 2
-				),
-				getShotColourAt(
-					clearShot,
-					clearScale,
-					clearBox.x + clearBox.width / 2,
-					clearBox.y + clearBox.height * 0.2
+		? [clearBox.height / 2, clearBox.height * 0.2].map((down) =>
+				getDevicePixel(
+					clearCapture,
+					Math.round((clearBox.x + clearBox.width / 2) * clearCapture.scale),
+					Math.round((clearBox.y + down) * clearCapture.scale)
 				)
-			]
+			)
 		: []
 	check(
 		`the find field’s clear button paints its × in the field’s background, cut out of the disc (centre, disc: ${clearColours.join(', ')})`,
@@ -272,8 +311,10 @@ export async function testWhereFindLooks(): Promise<void> {
 		return total
 	}
 	/**
-	 * where cmd-f finds text: inside Source mode's field, inside an open Block's field, inside
-	 * the closed front matter box. editmd's WKWebView find searches the page's text, its textarea's included
+	 * where cmd-f finds text: inside the closed front matter box, not inside an open Block's field or
+	 * Source mode's field
+	 *
+	 * editmd's WKWebView find searches the page's text, its textarea's included.
 	 */
 	documentController.load('---\ntitle: zebra\n---\n\nquokka here\n', sandboxOptions)
 	settle()

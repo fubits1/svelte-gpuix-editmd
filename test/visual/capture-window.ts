@@ -1,6 +1,8 @@
 /**
  * the window pictures of the migration check: every rendering fixture opened in the real app window, menu bar and all,
- * into OUT/<fixture>.png. The window follows the Mac's light or dark mode and its size follows the screen, so both are
+ * into OUT/<fixture>.png
+ *
+ * The window follows the Mac's light or dark mode and its size follows the screen, so both are
  * written to OUT/settings.json, and a run whose settings differ from BEFORE_SETTINGS stops before opening any window.
  * The windows take the keyboard while they are open.
  *

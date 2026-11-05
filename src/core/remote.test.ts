@@ -1,8 +1,9 @@
 /**
- * base and table adapted to `file:` documents: editmd's `editmd:`/`blob:` rows become `file:` rows.
- * a relative or absolute path resolves against the document's `file:` folder and is local; a `file:` URL
- * written in the document is blocked like any other scheme, as editmd blocks it (its page resolves paths
- * against `editmd:`, so only a written `file:` URL ends up on `file:`, web/src/remote.ts:15)
+ * base and table adapted to `file:` documents: editmd's `editmd:`/`blob:` rows become `file:` rows
+ *
+ * A relative or absolute path resolves against the document's `file:` folder and is local; a `file:` URL written in
+ * the document is blocked like any other scheme, as editmd blocks it (its page resolves paths against `editmd:`, so
+ * only a written `file:` URL ends up on `file:`, web/src/remote.ts:15).
  */
 
 import { describe, expect, test } from 'vitest'

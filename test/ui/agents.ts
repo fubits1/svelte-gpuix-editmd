@@ -42,6 +42,7 @@ import {
 	sandboxOptions,
 	settleAfter,
 	snapToWanted,
+	toChannels,
 	toHalfPixels,
 	untitledFolder,
 	waitUntil
@@ -136,8 +137,8 @@ export async function testAttributionAndNaming(): Promise<void> {
 	 * Block's is
 	 */
 	/**
-	 * (GPUI's `bounds` reports a box with padding and a border moved in by them, so the box is read from its style; a
-	 * screenshot measured its tint from x 64 to 728, the column's 72 less 8, to its right edge)
+	 * (GPUI's `bounds` reports a box with padding and a border moved in by them, so the box is read from its style; its
+	 * tint spans x 64 to 728, the column's 72 less 8, to its right edge)
 	 */
 	const plainTextBox = bounds(find_test_id('block-1')?.children?.[0] ?? 0)
 	const tintedTextBox = bounds(find_test_id('block-3')?.children?.[0] ?? 0)
@@ -192,7 +193,6 @@ export async function testAttributionAndNaming(): Promise<void> {
 	documentController.open(greetPath, {
 		...isolated,
 		socketsDirectory: greetSockets,
-		listAgentProcesses: () => [],
 		legendPreference: new LegendPreference(join(greetDirectory, 'legend.json'))
 	})
 	await wait(300)
@@ -218,7 +218,6 @@ export async function testAttributionAndNaming(): Promise<void> {
 	const namingPath = openFixture(namingDirectory, 'naming.md', 'one\n', {
 		...isolated,
 		socketsDirectory: namingSockets,
-		listAgentProcesses: () => [],
 		legendPreference: new LegendPreference(join(namingDirectory, 'legend.json'))
 	})
 	await wait(150)
@@ -326,10 +325,13 @@ export async function testLegendAndIpc(): Promise<void> {
 	/** the node holding `testId` as a direct child */
 	const findParent = (testId: string) =>
 		find((node) => node.children?.some((child) => child.testId === testId) ?? false)
-	// the legend's root holds the rows; GPUI text takes its parent's size, so the × takes the size of the first ancestor that sets one
 	// a node that is not there reads `missing`, so "no size of its own" (`none`) needs the node present
 	const getFontSize = (node: TreeNode | null | undefined) =>
 		node ? (node.style?.fontSize ?? 'none') : 'missing'
+	/**
+	 * The legend's root holds the rows; GPUI text takes its parent's size, so the × takes the size of the first ancestor
+	 * that sets one.
+	 */
 	const getLegendSizes = () => [
 		getFontSize(findParent('legend-row-0')),
 		getFontSize(find_test_id('legend-clear-0')),
@@ -351,8 +353,10 @@ export async function testLegendAndIpc(): Promise<void> {
 			[13.2, 'none', 'none']
 		]
 	)
-	// GPUI text takes its parent's size, so the × follows the legend's own zoomed 12px, as editmd's `font: inherit`
-	// a glyph's width follows its font size, so the zoomed × is 1.1 times as wide, give or take subpixel rounding
+	/**
+	 * The × follows the legend's own zoomed 12px, as editmd's `font: inherit`, so the zoomed × is 1.1 times as wide, give
+	 * or take subpixel rounding.
+	 */
 	const clearWidthRatio = clearWidthBefore > 0 ? clearWidthZoomed / clearWidthBefore : 0
 	check(
 		'the legend’s × takes the legend’s text size, so Cmd-= scales its width by 1.1',
@@ -790,7 +794,7 @@ export async function testLegendAndIpc(): Promise<void> {
 		'this window’s answer to a newcomer’s greeting'
 	)
 	await newcomer()
-	// the window answers with every name it has learnt in its life, `attributionAndNaming`'s 'Named elsewhere' included
+	// 'Named elsewhere' comes from the `attributionAndNaming` section: the window keeps the names it learns for its life.
 	check(
 		'a window opened later greets this one and gets back every name it knows, its own rename included',
 		namesForNewcomer,
@@ -877,7 +881,6 @@ export async function testHighlightPaint(): Promise<void> {
 	const lookPath = openFixture(lookDirectory, 'look.md', readFixture('a-highlight-deleted'), {
 		...parityOptions,
 		socketsDirectory: join(lookDirectory, 's'),
-		listAgentProcesses: () => [],
 		legendPreference: new LegendPreference(join(lookDirectory, 'legend.json'))
 	})
 	settle()
@@ -947,8 +950,7 @@ export async function testHighlightPaint(): Promise<void> {
 				)
 			)
 		: []
-	const getShade = (hex: string) =>
-		[1, 3, 5].reduce((sum, at) => sum + Number.parseInt(hex.slice(at, at + 2), 16), 0)
+	const getShade = (hex: string) => toChannels(hex).reduce((sum, value) => sum + value, 0)
 	check(
 		`a Deletion line paints dashed, 6px dashes 6px apart, and the legend casts editmd’s shadow below it (Deletion dashes in its first 118px: ${deletedRuns}; 4px under the legend, then 40px left of it: ${legendShade.join(', ')})`,
 		[
@@ -978,7 +980,6 @@ export async function testChangedRuns(): Promise<void> {
 	documentController.open(runPath, {
 		...parityOptions,
 		socketsDirectory: join(runDirectory, 's'),
-		listAgentProcesses: () => [],
 		legendPreference: new LegendPreference(join(runDirectory, 'legend.json'))
 	})
 	settle()
@@ -1407,7 +1408,16 @@ export async function testListMerges(): Promise<void> {
 		],
 		[[['agent-row-6', ...getEtaColours()]], null, null]
 	)
+	/** a gap to 0.1px */
+	const roundGap = (gap: number) => Math.round(gap * 10) / 10
+	// `rowGap`: the gap GPUI lays out between two rows with no line between them, the 3.2px token as its layout snaps it
+	const rowAbove = bounds(find_test_id('list-row-2') ?? 0)
+	const rowBelow = bounds(find_test_id('list-row-6') ?? 0)
+	const rowGap = rowAbove && rowBelow ? roundGap(rowBelow.y - (rowAbove.y + rowAbove.height)) : null
 
+	// editmd's dashed line sits in the `ul` between the `li`s with `margin: 0.2rem 0` (style.css:494-498,
+	// highlights.ts:190-204), so the next `li` loses its `li + li` 0.2em (style.css:236): the rows' own gap above the
+	// line and below it, and below the last row after the last item.
 	await mergeByEta('gone-item', '- a\n- b\n- c\n', '- a\n- c\n')
 	const goneLines = getGapLines()
 	const goneBox = bounds(goneLines[0] ?? 0)
@@ -1417,16 +1427,19 @@ export async function testListMerges(): Promise<void> {
 	const goneTip = await loadTipAfterHover(goneId, `${goneId.replace('gap-', 'gap-tooltip-')}-tip`)
 	const goneAt = documentController.highlights[0]?.at ?? 0
 	check(
-		`an item an Agent took away leaves one dashed line between the rows left, titled as editmd titles a deletion, and the Block takes no tint (${JSON.stringify(goneTip)})`,
+		`an item an Agent took away leaves one dashed line between the rows left, the rows' own ${rowGap}px apart, as editmd's 0.2rem margins, titled as editmd titles a deletion, and the Block takes no tint (${JSON.stringify(goneTip)})`,
 		[
 			goneLines.length,
 			goneBox && goneAbove && goneBelow
-				? goneAbove.y + goneAbove.height <= goneBox.y && goneBox.y + goneBox.height <= goneBelow.y
+				? [
+						goneBox.y - (goneAbove.y + goneAbove.height),
+						goneBelow.y - (goneBox.y + goneBox.height)
+					].map(roundGap)
 				: null,
 			find_test_id('block-0')?.style?.borderColor ?? null,
 			goneTip
 		],
-		[1, true, null, deletionTooltip('Eta', goneAt, 'b', menuOptions.timeFormat)]
+		[1, [rowGap, rowGap], null, deletionTooltip('Eta', goneAt, 'b', menuOptions.timeFormat)]
 	)
 
 	await mergeByEta('last-item', '- a\n- b\n', '- a\n')
@@ -1434,9 +1447,12 @@ export async function testListMerges(): Promise<void> {
 	const lastBox = bounds(lastLines[0] ?? 0)
 	const lastAbove = bounds(find_test_id('list-row-2') ?? 0)
 	check(
-		'the last item taken away leaves its dashed line below the last row left',
-		[lastLines.length, lastBox && lastAbove ? lastAbove.y + lastAbove.height <= lastBox.y : null],
-		[1, true]
+		`the last item taken away leaves its dashed line the rows' own ${rowGap}px below the last row left, as editmd's 0.2rem margin`,
+		[
+			lastLines.length,
+			lastBox && lastAbove ? roundGap(lastBox.y - (lastAbove.y + lastAbove.height)) : null
+		],
+		[1, rowGap]
 	)
 
 	await mergeByEta('ticked', '- [ ] a\n- [ ] b\n', '- [ ] a\n- [x] b\n')

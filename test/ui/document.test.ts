@@ -3,8 +3,7 @@
  * on what the ones before it left (the order is the suite's)
  */
 import './harness.ts'
-import { rmSync } from 'node:fs'
-import { afterAll, expect, test } from 'vitest'
+import { expect, test } from 'vitest'
 import * as agents from './agents.ts'
 import { countChecks } from './check.ts'
 import * as editing from './editing.ts'
@@ -14,12 +13,6 @@ import * as links from './links.ts'
 import * as menus from './menus.ts'
 import * as rendering from './rendering.ts'
 import * as view from './view.ts'
-
-// Vitest ends the fork with SIGTERM, so testIsolation's exit handler never removes the support folder
-afterAll(() => {
-	const support = process.env.EDITMD_GPUIX_SUPPORT
-	if (support) rmSync(support, { recursive: true, force: true })
-})
 
 let aborted = false
 
@@ -112,5 +105,5 @@ defineSection('scrollbarThumb', view.testScrollbarThumb)
 
 // runs even after an abort, so the count shows how far the suite got
 test('every check ran', () => {
-	expect(countChecks()).toBe(545)
+	expect(countChecks()).toBe(555)
 })

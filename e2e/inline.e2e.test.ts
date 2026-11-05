@@ -1,26 +1,31 @@
 /**
- * end to end: inline marks in a real window, on an existing file and on an empty one, each sequence sent one key per
- * call (as a person types slowly) and as one batch (one call: the field takes every key before the controller hears
- * any of them, so typing lands while a toggle's probe is still reading the selection). markdown typed into a field is
- * saved as typed and painted without its marks; Bold, Italic, Inline Code and Strikethrough toggle as editmd's
- * ProseMirror toggleMark does, measured in editmd's own editor (docs/parity.md row `e-inline-format`); with no field
- * open Bold acts at editmd's load caret, as the load-caret Bold check in `testMarkShortcuts` (test/ui/editing.ts) has it.
- * every check asserts the file ⌘S saves exactly, so a stray character fails it, and that Escape leaves no field open;
- * the painted text after each step is printed, so a stray character shows where it came from
+ * end to end: inline marks in the app's window (headless by default, a real one with `test:e2e:window`), on an
+ * existing file and on an empty one, each sequence sent one key per call (as a person types slowly) and as one batch
+ * (one call: the field takes every key before the controller hears any of them, so typing lands while a toggle's
+ * probe is still reading the selection)
+ *
+ * Markdown typed into a field is saved as typed and painted without its marks. Bold, Italic, Inline Code and
+ * Strikethrough toggle as editmd's ProseMirror toggleMark does, measured in editmd's own editor (docs/parity.md row
+ * `e-inline-format`). With no field open, Bold acts at editmd's load caret, as the load-caret Bold check in
+ * `testMarkShortcuts` (test/ui/editing.ts) has it. Every check asserts the file ⌘S saves exactly, so a stray character
+ * fails it, and that Escape leaves no field open; the painted text after each step is printed, so a stray character
+ * shows where it came from.
  */
 
 import { expect, test } from 'vitest'
 import {
+	AFTER,
 	check,
 	countChecks,
+	describeRun,
 	type Editor,
 	loadPaintedText,
-	openOn,
 	pause,
 	runInFolder,
 	saveAfterEscape,
 	sendKeystrokes,
-	toKeys
+	toKeys,
+	withOpenOn
 } from './support.ts'
 
 /** one step of a sequence: a key, or a Format menu row clicked through the in-window menu bar */
@@ -163,9 +168,6 @@ const CASES: Case[] = [
 	}
 ]
 
-/** the existing file's Blocks after the case's, which no key may touch */
-const AFTER = '\n\nSecond\n'
-
 /**
  * one call per key, two frames apart as automation waits, and a pause for a remounted field's caret; a command key
  * (⌘, ⇧⌘) waits longer, as a person who presses a shortcut does, so its probe settles before the next key
@@ -244,13 +246,8 @@ test('inline', async () => {
 						typeof testCase.saved === 'string'
 							? JSON.stringify(`${testCase.saved}${suffix}`)
 							: `${JSON.stringify(testCase.saved.without)} with one ${testCase.saved.mark} pair`
-					const { app, file } = await openOn(
-						folder,
-						`case-${index}-${existing}-${batch}`,
-						text,
-						testCase.closed ? null : 0
-					)
-					try {
+					const name = `case-${index}-${existing}-${batch}`
+					await withOpenOn(folder, name, text, testCase.closed ? null : 0, async (app, file) => {
 						if (!existing) await typeShowing(app, testCase.setup, [])
 						if (testCase.caret !== '') await sendKeystrokes(app, testCase.caret)
 
@@ -263,12 +260,10 @@ test('inline', async () => {
 						const paints =
 							testCase.paints === undefined || isPaintedPlain(closedPaint, testCase.paints)
 						check(
-							`${testCase.name}, ${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}: ⌘S saves ${want}${testCase.paints === undefined ? '' : `, the closed Block paints ${JSON.stringify(testCase.paints)} without marks`} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after each step [${shown.join('; ')}], closed ${JSON.stringify(closedPaint)})`,
+							`${testCase.name}, ${describeRun(existing, batch)}: ⌘S saves ${want}${testCase.paints === undefined ? '' : `, the closed Block paints ${JSON.stringify(testCase.paints)} without marks`} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after each step [${shown.join('; ')}], closed ${JSON.stringify(closedPaint)})`,
 							isSavedAsWanted(saved, testCase.saved, suffix) && paints && !open
 						)
-					} finally {
-						await app.close().catch(() => {})
-					}
+					})
 				}
 			}
 		}

@@ -37,12 +37,12 @@ describe('diagramOf', () => {
 		expect(diagramOf(' \n ', palette)).toEqual({ kind: 'empty', message: 'Empty diagram' })
 	})
 
-	// at the end of the input the context line is empty and the `^` marker stands alone; editmd keeps it, as
-	// mermaid's message has it
-	test('a lone `^` marker under an empty context line is kept, as editmd keeps it', () => {
+	// editmd shows mermaid's message: the line, its context, a dashed `^` under the failing place, what was expected
+	// (editmd's own picture of r-mermaid-error.md). pele's has that shape, with its own line count and wording.
+	test('an error at the end of the input gives its line, context and dashed `^` marker', () => {
 		expect(diagramOf('flowchart LR\n  A -->', palette)).toEqual({
 			kind: 'error',
-			message: "Parse error on line 3:\n^\nExpecting 'NODE_STRING', got 'EOF'"
+			message: "Parse error on line 2:\n  A -->\n-------^\nExpecting 'NODE_STRING', got 'EOF'"
 		})
 		expect(diagramOf('flowchart LR\nA --> B\nB -->> C', palette)).toEqual({
 			kind: 'error',

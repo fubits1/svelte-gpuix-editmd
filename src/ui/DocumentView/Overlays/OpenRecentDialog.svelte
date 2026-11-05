@@ -1,7 +1,7 @@
 <!--
   @component
-  File > Open Recent in place of editmd's submenu, which needs the menu bar gpuix cannot extend (gap G2): the recent
-  files, newest first, each by name with its folder, and Clear Menu below them, as the submenu ends. A click on a file
+  File > Open Recent from the command palette, which lists it as one entry and opens it as this list in place of the
+  submenu editmd and the in-window menu bar (gap G2) hold: the recent files, newest first, each by name with its folder, and Clear Menu below them, as the submenu ends. A click on a file
   opens it, Up and Down move the highlight over the files and Clear Menu and Return chooses the highlighted one, as in
   the submenu, and Escape closes the list. AppKit chrome in editmd, so it does not zoom; render it inside `Portal`, so
   it paints over the Document.

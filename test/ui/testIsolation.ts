@@ -6,7 +6,9 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { afterAll } from 'vitest'
 
 const support = mkdtempSync(join(tmpdir(), 'eg-ui-'))
 process.env.EDITMD_GPUIX_SUPPORT = support
-process.on('exit', () => rmSync(support, { recursive: true, force: true }))
+// removed after the run, not on exit: Vitest ends the fork with SIGTERM, which runs no exit handler
+afterAll(() => rmSync(support, { recursive: true, force: true }))

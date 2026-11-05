@@ -1,9 +1,10 @@
 /**
  * end to end: editmd's SelfTest `coEditing` (Sources/editmd/SelfTest.swift@9e889e6, lines 91-180)
- * against the real app in a window, an agent hook through the real `--report-edit` command
+ * against the app in its window (headless by default, a real one with `test:e2e:window`), an agent hook through the
+ * real `--report-edit` command
  */
 
-import { chmodSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import {
@@ -22,7 +23,9 @@ import {
 	runInFolder,
 	sendKeystrokes,
 	typeEach,
-	waitUntil
+	waitUntil,
+	withOpenOn,
+	writeAtomically
 } from './support.ts'
 
 test('co-editing', async () => {
@@ -30,28 +33,22 @@ test('co-editing', async () => {
 		const file = join(folder, 'coedit.md')
 		const readDisk = () => readFileSync(file, 'utf8')
 
-		/** most editors and tools save this way: a new file renamed over the old one */
-		function writeAtomically(text: string): void {
-			writeFileSync(`${file}.tmp`, text)
-			renameSync(`${file}.tmp`, file)
-		}
-
 		writeFileSync(file, '# Title\n\nFirst paragraph.\n\nSecond paragraph.\n')
 		const app = await openEditor(file, folder)
 		const loadShown = () => loadPaintedText(app)
 
 		// an agent rewrites the file in place while nothing is unsaved
-		writeFileSync(file, '# Title\n\nFirst paragraph.\n\nSecond paragraph, by an agent.\n')
+		const inPlace = '# Title\n\nFirst paragraph.\n\nSecond paragraph, by an agent.\n'
+		writeFileSync(file, inPlace)
 		await waitUntil('in-place write shown', async () => (await loadShown()).includes('by an agent'))
 		await pause(1500)
 		check(
 			'a change written in place shows up, and the document stays clean',
-			(await loadText(app, 'save-status')) === '' &&
-				readDisk() === '# Title\n\nFirst paragraph.\n\nSecond paragraph, by an agent.\n'
+			(await loadText(app, 'save-status')) === '' && readDisk() === inPlace
 		)
 
-		// then replaces it atomically
-		writeAtomically('# Title\n\nFirst paragraph.\n\nSecond paragraph, by an agent.\n\nThird.\n')
+		// then replaces it atomically, as most editors and tools save
+		writeAtomically(file, `${inPlace}\nThird.\n`)
 		const atomicShown = await isMetWithin(async () => (await loadShown()).includes('Third.'))
 		// a Document the merge made dirty would show Saved within this pause
 		await pause(1500)
@@ -73,9 +70,7 @@ test('co-editing', async () => {
 			`--report-edit prints nothing on stdout or stderr, Node's ExperimentalWarning class off since the shipped binary runs on Bun (stdout ${JSON.stringify(hookOutput.stdout)}, stderr ${JSON.stringify(hookOutput.stderr)})`,
 			hookOutput.stdout === '' && hookOutput.stderr === ''
 		)
-		writeAtomically(
-			'# Title\n\nFirst paragraph.\n\nSecond paragraph, by an agent.\n\nThird, reported.\n'
-		)
+		writeAtomically(file, `${inPlace}\nThird, reported.\n`)
 		await waitUntil('reported write shown', async () => (await loadShown()).includes('reported'))
 		await waitUntil('legend', async () => (await loadText(app, 'legend-name-1')) !== '')
 		// a row's text is its name and then its count of changes
@@ -91,6 +86,7 @@ test('co-editing', async () => {
 		// the 1s autosave has not run yet: the user's heading is still unsaved when the agent writes
 		const unsavedWhenAgentWrites = !readDisk().includes('My Title')
 		writeAtomically(
+			file,
 			'# Title\n\nFirst paragraph, edited.\n\nSecond paragraph, by an agent.\n\nThird.\n'
 		)
 		const merged =
@@ -207,87 +203,85 @@ test('co-editing', async () => {
 		)
 
 		/**
-		 * in a real window: a Block's field open with typing in it, another program writes the same
-		 * Block. editmd shows the outside change in the field at once, merged with the typing, and a format right after it
-		 * shows at once too
+		 * In the app's window, with a Block's field open and typing in it, another program writes the same Block. editmd
+		 * shows the outside change in the field at once, merged with the typing, and a format right after it shows at
+		 * once too.
 		 */
-		const { app: live, file: liveFile } = await openOn(
-			folder,
-			'live',
-			'# Live\n\none two three\n',
-			1
-		)
-		await sendKeystrokes(live, 'cmd-down z')
-		await waitUntil('z typed', async () => (await loadPaintedText(live)).includes('threez'))
-		writeFileSync(liveFile, '# Live\n\none two three\nagent\n')
-		const fieldShowsBoth = await isMetWithin(async () => {
-			const text = await loadPaintedText(live)
-			return (
-				(await has(live, 'block-editor')) &&
-				text.includes('one two threez') &&
-				text.includes('agent')
+		await withOpenOn(folder, 'live', '# Live\n\none two three\n', 1, async (live, liveFile) => {
+			await sendKeystrokes(live, 'cmd-down z')
+			await waitUntil('z typed', async () => (await loadPaintedText(live)).includes('threez'))
+			writeFileSync(liveFile, '# Live\n\none two three\nagent\n')
+			const fieldShowsBoth = await isMetWithin(async () => {
+				const text = await loadPaintedText(live)
+				return (
+					(await has(live, 'block-editor')) &&
+					text.includes('one two threez') &&
+					text.includes('agent')
+				)
+			}, 2000)
+			check(
+				'an outside write to the open Block shows in its field within 2s, merged with the typing',
+				fieldShowsBoth
 			)
-		}, 2000)
-		check(
-			'an outside write to the open Block shows in its field within 2s, merged with the typing',
-			fieldShowsBoth
-		)
-		await sendKeystrokes(
-			live,
-			'cmd-up right right right right shift-right shift-right shift-right cmd-b'
-		)
-		const boldShows = await isMetWithin(
-			async () => (await loadPaintedText(live)).includes('one **two** threez'),
-			2000
-		)
-		await live.getByTestId('block-editor').press('escape')
-		check(
-			'⌘B right after it shows in the field at once, and the file gets both changes',
-			boldShows &&
-				(await isMetWithin(
-					() => readFileSync(liveFile, 'utf8') === '# Live\n\none **two** threez\nagent\n'
-				))
-		)
-		await live.close().catch(() => {})
+			await sendKeystrokes(
+				live,
+				'cmd-up right right right right shift-right shift-right shift-right cmd-b'
+			)
+			let painted = ''
+			const boldShows = await isMetWithin(async () => {
+				painted = await loadPaintedText(live)
+				return painted.includes('one **two** threez')
+			}, 2000)
+			await live.getByTestId('block-editor').press('escape')
+			let saved = ''
+			const fileHasBoth = await isMetWithin(() => {
+				saved = readFileSync(liveFile, 'utf8')
+				return saved === '# Live\n\none **two** threez\nagent\n'
+			})
+			check(
+				`⌘B right after it shows in the field at once, and the file gets both changes (painted ${JSON.stringify(painted)}, file ${JSON.stringify(saved)})`,
+				boldShows && fileHasBoth
+			)
+		})
 
 		/**
 		 * the user types on without a pause while another program writes the same Block five times,
 		 * every 200ms, each time on top of what it finds on disk. every typed character must land once and in order, and
 		 * every one of the program's changes too
 		 */
-		const { app: busy, file: busyFile } = await openOn(folder, 'busy', '# Busy\n\nStart.\n', 1)
-		await sendKeystrokes(busy, 'cmd-down')
-		const typed = 'abcdefghijklmnopqrstuvwxy'
-		const typing = typeEach(busy, [...typed], 45)
-		const writing = (async () => {
-			for (let round = 1; round <= 5; round++) {
-				await pause(200)
+		await withOpenOn(folder, 'busy', '# Busy\n\nStart.\n', 1, async (busy, busyFile) => {
+			await sendKeystrokes(busy, 'cmd-down')
+			const typed = 'abcdefghijklmnopqrstuvwxy'
+			const typing = typeEach(busy, [...typed], 45)
+			const writing = (async () => {
+				for (let round = 1; round <= 5; round++) {
+					await pause(200)
+					const text = readFileSync(busyFile, 'utf8')
+					writeFileSync(busyFile, text.replace('\n\n', `\n\nA${round} `))
+				}
+			})()
+			await Promise.all([typing, writing])
+			// The field paints the last key and the last write before Escape; a lost key leaves the check to say so.
+			await isMetWithin(async () => {
+				const text = await loadPaintedText(busy)
+				return text.includes(typed) && text.includes('A5')
+			}, 2000)
+			await busy.getByTestId('block-editor').press('escape')
+			const busyLanded = await isMetWithin(() => {
 				const text = readFileSync(busyFile, 'utf8')
-				writeFileSync(busyFile, text.replace('\n\n', `\n\nA${round} `))
-			}
-		})()
-		await Promise.all([typing, writing])
-		// the field paints the last key and the last write before Escape; a lost key leaves the check to say so
-		await isMetWithin(async () => {
-			const text = await loadPaintedText(busy)
-			return text.includes(typed) && text.includes('A5')
-		}, 2000)
-		await busy.getByTestId('block-editor').press('escape')
-		const busyLanded = await isMetWithin(() => {
-			const text = readFileSync(busyFile, 'utf8')
-			return (
-				text.includes(`Start.${typed}`) &&
-				[1, 2, 3, 4, 5].every((round) => text.includes(`A${round} `))
+				return (
+					text.includes(`Start.${typed}`) &&
+					[1, 2, 3, 4, 5].every((round) => text.includes(`A${round} `))
+				)
+			}, 5000)
+			const busyText = readFileSync(busyFile, 'utf8')
+			check(
+				`typing on while another program writes the same Block five times keeps every key once and in order, and every one of its changes (${JSON.stringify(busyText)})`,
+				busyLanded &&
+					busyText.split(typed).length === 2 &&
+					[1, 2, 3, 4, 5].every((round) => busyText.split(`A${round} `).length === 2)
 			)
-		}, 5000)
-		const busyText = readFileSync(busyFile, 'utf8')
-		check(
-			`typing on while another program writes the same Block five times keeps every key once and in order, and every one of its changes (${JSON.stringify(busyText)})`,
-			busyLanded &&
-				busyText.split(typed).length === 2 &&
-				[1, 2, 3, 4, 5].every((round) => busyText.split(`A${round} `).length === 2)
-		)
-		await busy.close().catch(() => {})
+		})
 	})
 })
 

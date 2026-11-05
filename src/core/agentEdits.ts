@@ -1,10 +1,12 @@
-// `EDITMD_AGENT_NAME` keeps editmd's name so existing hook setups work unchanged
-
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { posix } from 'node:path'
 
-/** An agent that edits files, as the page names it. `id` is stable for one agent session (and one subagent within it). */
+/**
+ * an agent that edits files, as the page names it
+ *
+ * `id` is stable for one agent session (and one subagent within it).
+ */
 export type AgentAuthor = { id: string; name: string }
 
 /** a change nobody is credited with: editmd's UNKNOWN agent (web/src/highlights.ts), colour `agent-unknown`, listed last */
@@ -13,7 +15,11 @@ export const OUTSIDE_EDIT: AgentAuthor = { id: '', name: 'Outside edit' }
 /** `before`: the tool is about to run (PreToolUse), perhaps after a permission prompt. `after`: it has run (PostToolUse). */
 export type AgentEditPhase = 'before' | 'after'
 
-/** What an agent's tool hook says it is about to edit, or has just edited. `paths` are absolute. */
+/**
+ * what an agent's tool hook says it is about to edit, or has just edited
+ *
+ * `paths` are absolute.
+ */
 export type AgentEditReport = { author: AgentAuthor; phase: AgentEditPhase; paths: string[] }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -50,7 +56,7 @@ const byCodePoint = (a: string, b: string) => {
 	return left.length - right.length
 }
 
-/** File paths in a tool's input: the fields edit tools name their file with, and the file headers of an `apply_patch` patch. */
+/** file paths in a tool's input: the fields edit tools name their file with, and the file headers of an `apply_patch` patch */
 function pathsIn(input: Json | undefined): string[] {
 	const found: string[] = []
 	const visit = (value: Json | undefined, key: string | null) => {
@@ -75,9 +81,11 @@ const expandHome = (path: string, home: string) =>
 	path.startsWith('~/') ? home + path.slice(1) : path
 
 /**
- * The report in a hook payload (the JSON a Claude Code or Codex hook receives on stdin),
- * or null if it names no file or no session. Agents are told apart by session, and named
- * after the harness and the folder they run in unless `EDITMD_AGENT_NAME` gives a name.
+ * the report in a hook payload (the JSON a Claude Code or Codex hook receives on stdin),
+ * or null if it names no file or no session
+ *
+ * Agents are told apart by session, and named after the harness and the folder they run in unless
+ * `EDITMD_AGENT_NAME` gives a name.
  */
 export function parseAgentEditReport(
 	payload: string,
@@ -86,7 +94,7 @@ export function parseAgentEditReport(
 ): AgentEditReport | null {
 	let json: Json
 	try {
-		// JSONSerialization reads a payload after a byte order mark too
+		// JSONSerialization reads a payload after a byte order mark too.
 		json = JSON.parse(payload.replace(/^\u{FEFF}/u, '')) as Json
 	} catch {
 		return null
@@ -106,13 +114,14 @@ export function parseAgentEditReport(
 			expanded.startsWith('/') ? '/' : (cwd ?? workingDirectory),
 			expanded
 		)
-		// Foundation's path writes a NUL, which no file name holds, as `%00`
+		// Foundation's path writes a NUL, which no file name holds, as `%00`.
 		return absolute.replaceAll('\0', '%00')
 	})
 	if (paths.length === 0) return null
 
 	let id = session
 	let name: string
+	// `EDITMD_AGENT_NAME` keeps editmd's name so existing hook setups work unchanged.
 	const given = environment.EDITMD_AGENT_NAME
 	if (given) {
 		name = given
@@ -136,9 +145,9 @@ export function parseAgentEditReport(
 }
 
 export type ClaimsPolicy = {
-	/** How long a claim made before writing lasts. */
+	/** how long a claim made before writing lasts */
 	waiting: number
-	/** How long a claim lasts once the agent says it has written. */
+	/** how long a claim lasts once the agent says it has written */
 	settle: number
 }
 
@@ -153,7 +162,7 @@ function realPath(path: string): string | null {
 }
 
 /**
- * Which agent changed a file, going by the reports agents send.
+ * which agent changed a file, going by the reports agents send
  *
  * An agent reports before it writes and again after. The first report
  * claims the file for as long as the tool may wait on a permission prompt;
@@ -163,7 +172,7 @@ function realPath(path: string): string | null {
  */
 export class AgentEditClaims {
 	readonly policy: ClaimsPolicy
-	/** By path, then by author id. */
+	/** by path, then by author id */
 	#claims = new Map<string, Map<string, Claim>>()
 
 	constructor(policy: ClaimsPolicy = { waiting: 600, settle: 3 }) {
@@ -171,8 +180,9 @@ export class AgentEditClaims {
 	}
 
 	/**
-	 * The form both sides compare paths in: `/tmp/x` and `/private/tmp/x`,
-	 * or a path through a symlinked folder, name the same file.
+	 * the form both sides compare paths in: `/tmp/x` and `/private/tmp/x`,
+	 * or a path through a symlinked folder, name the same file
+	 *
 	 * A file that does not exist yet goes by its folder's real path.
 	 */
 	static key(path: string): string {
@@ -193,7 +203,7 @@ export class AgentEditClaims {
 		this.#prune(now)
 	}
 
-	/** The agent that changed the file at `path`, if any has claimed it. */
+	/** the agent that changed the file at `path`, if any has claimed it */
 	authorOfChange(path: string, now: number): AgentAuthor | null {
 		this.#prune(now)
 		let latest: Claim | null = null
@@ -208,48 +218,5 @@ export class AgentEditClaims {
 			for (const [id, claim] of byAuthor) if (claim.expires < now) byAuthor.delete(id)
 			if (byAuthor.size === 0) this.#claims.delete(path)
 		}
-	}
-}
-
-/** A running process that may be a coding agent. `started` tells a reused pid apart; `command` is `ps -o comm=`'s name. */
-export type AgentProcess = { pid: number; started: number; command: string; directory: string }
-
-/** The display names of the agents recognized, by executable name. */
-export const KNOWN_AGENTS: Record<string, string> = {
-	claude: 'Claude',
-	codex: 'Codex',
-	gemini: 'Gemini',
-	aider: 'Aider',
-	opencode: 'OpenCode',
-	amp: 'Amp',
-	goose: 'Goose',
-	'cursor-agent': 'Cursor'
-}
-
-/**
- * The agent behind a change to the file at `path` when no agent reported
- * it: the one working in the deepest folder that holds the file. Nobody,
- * if no agent works above the file, or two work in that same folder.
- */
-export function processAuthorOfChange(
-	path: string,
-	processes: readonly AgentProcess[]
-): AgentAuthor | null {
-	const candidates = processes.filter(
-		(process) =>
-			KNOWN_AGENTS[process.command] !== undefined &&
-			path.startsWith(process.directory.endsWith('/') ? process.directory : process.directory + '/')
-	)
-	if (candidates.length === 0) return null
-
-	const deepest = Math.max(...candidates.map((process) => process.directory.length))
-	const closest = candidates.filter((process) => process.directory.length === deepest)
-	if (closest.length !== 1) return null
-
-	const process = closest[0]!
-	const folder = posix.basename(process.directory)
-	return {
-		id: `process:${process.pid}:${process.started}`,
-		name: `${KNOWN_AGENTS[process.command]} · ${folder === '' ? '/' : folder}`
 	}
 }

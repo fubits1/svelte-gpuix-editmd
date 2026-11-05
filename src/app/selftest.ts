@@ -1,16 +1,17 @@
 /**
  * `editmd --selftest FILE` (Headless.swift:11, SelfTest.swift@9e889e6): FILE opened, edited and saved through the
- * app, checking the Document's state and what lands on disk at each step, one `ok`/`FAIL` line per check. FILE is
- * overwritten. the app here is the real DocumentController, DocumentView and host classes, mounted on GPUI's headless
- * renderer; typing goes through the field's change event, keys and drops through GPUI's own dispatch. every scratch
- * file sits next to FILE (`selftest-*`) and is removed afterwards. editmd's crashRecovery group has no counterpart:
- * there is no web content process to kill
+ * app, checking the Document's state and what lands on disk at each step, one `ok`/`FAIL` line per check
+ *
+ * FILE is overwritten. The app here is the real DocumentController, DocumentView and host classes, mounted on GPUI's
+ * headless renderer; typing goes through the field's change event, keys and drops through GPUI's own dispatch. Every
+ * scratch file sits next to FILE (`selftest-*`) and is removed afterwards; the window's support folder goes in the temp
+ * folder, so its agent socket fits macOS's 104-byte socket path limit. editmd's crashRecovery group has no
+ * counterpart, since there is no web content process to kill, and neither has its agentProcesses group: the port
+ * credits no change nobody reported to a running agent.
  */
 
-import { type ChildProcess, spawn } from 'node:child_process'
 import {
 	chmodSync,
-	copyFileSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -46,7 +47,6 @@ import { selectKeys } from '../core/fieldSelection.ts'
 import { linkAction } from '../core/linkPolicy.ts'
 import { carryOutLink } from '../host/openLink.ts'
 import { encodePng } from '../host/png.ts'
-import { agentProcessesOptions } from './agentProcessesEnv.ts'
 import { LegendPreference } from '../host/legendPreference.ts'
 import { RecentFiles } from '../host/recent.ts'
 import { documentController, type OpenOptions } from '../ui/DocumentView/controller.svelte.ts'
@@ -176,9 +176,7 @@ class SelfTest {
 			activateWindow: () => {},
 			toggleFullScreen: () => {},
 			readClipboardUrl: () => null,
-			onExit: () => {},
-			// the machine's running agents, those in an end-to-end run's own folder only (EDITMD_GPUIX_AGENT_ROOT)
-			...agentProcessesOptions(process.env)
+			onExit: () => {}
 		}
 	}
 
@@ -519,58 +517,6 @@ async function coEditing(test: SelfTest): Promise<void> {
 	}
 }
 
-/**
- * a stand-in agent: a process named `claude` working in `folder`, as editmd copies its own binary (copies of system
- * ones are killed on launch). the runtime running this, copied; as a bun binary it is the app itself, which waits on a
- * hook payload as editmd's copy does, and as node or bun it waits on its stdin
- */
-function standInAgent(folder: string): ChildProcess {
-	const executable = join(folder, 'claude')
-	copyFileSync(process.execPath, executable)
-	chmodSync(executable, 0o755)
-	const runtime = basename(process.execPath)
-	const args =
-		runtime === 'node' || runtime === 'bun' ? ['-e', 'process.stdin.resume()'] : ['--report-edit']
-	return spawn(executable, args, { cwd: folder, stdio: ['pipe', 'ignore', 'ignore'] })
-}
-
-/** changes nobody reported go to the agent working in the file's folder, under a name the user can change (183-223) */
-async function agentProcesses(test: SelfTest): Promise<void> {
-	const scratch = test.scratch('selftest-agent')
-	let agent: ChildProcess | null = null
-	try {
-		const file = join(scratch, 'notes.md')
-		writeFileSync(file, 'One.\n\nTwo.\n')
-		agent = standInAgent(scratch)
-		await pause(300)
-		test.open(file)
-		const legend = () => documentController.agents.map(({ name }) => name).join('|')
-
-		writeAtomically(file, 'One, by the agent.\n\nTwo.\n')
-		await until('unreported write shown', () => legend() !== '')
-		const guessed = legend()
-		test.check(
-			guessed === 'Claude · selftest-agent',
-			`an unreported change goes to the agent working in its folder (${guessed})`
-		)
-
-		const id = documentController.agents[0]?.id
-		if (id === undefined) return test.check(false, 'the agent is found again')
-		documentController.renameAgent(id, 'Note taker')
-		await until('rename shown', () => legend() === 'Note taker')
-		writeAtomically(file, 'One, by the agent.\n\nTwo, renamed.\n')
-		await until('second write shown', () => documentController.highlights.length === 2)
-		const named = legend()
-		test.check(
-			named === 'Note taker',
-			`a renamed agent keeps its name in open windows and later changes (${named})`
-		)
-	} finally {
-		agent?.kill()
-		rmSync(scratch, { recursive: true, force: true })
-	}
-}
-
 /** files in other encodings and line endings, and files that aren't text (SelfTest.swift:225-281) */
 async function fileFormats(test: SelfTest, folder: string): Promise<void> {
 	const file = join(folder, 'selftest-format.md')
@@ -763,17 +709,9 @@ async function remoteImages(test: SelfTest): Promise<void> {
 		test.check(offered(), 'Load Remote Images is offered')
 		documentController.run('loadRemoteImages')
 		settle()
-		/**
-		 * GPUI's headless renderer has no HTTP client (measured: an http <img> it painted made no request), so here the
-		 * image is checked to carry the remote URL a window fetches; remoteImages.e2e.test.ts sees the request in a window
-		 */
-		const remoteSrc = () =>
-			find((node) => node.type === 'img' && node.customProps?.src === `${base}/image.png`) !== null
-		await until('remote image shown', remoteSrc)
-		test.check(
-			remoteSrc() && find((node) => node.testId?.startsWith('image-blocked-') === true) === null,
-			'Load Remote Images fetches them (the image takes its remote URL)'
-		)
+		// The port fetches a remote image's bytes itself, so the server sees the request, as editmd's check reads it.
+		await until('remote image fetched', () => requests.includes('/image.png')).catch(() => {})
+		test.check(requests.includes('/image.png'), 'Load Remote Images fetches them')
 		test.check(!offered(), 'and is then done for the window')
 		test.check(
 			documentController.text.startsWith('# Kept Remote') && documentController.edited,
@@ -788,7 +726,7 @@ async function remoteImages(test: SelfTest): Promise<void> {
 	}
 }
 
-/** image files dropped on a document are linked where they land; text files open in a window of their own (506-599) */
+/** Image files dropped on a document are linked where they land; text files open in a window of their own (SelfTest.swift:506-599). */
 async function droppingFiles(test: SelfTest): Promise<void> {
 	const scratch = test.scratch('selftest-drop')
 	try {
@@ -901,7 +839,6 @@ export async function selfTest(url: string, print: SelfTestOutput): Promise<bool
 	try {
 		await test.group('document', () => documentBasics(test, url))
 		await test.group('coEditing', () => coEditing(test))
-		await test.group('agentProcesses', () => agentProcesses(test))
 		await test.group('fileFormats', () => fileFormats(test, folder))
 		await test.group('links', () => links(test))
 		await test.group('remoteImages', () => remoteImages(test))

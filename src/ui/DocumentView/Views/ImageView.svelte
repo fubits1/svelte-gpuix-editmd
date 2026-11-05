@@ -44,14 +44,17 @@
 
 	/**
 	 * the room below the baseline of a 16px/1.65 body line, in CSS px at actual size: GPUI sets that 26.4px line's
-	 * baseline 19.5px below its top (test.ts, the image-on-the-baseline check)
+	 * baseline 19.5px below its top (`testCodeSpansBaselineUnderline` in test/ui/rendering.ts, the image-on-the-baseline
+	 * check)
 	 */
 	const BELOW_BASELINE = 6.9
 
 	const source = $derived(resolveImageSource(image.src, documentController.folder))
+	/** a local image, or a remote one once View > Load Remote Images allows it */
+	const loads = $derived(source.kind === 'local' || documentController.remoteImagesAllowed)
 	/** a loaded remote image's size and bytes once they came; null while unknown, and for any other image */
 	const remote = $derived(
-		source.kind === 'remote' && source.path === undefined && documentController.remoteImagesAllowed
+		loads && source.kind === 'remote' && source.path === undefined
 			? documentController.remoteImageOf(source.url)
 			: null
 	)
@@ -61,7 +64,7 @@
 	 */
 	const naturalSize = $derived.by(() => {
 		if (source.kind === 'local') return documentController.imageSizeOf(source.path)
-		if (!documentController.remoteImagesAllowed) return null
+		if (!loads) return null
 		return source.path === undefined
 			? (remote?.size ?? null)
 			: documentController.imageSizeOf(source.path)
@@ -86,9 +89,7 @@
 	const fileMissing = $derived(
 		source.kind === 'local'
 			? documentController.isImageMissing(source.path)
-			: documentController.remoteImagesAllowed &&
-					source.path === undefined &&
-					documentController.isRemoteImageFailed(source.url)
+			: loads && source.path === undefined && documentController.isRemoteImageFailed(source.url)
 	)
 
 	/**
@@ -134,16 +135,7 @@
 <PointerTip text={image.title ?? null} testid={`image-tooltip-${testIdSuffix}`}>
 	{#snippet children(pointer)}
 		<!-- an image of unknown size keeps the fixed box across the column, in a row of images too -->
-		<div
-			class={[
-				'frame',
-				naturalSize === null &&
-					!fileMissing &&
-					(source.kind === 'local' || documentController.remoteImagesAllowed) &&
-					'fill'
-			]}
-			{...pointer}
-		>
+		<div class={['frame', naturalSize === null && !fileMissing && loads && 'fill']} {...pointer}>
 			{#if fileMissing}
 				<!--
 				  WebKit's broken image: a box the alt text's size in a 1px light grey border, the alt text itself unpainted,
@@ -160,7 +152,7 @@
 						/>
 					</div>
 				</div>
-			{:else if source.kind === 'local' || documentController.remoteImagesAllowed}
+			{:else if loads}
 				{@const bytes = remote?.bytes}
 				<img
 					class={['image', naturalSize === null && 'fixed']}

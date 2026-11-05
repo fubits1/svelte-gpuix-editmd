@@ -1,9 +1,7 @@
 import { chordOf, type Command } from './shortcuts.ts'
 
 /** editmd's menu items that have no key equivalent, reached through the in-window menu bar and the command palette */
-const MENU_ONLY = ['openRecent', 'revert', 'table', 'horizontalRule', 'loadRemoteImages'] as const
-
-type MenuOnlyCommand = (typeof MENU_ONLY)[number]
+type MenuOnlyCommand = 'openRecent' | 'revert' | 'table' | 'horizontalRule' | 'loadRemoteImages'
 
 export type MenuCommand = Command | MenuOnlyCommand
 
@@ -40,8 +38,10 @@ type Item = [title: string, command: MenuCommand]
 
 /**
  * editmd's menus (Sources/editmd/MainMenu.swift@9e889e6) without what gpuix's fixed app menu already
- * has (Hide, Quit, Minimize, Zoom) and what belongs to the focused text field (Cut, Paste, Paste and
- * Match Style, Delete, Select All, Spelling and Grammar); Copy is here for the painted text's selection
+ * has (Hide, Quit, Minimize, Zoom) and what belongs to the focused text field (Cut, Paste and Match
+ * Style, Delete, Select All, Spelling and Grammar)
+ *
+ * Copy and Paste are here for the painted text's selection and editmd's page caret.
  */
 const MENUS: Record<MenuEntry['menu'], Item[]> = {
 	File: [
@@ -102,10 +102,13 @@ function glyphs(chord: string): string {
 	return `${modifiers.includes('alt-') ? '⌥' : ''}${modifiers.includes('shift-') ? '⇧' : ''}⌘${key.toUpperCase()}`
 }
 
-const isKeyed = (command: MenuCommand): command is Command =>
-	!MENU_ONLY.some((menuOnly) => menuOnly === command)
+/** a command's key equivalent in macOS glyphs ('⇧⌘K'), empty for a command with none */
+export function keysOf(command: MenuCommand): string {
+	const chord = chordOf(command)
+	return chord ? glyphs(chord) : ''
+}
 
-/** every menu item for the command palette, titled and enabled as editmd's `validateMenuItem` would */
+/** the File, Edit, Format and View commands for the command palette, titled and enabled as editmd's `validateMenuItem` would */
 export function menuEntries({
 	sourceMode,
 	remoteImagesAllowed,
@@ -115,12 +118,11 @@ export function menuEntries({
 }: MenuState): MenuEntry[] {
 	return Object.entries(MENUS).flatMap(([menu, items]) =>
 		items.map(([title, command]) => {
-			const chord = isKeyed(command) ? chordOf(command) : null
 			const entry: MenuEntry = {
 				menu: menu as MenuEntry['menu'],
 				title,
 				command,
-				keys: chord ? glyphs(chord) : '',
+				keys: keysOf(command),
 				// editmd enables Format outside Source mode, a field open or not (EditorWindowController.swift:224-225)
 				enabled: !(menu === 'Format' && sourceMode)
 			}
@@ -171,7 +173,9 @@ const SEPARATOR: MenuBarItem = { kind: 'separator' }
 
 /**
  * an item the focused text field handles by key, which a menu click cannot reach in gpuix (no field API for it):
- * Delete, and spelling (gap G7). Copy is a command of its own, for the painted text's selection, which gpuix reports
+ * Delete, and spelling (gap G7)
+ *
+ * Copy is a command of its own, for the painted text's selection, which gpuix reports.
  */
 const fieldOnly = (title: string, keys = ''): Extract<MenuBarItem, { kind: 'item' }> => ({
 	kind: 'item',
@@ -183,8 +187,10 @@ const fieldOnly = (title: string, keys = ''): Extract<MenuBarItem, { kind: 'item
 
 /**
  * editmd's menu bar (MainMenu.swift:33-130) for drawing inside the window, since gpuix's native bar
- * holds only its fixed app and Window menus (gap G2). Items, order, separators, submenus and key
- * equivalents are editmd's; what gpuix cannot do from a click is listed disabled
+ * holds only its fixed app and Window menus (gap G2)
+ *
+ * Items, order, separators, submenus and key equivalents are editmd's; what gpuix cannot do from a click is listed
+ * disabled.
  */
 export function menuBar(state: MenuState): MenuBarMenu[] {
 	const entries = new Map(menuEntries(state).map((entry) => [entry.command, entry]))
@@ -331,8 +337,8 @@ export type MenuSearchHit = {
 
 /**
  * macOS's menu search in the Help menu: every item without a submenu, in any menu or submenu, whose
- * title holds each word of `query`, case ignored, in bar order; disabled items are found too (macOS
- * lists them greyed). Nothing for an empty query
+ * title holds each word of `query`, case ignored, in bar order, disabled ones too (macOS lists them
+ * greyed); nothing for an empty query
  */
 export function searchMenuBar(query: string, bar: readonly MenuBarMenu[]): MenuSearchHit[] {
 	const words = query.toLowerCase().split(/\s+/).filter(Boolean)

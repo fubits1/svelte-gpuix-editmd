@@ -214,10 +214,7 @@ describe('DocumentFile', () => {
 		expect(documentFile.document.text).toBe('# A\n\nbody, back again\n')
 	})
 
-	/**
-	 * asking who wrote the file runs `ps` and `lsof` synchronously (host/agentProcesses.ts), so it must not happen
-	 * for the watcher's event on the window's own save, which leaves the file as the Document's baseline
-	 */
+	// The watcher's event on the window's own save leaves the file as the Document's baseline: no outside write to credit.
 	test('a disk check that finds the file as last saved asks nobody who wrote it', () => {
 		const path = fileWith('own-save.md', '# A\n\nbody\n')
 		const scheduler = new ManualScheduler()

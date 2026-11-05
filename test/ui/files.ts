@@ -54,7 +54,9 @@ import {
 	click_test_id,
 	drop_files,
 	find_test_id,
+	mouse_down,
 	mouse_move,
+	mouse_up,
 	painted,
 	press,
 	settle,
@@ -200,10 +202,11 @@ export async function testSaveAsCloseOpen(): Promise<void> {
 			writeFileSync(printPath, printablePage(text, title))
 			return printPath
 		},
-		// Save As adds to Open Recent, so its store is this test's too; New and Open only record
+		// New and Open only record.
 		openWindow: (windowPath: string | null) =>
 			void windowRuns.push(['openWindow', [windowPath ?? '']]),
 		choosePaths: () => Promise.resolve(null),
+		// Save As adds to Open Recent, so its store is this test's too.
 		recentFiles: new RecentFiles(join(fileDirectory, 'recent.json'))
 	}
 
@@ -713,7 +716,6 @@ export async function testSaveAsCloseOpen(): Promise<void> {
 	openedWindows.length = 0
 	const textBeforeNote = documentController.text
 	dropOn('block-0', [droppedNotePath])
-	// a new window starts once the other windows said none of them has the file (`focusWindowFor`)
 	await waitUntil(() => openedWindows.length > 0, 'the dropped file’s window')
 	check(
 		'a dropped markdown file opens through the opener and changes nothing here, opening no editor',
@@ -745,7 +747,7 @@ export async function testSaveAsCloseOpen(): Promise<void> {
 		[getProp('save-as-name', 'value'), getText('save-as-folder')],
 		['kept', openDirectory]
 	)
-	// Save only into this test's folder: had Cmd-S put the dialog back on ~/Documents, Escape writes nothing
+	// save only into this test's folder: had Cmd-S put the dialog back on ~/Documents, Escape writes nothing
 	press(getText('save-as-folder') === openDirectory ? 'enter' : 'escape')
 	settle()
 	check(
@@ -780,8 +782,8 @@ export async function testDeepSocketsFolder(): Promise<void> {
 		console.error = consoleError
 	}
 	/**
-	 * only this window's messages count: another window's listener may log ENOENT from chmodSync at any time
-	 * (host/agentIpc.ts)
+	 * Only this window's messages count: another window may log its listener's start failure at any time
+	 * (`#reportsUnreachable` in src/ui/DocumentView/controller.svelte.ts).
 	 */
 	const deepErrors = loggedErrors.filter((message) => message.includes('d'.repeat(120)))
 	check(
@@ -1379,6 +1381,31 @@ export async function testRevertExitStatus(): Promise<void> {
 	)
 
 	/**
+	 * A click on a tip's trigger while its delay runs keeps the tip away, as AppKit's tooltip (in editmd a WebKit
+	 * `title`) shows after no mouse down; moves on the trigger bring it no tip until the pointer leaves and comes back.
+	 */
+	const statusPoint = getCentre('save-status')
+	mouse_move(getCentre('block-0'))
+	await settleAfter(100)
+	mouse_move(statusPoint)
+	await settleAfter(100)
+	mouse_down(statusPoint)
+	mouse_up(statusPoint)
+	await settleAfter(500)
+	const clickedTip = getText('save-status-tooltip-tip') ?? null
+	mouse_move({ x: statusPoint.x - 1, y: statusPoint.y })
+	await settleAfter(500)
+	const movedTip = getText('save-status-tooltip-tip') ?? null
+	mouse_move(getCentre('block-0'))
+	await settleAfter(100)
+	const returnedTip = await loadTipAfterHover('save-status', 'save-status-tooltip-tip')
+	check(
+		'a click on a tip’s trigger before its delay ends shows no tip, nor do moves on it after; leaving and coming back shows it',
+		[clickedTip, movedTip, returnedTip === statusTip],
+		[null, null, true]
+	)
+
+	/**
 	 * ⌘S on the read-only file asks to save it anyway, as editmd's NSDocument does for a locked file; the field closes
 	 * first, so the dialog's Return reaches the dialog rather than the field, and Return is Cancel, its default, which
 	 * writes nothing
@@ -1804,7 +1831,7 @@ export async function testPreselectedNames(): Promise<void> {
 	documentController.load('Link here.\n', sandboxOptions)
 	settle()
 	click_test_id('block-0')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	await wait(150)
 	type('h')

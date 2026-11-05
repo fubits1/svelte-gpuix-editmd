@@ -9,7 +9,9 @@ declare module 'vitest/browser' {
 
 /**
  * the open field's blinking caret on the empty document's window picture: 2×26pt at the column's left edge, which a
- * capture catches lit or dark at random. A box around it is painted over in both pictures before they are compared.
+ * capture catches lit or dark at random
+ *
+ * A box around it is painted over in both pictures before they are compared.
  */
 const CARET_MASKS: Record<string, { left: number; top: number; width: number; height: number }> = {
 	'window-r-empty-doc': { left: 196, top: 136, width: 20, height: 68 }

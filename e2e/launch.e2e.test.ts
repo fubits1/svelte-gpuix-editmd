@@ -24,12 +24,12 @@ import { decodePng, type Pixels } from '../src/host/png.ts'
 import {
 	check,
 	countChecks,
-	createAgentEnvironment,
 	getAppEntry,
 	GPUIX_BIN,
 	isMetWithin,
 	loadPaintedText,
 	openEditor,
+	PALETTE_HINT,
 	pause
 } from './support.ts'
 
@@ -45,17 +45,17 @@ afterAll(() => {
 	rmSync(folder, { recursive: true, force: true })
 })
 
-/**
- * `editmd-gpuix ARGS` as a shell runs it, the support folder kept in the temp folder, and only the coding agents working
- * in the temp folder count (`createAgentEnvironment`), so `--selftest`'s attribution checks hold on any machine
- */
+/** `editmd-gpuix ARGS` as a shell runs it, the support folder kept in the temp folder */
 function runCli(args: string[], entry = 'standalone.ts') {
 	return spawnSync(process.execPath, [GPUIX_BIN, entry, ...args], {
 		encoding: 'utf8',
 		timeout: 120_000,
-		env: { ...process.env, EDITMD_GPUIX_SUPPORT: support, ...createAgentEnvironment(folder) }
+		env: { ...process.env, EDITMD_GPUIX_SUPPORT: support }
 	})
 }
+
+/** a run's last line of output, quoted for a check's label */
+const lastLine = (output: string) => JSON.stringify(output.trim().split('\n').at(-1))
 
 /** a pixel's colour as `#rrggbb`, its coordinates in the picture's own pixels */
 function getColourAt({ width, data }: Pixels, x: number, y: number): string {
@@ -63,18 +63,14 @@ function getColourAt({ width, data }: Pixels, x: number, y: number): string {
 	return `#${[data[at]!, data[at + 1]!, data[at + 2]!].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
 }
 
-/** the rows of `pixels` with a pixel other than `background`, every second column sampled */
-function getInkRows(pixels: Pixels, background: string): number[] {
-	const rows: number[] = []
-	for (let y = 0; y < pixels.height; y++) {
+/** the last row of `pixels` with a pixel other than `background`, every second column sampled; -1 for none */
+function findLastInkRow(pixels: Pixels, background: string): number {
+	for (let y = pixels.height - 1; y >= 0; y--) {
 		for (let x = 0; x < pixels.width; x += 2) {
-			if (getColourAt(pixels, x, y) !== background) {
-				rows.push(y)
-				break
-			}
+			if (getColourAt(pixels, x, y) !== background) return y
 		}
 	}
-	return rows
+	return -1
 }
 
 test('launch window', async () => {
@@ -93,7 +89,7 @@ test('launch window', async () => {
 				.split('\n')
 				.filter((line) => line !== '')
 				.join('\n')
-			return fields === 1 && shownLines === 'Start writing…'
+			return fields === 1 && shownLines === `Start writing…\n${PALETTE_HINT}`
 		}, 10_000)
 		check(
 			`no file argument opens a window on an empty untitled document, its field open and showing “Start writing…” (field ${fields}, painted ${JSON.stringify(shownLines)})`,
@@ -151,7 +147,7 @@ test('cli modes', async () => {
 	const lightShot = readShot(lightOut)
 	const darkShot = readShot(darkOut)
 	check(
-		`--snapshot exits 0 and prints the PNG's path (light: exit ${light.status} ${JSON.stringify(light.stdout.trim())} ${JSON.stringify(light.stderr.trim().split('\n').at(-1))}; dark: exit ${dark.status} ${JSON.stringify(dark.stdout.trim())})`,
+		`--snapshot exits 0 and prints the PNG's path (light: exit ${light.status} ${JSON.stringify(light.stdout.trim())} ${lastLine(light.stderr)}; dark: exit ${dark.status} ${JSON.stringify(dark.stdout.trim())})`,
 		light.status === 0 &&
 			light.stdout.trim() === lightOut &&
 			dark.status === 0 &&
@@ -173,7 +169,7 @@ test('cli modes', async () => {
 	)
 
 	// the last paragraph sits below the first viewport: its ink is in the picture, on rows only a scrolled shot covers
-	const lastInk = lightShot ? Math.max(...getInkRows(lightShot, paletteFor('light').background)) : 0
+	const lastInk = lightShot ? findLastInkRow(lightShot, paletteFor('light').background) : 0
 	check(
 		`--snapshot holds the whole page: text paints below the first 538px viewport (last ink row ${lastInk} at 2x)`,
 		lastInk > 2 * 538
@@ -181,7 +177,7 @@ test('cli modes', async () => {
 
 	const missing = runCli(['--snapshot', join(folder, 'missing.md'), join(folder, 'missing.png')])
 	check(
-		`--snapshot of a file that is not there says why on stderr and exits 1 (${JSON.stringify(missing.stderr.trim().split('\n').at(-1))})`,
+		`--snapshot of a file that is not there says why on stderr and exits 1 (${lastLine(missing.stderr)})`,
 		missing.status === 1 &&
 			/^editmd-gpuix: ENOENT/m.test(missing.stderr) &&
 			!existsSync(join(folder, 'missing.png'))
@@ -201,7 +197,7 @@ test('cli modes', async () => {
 	const lines = selftest.stdout.split('\n').filter((line) => line !== '')
 	const failing = lines.filter((line) => !line.startsWith('ok   '))
 	check(
-		`--selftest on a copy of editmd's sample.md exits 0 with every line ok (exit ${selftest.status}, ${lines.length} lines${failing.length > 0 ? `; not ok: ${failing.join(' / ')}` : ''}${selftest.status === 0 ? '' : `; stderr ${JSON.stringify(selftest.stderr.trim().split('\n').at(-1))}`})`,
+		`--selftest on a copy of editmd's sample.md exits 0 with every line ok (exit ${selftest.status}, ${lines.length} lines${failing.length > 0 ? `; not ok: ${failing.join(' / ')}` : ''}${selftest.status === 0 ? '' : `; stderr ${lastLine(selftest.stderr)}`})`,
 		selftest.status === 0 && lines.length >= 40 && failing.length === 0
 	)
 	check(

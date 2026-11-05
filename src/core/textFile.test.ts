@@ -1,4 +1,4 @@
-// editmd's seeded SplitMix64 loops become fast-check properties with the same 300 runs
+// editmd's seeded SplitMix64 loops become fast-check properties with the same 300 runs.
 
 import { describe, expect, test } from 'vitest'
 import fc from 'fast-check'

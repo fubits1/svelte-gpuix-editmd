@@ -1,8 +1,9 @@
 /**
- * every expected value is what editmd 9e889e6 wrote for the same source and command: its own
- * `MarkdownEditor` run under its happy-dom test setup, the caret at the end of the Block (where the
- * port's field puts it), then serialized. a null is a command
- * editmd refused (`run` returned false), so the source stays as it is
+ * Every expected `formatBlock` value but the empty Block's (the port's own rule, see its test) is what editmd
+ * 9e889e6 wrote for the same source and command: its own `MarkdownEditor` run under its happy-dom test setup, the
+ * caret at the end of the Block (where the port's field puts it) unless a describe below places the caret or a
+ * selection elsewhere, then serialized. A null is a command editmd refused (`run` returned false), so the source
+ * stays as it is.
  */
 
 import { describe, expect, test } from 'vitest'

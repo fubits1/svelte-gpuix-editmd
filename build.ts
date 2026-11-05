@@ -1,6 +1,9 @@
 /// <reference types="bun" />
-// `bun build.ts` (pnpm build): dist/editmd-gpuix.app through gpuix-svelte's build(), which reads the name,
-// identifier, copyright and icon from standalone.ts's render() call. macOS only, as editmd: its icon is drawn in Swift.
+/**
+ * `bun build.ts` (pnpm build) makes dist/editmd-gpuix.app through gpuix-svelte's build(), which reads the name,
+ * identifier, copyright and icon from standalone.ts's render() call. It runs on macOS only, as editmd's build does: its
+ * icon is drawn in Swift.
+ */
 
 import { build } from 'gpuix-svelte/build'
 import { spawnSync } from 'node:child_process'
@@ -32,7 +35,7 @@ if (process.env.CODESIGN_IDENTITY) {
 	process.exit(1)
 }
 
-// editmd's icon, drawn by its scripts/make-icon.swift (editmd scripts/build.sh:28-34); build() takes the 1024 px PNG
+// editmd's icon, drawn by its scripts/make-icon.swift (editmd scripts/build.sh:28-34): build() takes the 1024px PNG
 const iconset = 'dist/AppIcon.iconset'
 run('swift', ['scripts/make-icon.swift', iconset])
 copyFileSync(join(iconset, 'icon_512x512@2x.png'), 'dist/AppIcon-1024.png')

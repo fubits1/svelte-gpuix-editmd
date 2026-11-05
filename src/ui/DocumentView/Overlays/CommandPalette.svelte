@@ -1,26 +1,27 @@
 <!--
   @component
-  The command palette in place of editmd's menu bar, which gpuix cannot extend (gap G2): a search field over every menu
-  item, as macOS's Help menu search finds menu items, and the matches in menu order, each with its menu and its key
+  The command palette, beside the in-window menu bar (MenuBar.svelte) that stands in for editmd's, which gpuix cannot
+  extend (gap G2): a search field over the File, Edit, Format and View commands (`menuEntries`), as macOS's Help menu
+  search finds menu items, and the matches in menu order, each with its menu and its key
   equivalent. Disabled items are listed greyed and never run. Up and Down move the selection past them, Return or a
   click runs the selected item, Escape closes. AppKit chrome in editmd, so it does not zoom; render it inside `Portal`,
   so it paints over the Document.
 -->
 <script lang="ts">
-	import { get_native, type GpuixEvent, on_window_key, type ShadowNode } from 'gpuix-svelte'
+	import { type GpuixEvent, on_window_key, type ShadowNode } from 'gpuix-svelte'
 	import Scroller from 'gpuix-svelte/components/Scroller.svelte'
 	import { SvelteMap } from 'svelte/reactivity'
 	import { firstEnabled, moveSelection } from '../../../app/commandPalette.ts'
 	import { filterEntries, type MenuCommand, type MenuEntry } from '../../../app/menu.ts'
 	import { useTheme } from '../../../app/theme.svelte.ts'
-	import { boxOf, trackIn } from '../../nodes.ts'
+	import { scrollingAncestorOf, trackIn } from '../../nodes.ts'
 
 	let {
 		entries,
 		onrun,
 		close
 	}: {
-		/** every menu item, titled and enabled for the Document's state (`menuEntries`) */
+		/** the File, Edit, Format and View commands, titled and enabled for the Document's state (`menuEntries`) */
 		entries: readonly MenuEntry[]
 		/** Return or a click on an enabled item */
 		onrun: (command: MenuCommand) => void
@@ -72,22 +73,15 @@
 	 * a Block. bounds are the last paint's, so a row that has not painted yet is left alone
 	 */
 	function keepInView(index: number): void {
-		const native = get_native()
 		const node = rowNodes.get(index)
-		const row = boxOf(node)
-		if (!native || !node || !row) return
-		for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
-			if (ancestor.nativeId === null) continue
-			const offset = native.getScrollOffset(ancestor.nativeId)
-			const viewport = native.getElementBounds(ancestor.nativeId)
-			if (!offset || !viewport) continue
-			const [x = 0, y = 0] = offset
-			const above = viewport.y - row.y
-			const below = row.y + row.height - (viewport.y + viewport.height)
-			if (above > 0) native.scrollTo(ancestor.nativeId, x, y + above)
-			else if (below > 0) native.scrollTo(ancestor.nativeId, x, y - below)
-			return
-		}
+		const scrolling = node && scrollingAncestorOf(node)
+		if (!scrolling) return
+		const { native, id, offset, viewport, target: row } = scrolling
+		const [x = 0, y = 0] = offset
+		const above = viewport.y - row.y
+		const below = row.y + row.height - (viewport.y + viewport.height)
+		if (above > 0) native.scrollTo(id, x, y + above)
+		else if (below > 0) native.scrollTo(id, x, y - below)
 	}
 
 	$effect(() => keepInView(selected))

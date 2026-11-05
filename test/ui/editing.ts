@@ -53,7 +53,7 @@ import {
 	wheel
 } from 'gpuix-svelte/test'
 import { get_native, window_size } from 'gpuix-svelte'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findController } from '../../src/app/find.svelte.ts'
@@ -207,6 +207,17 @@ export async function testTypingAndKeys(): Promise<void> {
 			['list', '- a\n', true, false, false, false],
 			['code', '``` \n', true, false, false, true]
 		]
+	)
+	documentController.load('', isolated)
+	settle()
+	for (const key of ['#', 'space', 'T']) type(key)
+	settle()
+	const headingFieldWeight = find_test_id('block-editor')?.style?.fontWeight
+	press('escape')
+	check(
+		'an open heading’s field has editmd’s heading weight, `font-weight: 650`',
+		headingFieldWeight,
+		650
 	)
 
 	/**
@@ -851,12 +862,12 @@ export async function testSourceMergeUndo(): Promise<void> {
 		() => documentController.text.includes('theirs') && documentController.text.includes('y'),
 		'the disk merge in Source mode'
 	)
-	// the field's caret starts at the end, so `y` lands after `mine`'s newline, and the agent's paragraph follows it
 	await waitUntil(
 		() => String(getProp('source-editor', 'value')).includes('theirs'),
 		'the disk merge in the source field'
 	)
-	// the field shows the merge at once, as editmd's editor does: the typed `y` and the paragraph written to disk
+	// editmd's editor shows a Disk merge in Source mode at once too.
+	// The field's caret starts at the end, so `y` lands after `mine`'s newline, and the agent's paragraph follows it.
 	check(
 		'a Disk merge in Source mode keeps both edits and shows them in its field at once: the typed `y` and the paragraph written to disk',
 		[documentController.sourceMode, documentController.text, getProp('source-editor', 'value')],
@@ -976,7 +987,6 @@ export async function testSourceMergeUndo(): Promise<void> {
 			['Title', 'New paragraph from outside.', 'First paragraph.xyz', 'Second paragraph.']
 		]
 	)
-	// the same write also changes the open Block: the field shows the change at once, merged with the typing
 	check(
 		'an outside write removing the Block above and changing the open one: the field follows it, shows both changes at once, and Escape keeps both',
 		await mergeAroundOpenField('Fresh paragraph.\n\nSecond paragraph.\n'),
@@ -989,20 +999,39 @@ export async function testSourceMergeUndo(): Promise<void> {
 		]
 	)
 	/**
-	 * the paragraph being edited deleted by another program: the port keeps the field's text as its own Block where the
-	 * deleted one was (editmd's rich editor drops it), so the field stays on it showing the typing once, and later typing
-	 * lands in order
+	 * the paragraph being edited deleted by another program: its typing goes with it and its field closes, as editmd's
+	 * rich editor drops the Block, so the Document and the file hold what the write left
+	 *
+	 * A key the field took just before, its report still on its way from GPUI, lands nowhere.
 	 */
+	const droppedPath = join(sourceDirectory, 'dropped.md')
+	const droppedText = '# Title\n\nSecond paragraph.\n'
+	writeFileSync(droppedPath, '# Title\n\nFirst paragraph.\n\nSecond paragraph.\n')
+	documentController.open(droppedPath, {
+		...isolated,
+		socketsDirectory: join(sourceDirectory, 'dropped')
+	})
+	settle()
+	click_test_id('block-1')
+	type('x')
+	type('y')
+	get_native()?.simulateKeystrokes('z')
+	writeFileSync(droppedPath, droppedText)
+	for (let tries = 0; documentController.text.includes('First') && tries < 200; tries++)
+		await new Promise((resolve) => setTimeout(resolve, 10))
+	pump()
+	await waitForFieldIdle()
+	await wait(300)
 	check(
-		'an outside write deleting the open Block: the field keeps showing the typing as its own Block, nothing paints twice, and Escape keeps the typing in order',
-		await mergeAroundOpenField('# Title\n\nSecond paragraph.\n'),
+		'an outside write deleting the open Block drops its typing and closes its field, a late key landing nowhere: the Document and the file hold what the write left',
 		[
-			'# Title\n\nFirst paragraph.xy\n\nSecond paragraph.\n',
-			1,
-			['Title', 'First paragraph.xy', 'Second paragraph.'],
-			'# Title\n\nFirst paragraph.xyz\n\nSecond paragraph.\n',
-			['Title', 'First paragraph.xyz', 'Second paragraph.']
-		]
+			documentController.activeIndex,
+			find_test_id('block-editor'),
+			getPageLines(),
+			documentController.text,
+			readFileSync(droppedPath, 'utf8')
+		],
+		[null, null, ['Title', 'Second paragraph.'], droppedText, droppedText]
 	)
 
 	// Source mode's one field over the whole text: a Block removed above the typing keeps the field and both changes
@@ -1311,7 +1340,7 @@ export async function testFieldCommands(): Promise<void> {
 	click_test_id('block-0')
 	type('cmd-left right right right right shift-right shift-right shift-right')
 	setMenuClipboardUrl('https://example.com/x')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	const busyOnSheet = documentController.fieldBusy
 	press('enter')
@@ -1320,7 +1349,7 @@ export async function testFieldCommands(): Promise<void> {
 	press('escape')
 	const linkedText = documentController.text
 	click_test_id('block-0')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	press('escape')
 	settle()
@@ -1333,13 +1362,37 @@ export async function testFieldCommands(): Promise<void> {
 		['one [two](https://example.com/x)! three\n', false, false, linkedText]
 	)
 
+	// The field's own undo takes Add Link back while the field is still open: the link's syntax goes, its text stays.
+	documentController.load('one two three\n', sandboxOptions)
+	settle()
+	click_test_id('block-0')
+	type('cmd-left right right right right shift-right shift-right shift-right')
+	setMenuClipboardUrl('https://example.com/x')
+	press('cmd-shift-k')
+	settle()
+	press('enter')
+	await waitForFieldIdle()
+	setMenuClipboardUrl(null)
+	const linkInField = documentController.text
+	type('cmd-z')
+	await waitForFieldIdle()
+	const afterFirstUndo = documentController.text
+	type('cmd-z')
+	await waitForFieldIdle()
+	press('escape')
+	check(
+		'⌘Z in the open field after Add Link on “two” takes the link back in two steps, as GPUI groups the field’s undo (the typing, then the deleted word): `one two three` again',
+		[linkInField, afterFirstUndo, documentController.text],
+		['one [two](https://example.com/x) three\n', 'one  three\n', 'one two three\n']
+	)
+
 	// Add with the URL cleared takes the link at the caret off, as editmd's Add with nothing in the field does
 	documentController.load('see [docs](https://old.example) here\n', sandboxOptions)
 	settle()
 	click_test_id('block-0')
 	type('cmd-left right right right right right right')
 	setMenuClipboardUrl('https://old.example')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	await wait(150)
 	type('backspace')
@@ -1451,7 +1504,7 @@ export async function testFieldCommands(): Promise<void> {
 
 export async function testOpenFieldSizesAndLoadCaret(): Promise<void> {
 	/**
-	 * row mermaid editing: the source card keeps editmd's `.code-block.mermaid.editing > pre { margin-bottom: 0.5em }`
+	 * row e-mermaid-edit: the source card keeps editmd's `.code-block.mermaid.editing > pre { margin-bottom: 0.5em }`
 	 * of its 13.5px, 6.75px, above the live diagram (style.css:417-419)
 	 */
 	documentController.load('```mermaid\nflowchart LR\n  A --> B\n```\n', sandboxOptions)
@@ -1460,8 +1513,8 @@ export async function testOpenFieldSizesAndLoadCaret(): Promise<void> {
 	settle()
 	const mermaidCard = bounds(find_test_id('block-editor-card') ?? 0)
 	/**
-	 * measured in the paint, since GPUI reports a padded box's origin moved in by its padding: down a column inside the
-	 * card, from its last row in the surface colour to the live diagram's 1px border
+	 * measured in the paint, since the card is a padded box (see `remoteLayout` in test/ui/rendering.ts): down a column
+	 * inside the card, from its last row in the surface colour to the live diagram's 1px border
 	 */
 	const mermaidGap = (() => {
 		if (!mermaidCard) return Number.NaN
@@ -1492,8 +1545,8 @@ export async function testOpenFieldSizesAndLoadCaret(): Promise<void> {
 
 	/**
 	 * editmd's `.source { min-height: 70vh; field-sizing: content }` (style.css:88-103) grows to its whole text, and the
-	 * page scrolls it: on 80 lines its field is 80 of its 22.4px lines tall, and scrolled to the bottom the page shows the
-	 * 80th line
+	 * page scrolls it: on 80 lines its field is 80 of its 22px rows tall (22.4px lines at whole px), and scrolled to the
+	 * bottom the page shows the 80th line.
 	 */
 	await loadNumberedLinesInSource('\n')
 	const sourceFieldHeight = bounds(find_test_id('source-editor') ?? 0)?.height ?? 0
@@ -1518,7 +1571,7 @@ export async function testOpenFieldSizesAndLoadCaret(): Promise<void> {
 		[true, true]
 	)
 
-	// editmd shows a Block whole while it is edited: a 60-line code block's field holds every line, 20.925px each
+	// editmd shows a Block whole while it is edited: a 60-line code block's field holds every line, 20.925px each, painted as 21px rows.
 	documentController.load(
 		`\`\`\`\n${Array.from({ length: 60 }, (_line, index) => `code ${index + 1}`).join('\n')}\n\`\`\`\n`,
 		sandboxOptions
@@ -1550,7 +1603,7 @@ export async function testOpenFieldSizesAndLoadCaret(): Promise<void> {
 	documentController.load('see docs\n', sandboxOptions)
 	settle()
 	setMenuClipboardUrl('https://a.example')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	press('enter')
 	await waitForFieldIdle()
@@ -1583,7 +1636,7 @@ export async function testOpenFieldSizesAndLoadCaret(): Promise<void> {
 	documentController.load('[x]: https://e.example\n', sandboxOptions)
 	settle()
 	setMenuClipboardUrl('https://a.example')
-	press('cmd-k')
+	press('cmd-shift-k')
 	settle()
 	press('enter')
 	await waitForFieldIdle()
@@ -1667,7 +1720,7 @@ export async function testRefusedInCode(): Promise<void> {
 	const boldInFrontmatter = await leavesField(0, () => press('cmd-b'))
 	setMenuClipboardUrl('https://x.example')
 	const linkInFrontmatter = await leavesField(0, () => {
-		press('cmd-k')
+		press('cmd-shift-k')
 		settle()
 		press('enter')
 	})
@@ -1762,6 +1815,33 @@ export async function testMarkShortcuts(): Promise<void> {
 			'one xtwo\n',
 			'**x**one two three\n'
 		]
+	)
+
+	/**
+	 * `shortcut` at the caret after `one two` in its open field, waited out so `keys` are no fast typing behind it, then
+	 * `keys`, if any, and Escape
+	 */
+	async function markAtCaret(shortcut: string, keys: string): Promise<string> {
+		documentController.load('one two\n', sandboxOptions)
+		settle()
+		click_test_id('block-0')
+		press(shortcut)
+		await waitForFieldIdle()
+		if (keys !== '') {
+			type(keys)
+			await waitForFieldIdle()
+		}
+		press('escape')
+		return documentController.text
+	}
+	check(
+		'at a caret in an open field, ⌘B or ⌘I then Escape leave no empty pair, as editmd’s stored mark leaves no text, and ⌘B then `x` keeps the pair',
+		[
+			await markAtCaret('cmd-b', ''),
+			await markAtCaret('cmd-i', ''),
+			await markAtCaret('cmd-b', 'x')
+		],
+		['one two\n', 'one two\n', 'one two**x**\n']
 	)
 
 	// with no field open, Table goes in after the Block last edited, while it is as its Edit session left it

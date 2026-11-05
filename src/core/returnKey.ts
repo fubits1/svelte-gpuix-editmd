@@ -137,8 +137,8 @@ export function returnEdit(field: string, at: number, shift = false): ReturnEdit
 	if (shift && (kind === 'code' || kind === 'mermaid'))
 		return { kind: 'field', field: head + tail, caret: at }
 	if (KEEPS_NEWLINE.has(kind)) return { kind: 'newline' }
-	// a table's Enter is `exitTable` (preset-gfm table/input.ts:247-253): the table stays whole and a paragraph follows;
-	// Shift-Return keeps the newline, as before
+	// A table's Enter is `exitTable` (preset-gfm table/input.ts:247-253): the table stays whole and a paragraph follows.
+	// Shift-Return keeps the newline.
 	if (kind === 'table')
 		return shift ? { kind: 'newline' } : { kind: 'split', head: head + tail, tail: '' }
 

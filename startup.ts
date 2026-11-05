@@ -1,7 +1,8 @@
-// what both entries do before they open the window: the command line's headless modes and agent hook, a file another
-// window already has, and the Document the window then shows
+/**
+ * what both entries do before they open the window: the command line's headless modes and agent hook, a file another
+ * window already has, and the Document the window then shows
+ */
 import { readFileSync } from 'node:fs'
-import { agentProcessesOptions } from './src/app/agentProcessesEnv.ts'
 import { dryRunOptions } from './src/app/dryRun.ts'
 import { HEADLESS_IO, runHeadless } from './src/app/headless.ts'
 import { parseLaunch } from './src/app/launch.ts'
@@ -39,7 +40,6 @@ export async function startDocument(): Promise<void> {
 	exitOnSignals()
 	const options = {
 		...dryRunOptions(process.env),
-		...agentProcessesOptions(process.env),
 		// an untitled window is numbered among every editor process's, as NSDocument's Untitled 2
 		untitledNumbers: new UntitledNumbers(UNTITLED_FOLDER)
 	}

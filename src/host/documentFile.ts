@@ -70,7 +70,7 @@ export class DocumentFile {
 
 	/**
 	 * `onUpdate` runs whenever the text or the label may have changed without an edit (timers, saves, merges).
-	 * `authorOfChange` names the Agent an outside write is credited to (Claims, then running agent processes)
+	 * `authorOfChange` names the Agent an outside write is credited to (its Claim), null for an Outside edit.
 	 */
 	constructor(
 		opened: string | { file: OpenTextFile; document: Document },
@@ -304,8 +304,8 @@ export class DocumentFile {
 		if (disk !== null && disk !== this.document.baseline) {
 			disk = stableRead(read, sleepSync)
 		}
-		// the file as last loaded or saved (the watcher's event on this window's own save) changes nothing, and asking
-		// who wrote it runs `ps` and `lsof` synchronously (host/agentProcesses.ts)
+		// The file as last loaded or saved (the watcher's event on this window's own save) changes nothing, so nobody is
+		// asked who wrote it.
 		if (disk !== null && disk !== this.document.baseline) {
 			this.document.mergeFromDisk(disk, this.#authorOfChange(this.#file.path))
 		}
