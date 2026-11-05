@@ -16,7 +16,7 @@ Other 0.4 changes that reach the port:
 
 - Scroller's thumb follows `onlayout` and `onscrollchange` instead of polling bounds
 - `read_native()` is new
-- `wait()` in `test.ts` pumps queued events before and after it waits
+- `wait()` from `gpuix-svelte/test` pumps queued events before and after it waits
 - `render()`'s `app` option gives the window title fallback and the Linux app id
 - `<canvas>` degrades to a `div`. The port has none
 - In `pnpm dev`, a saved `.svelte` file remounts the root. Editing a `.svelte.ts` or any other `.ts` or `.js` module needs a restart

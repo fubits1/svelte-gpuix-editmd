@@ -2,8 +2,7 @@ export default {
 	entry: [
 		'app.ts',
 		'standalone.ts',
-		'test.ts',
-		'e2e/*.e2e.ts',
+		'e2e/headless-app.ts',
 		'svelte.config.js',
 		'test/visual/*.ts',
 		'test/browser/visual/*.ts'

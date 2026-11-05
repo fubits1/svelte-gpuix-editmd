@@ -24,6 +24,16 @@ Use Sätteri `satteri@0.10.5` as the only markdown engine, behind a `MarkdownEng
 
 - Neither the `MarkdownEngine` type nor block-local reparse was built. `src/engine/blocks.ts` calls Sätteri directly (`parseBlocks`), and the Document reparses its whole text after each change, once per change however many edits it holds. Block-local reparse remains the way to large documents (see the 1MB figure below)
 
+## Amendment, 2026-11-05
+
+- Sätteri is `satteri@0.11.6`, pinned exactly: 0.11.1 and 0.11.3 shipped without their native bindings. The addon's
+  file name and the `NAPI_RS_NATIVE_LIBRARY_PATH` loader are unchanged, so the `.app` keeps its route
+  ([ADR-0013](0013-gpuix-svelte-0.4.md))
+- 0.11 parses a numbered list that starts above 1 right after indented code as a list, as CommonMark and editmd's
+  Milkdown do; 0.10.5 made it a paragraph (`blocks.test.ts`)
+- On 0.11.6 the headless UI suite gives the same 545 records as on 0.10.5, the end-to-end suites headless print the
+  same check lines, and the layout measurements and the 40 `--snapshot` pages are byte-identical
+
 ## Consequences
 
 - GFM is on by default: tables, footnotes, strikethrough, task lists, autolinks. YAML and TOML frontmatter come back as raw strings

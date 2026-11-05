@@ -256,7 +256,7 @@ class SelfTest {
 		const point = { x: box.x + 30, y: box.y + box.height * at }
 		/**
 		 * a real drag travels over the window before it drops, so the pointer moves there first: without a move
-		 * between two drops GPUI delivers only the first (measured headlessly in test.ts)
+		 * between two drops GPUI delivers only the first (measured in the headless UI suite)
 		 */
 		mouse_move(point)
 		native.simulateFileDrop(point.x, point.y, paths)
@@ -765,7 +765,7 @@ async function remoteImages(test: SelfTest): Promise<void> {
 		settle()
 		/**
 		 * GPUI's headless renderer has no HTTP client (measured: an http <img> it painted made no request), so here the
-		 * image is checked to carry the remote URL a window fetches; remoteImages.e2e.ts sees the request in a window
+		 * image is checked to carry the remote URL a window fetches; remoteImages.e2e.test.ts sees the request in a window
 		 */
 		const remoteSrc = () =>
 			find((node) => node.type === 'img' && node.customProps?.src === `${base}/image.png`) !== null

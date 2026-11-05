@@ -94,7 +94,7 @@ A programmatic value moves a text field's caret to its end and clears its undo. 
 
 ```text
 editmd-gpuix/
-  app.ts (render_hot)  standalone.ts (render, the binary's entry)  build.ts (gpuix-svelte/build, then the satteri addon, plist keys, ad hoc signature)  test.ts (headless UI suite)
+  app.ts (render_hot)  standalone.ts (render, the binary's entry)  build.ts (gpuix-svelte/build, then the satteri addon, plist keys, ad hoc signature)  vitest.config.ts (projects unit, ui, e2e)
   docs/            architecture.md  parity.md  adr/
   src/core/        document model, merge, diff, text files, autosave machine, agent reports, links, images, Format commands,
                    typing as editmd's editor (Return, input rules, inline marks on a field's selection, code fields, tables)
@@ -103,7 +103,8 @@ editmd-gpuix/
                    untitled window numbers, satteri's addon in the .app (satteriAddon.ts)
   src/app/         launch and CLI modes, menus, shortcuts, palette and theme, find, zoom, snapshot and selftest
   src/ui/          DocumentView.svelte, MenuBar, FindBar; DocumentView/{Content, Views/, Overlays/, AgentLegend, controller}
-  e2e/             real-window suites (gpuix-svelte/automation)
+  e2e/             end-to-end suites (gpuix-svelte/automation), headless through headless-app.ts or in real windows
+  test/ui/         headless UI suite (gpuix-svelte/test): document.test.ts, the area modules, harness.ts, check.ts
   scripts/         make-icon.swift (the app icon, from editmd's)
   test/fixtures/   editmd/: editmd's test corpus and sample.md; parity/: the inputs the parity checks paint
 ```

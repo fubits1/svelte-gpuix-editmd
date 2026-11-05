@@ -3,32 +3,31 @@
  * call (as a person types slowly) and as one batch (one call: the field takes every key before the controller hears
  * any of them, so typing lands while a toggle's probe is still reading the selection). markdown typed into a field is
  * saved as typed and painted without its marks; Bold, Italic, Inline Code and Strikethrough toggle as editmd's
- * ProseMirror toggleMark does, measured in editmd's own editor (kit harness scripts/parity/editmd-commands.test.mjs,
- * `e-inline-format`); with no field open Bold acts at editmd's load caret, as test.ts's load-caret Bold check has it.
+ * ProseMirror toggleMark does, measured in editmd's own editor (docs/parity.md row `e-inline-format`); with no field
+ * open Bold acts at editmd's load caret, as the load-caret Bold check in `testMarkShortcuts` (test/ui/editing.ts) has it.
  * every check asserts the file ⌘S saves exactly, so a stray character fails it, and that Escape leaves no field open;
  * the painted text after each step is printed, so a stray character shows where it came from
- *
- * run: pnpm exec gpuix-svelte e2e/inline.e2e.ts (unsandboxed: it opens windows and takes the keyboard)
- * the files, the app's support folder and the agents it counts live in a temp folder, so nothing reaches the real ones
  */
 
+import { expect, test } from 'vitest'
 import {
 	check,
+	countChecks,
 	type Editor,
-	keystrokes,
-	keysOf,
+	loadPaintedText,
 	openOn,
-	painted,
 	pause,
+	runInFolder,
 	saveAfterEscape,
-	suite
+	sendKeystrokes,
+	toKeys
 } from './support.ts'
 
 /** one step of a sequence: a key, or a Format menu row clicked through the in-window menu bar */
 type Step = string | { row: number; title: string }
 
 /**
- * the saved Block text, or, where the harness measured no such case, a looser rule: the text with every `mark` taken
+ * the saved Block text, or, where editmd's own editor was not measured on such a case, a looser rule: the text with every `mark` taken
  * out is `without`, and `mark` is in it exactly twice (one pair)
  */
 type Want = string | { without: string; mark: string }
@@ -51,16 +50,16 @@ type Case = {
 
 /** the caret after `one two` in `one two three`, then `two` selected word-wise, as a person selects it */
 const SELECT_TWO = 'cmd-left right right right right right right right shift-alt-left'
-const ONE_TWO_THREE = keysOf('one two three')
+const ONE_TWO_THREE = toKeys('one two three')
 const FORMAT_BOLD: Step = { row: 0, title: 'Bold' }
 
 const CASES: Case[] = [
 	{
 		name: 'typed `**two**`, `*it*`, a backtick pair and `~~gone~~` (saved as typed, painted without the marks)',
 		source: 'start',
-		setup: keysOf('start'),
+		setup: toKeys('start'),
 		caret: 'cmd-right',
-		steps: keysOf(' one **two** three *it* `code` ~~gone~~'),
+		steps: toKeys(' one **two** three *it* `code` ~~gone~~'),
 		saved: 'start one **two** three *it* `code` ~~gone~~',
 		paints: 'start one two three it code gone'
 	},
@@ -107,7 +106,7 @@ const CASES: Case[] = [
 	{
 		name: '⌘B at the end of `one two`, `x` (bold on "", then "x" typed on "one two")',
 		source: 'one two',
-		setup: keysOf('one two'),
+		setup: toKeys('one two'),
 		caret: 'cmd-right',
 		steps: ['cmd-b', 'x'],
 		saved: 'one two**x**'
@@ -115,7 +114,7 @@ const CASES: Case[] = [
 	{
 		name: '⌘I after `one `, `x` (italic on "", then "x" typed on "one two")',
 		source: 'one two',
-		setup: keysOf('one two'),
+		setup: toKeys('one two'),
 		caret: 'cmd-left right right right right',
 		steps: ['cmd-i', 'x'],
 		saved: 'one _x_two'
@@ -125,7 +124,7 @@ const CASES: Case[] = [
 		source: 'one two three',
 		setup: ONE_TWO_THREE,
 		caret: 'cmd-left right right right right',
-		steps: ['cmd-b', ...keysOf('bold')],
+		steps: ['cmd-b', ...toKeys('bold')],
 		saved: { without: 'one boldtwo three', mark: '**' }
 	},
 	{
@@ -133,7 +132,7 @@ const CASES: Case[] = [
 		source: 'one two three',
 		setup: ONE_TWO_THREE,
 		caret: SELECT_TWO,
-		steps: ['cmd-b', 'right', ...keysOf(' x')],
+		steps: ['cmd-b', 'right', ...toKeys(' x')],
 		saved: { without: 'one two x three', mark: '**' }
 	},
 	{
@@ -145,7 +144,7 @@ const CASES: Case[] = [
 		saved: 'one **two** three'
 	},
 	{
-		name: 'no field open, ⌘B, `x` (at the load caret: `**x**one`, as test.ts)',
+		name: 'no field open, ⌘B, `x` (at the load caret: `**x**one`)',
 		source: 'one two three',
 		setup: [],
 		caret: '',
@@ -154,7 +153,7 @@ const CASES: Case[] = [
 		closed: true
 	},
 	{
-		name: 'no field open, ⌘B, nothing typed (the empty pair comes out: the file as it was, as test.ts)',
+		name: 'no field open, ⌘B, nothing typed (the empty pair comes out: the file as it was)',
 		source: 'one two three',
 		setup: [],
 		caret: '',
@@ -173,9 +172,9 @@ const AFTER = '\n\nSecond\n'
  */
 async function typeShowing(app: Editor, keys: string[], shown: string[]): Promise<void> {
 	for (const key of keys) {
-		await keystrokes(app, key)
+		await sendKeystrokes(app, key)
 		await pause(key.startsWith('cmd-') ? 300 : 60)
-		shown.push(`${key}: ${JSON.stringify(await painted(app))}`)
+		shown.push(`${key}: ${JSON.stringify(await loadPaintedText(app))}`)
 	}
 }
 
@@ -198,18 +197,22 @@ async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<str
 	const flush = async () => {
 		if (keys.length === 0) return
 		if (batch) {
-			await keystrokes(app, keys.join(' '))
+			await sendKeystrokes(app, keys.join(' '))
 			await pause(300)
-			shown.push(`${keys.join(' ')}: ${JSON.stringify(await painted(app))}`)
-		} else await typeShowing(app, keys, shown)
+			shown.push(`${keys.join(' ')}: ${JSON.stringify(await loadPaintedText(app))}`)
+		} else {
+			await typeShowing(app, keys, shown)
+		}
+
 		keys.length = 0
 	}
 	for (const step of steps) {
-		if (typeof step === 'string') keys.push(step)
-		else {
+		if (typeof step === 'string') {
+			keys.push(step)
+		} else {
 			await flush()
 			await chooseMenu(app, step)
-			shown.push(`Format > ${step.title}: ${JSON.stringify(await painted(app))}`)
+			shown.push(`Format > ${step.title}: ${JSON.stringify(await loadPaintedText(app))}`)
 		}
 	}
 	await flush()
@@ -217,52 +220,59 @@ async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<str
 }
 
 /** whether the saved file is what the case wants, the Blocks after it (`suffix`) as they were */
-function holds(saved: string, want: Want, suffix: string): boolean {
+function isSavedAsWanted(saved: string, want: Want, suffix: string): boolean {
 	if (typeof want === 'string') return saved === `${want}${suffix}`
 	if (!saved.endsWith(suffix)) return false
+
 	const body = saved.slice(0, saved.length - suffix.length)
 	return body.split(want.mark).length === 3 && body.replaceAll(want.mark, '') === want.without
 }
 
 /** the closed Block paints `text`, split into runs or not, and no mark character anywhere */
-function paintsPlain(shown: string, text: string): boolean {
+function isPaintedPlain(shown: string, text: string): boolean {
 	return shown.replaceAll('\n', '').includes(text) && !/[*`~]/.test(shown)
 }
 
-await suite('inline', 'inline', async (folder) => {
-	for (const [index, each] of CASES.entries()) {
-		for (const existing of each.closed ? [true] : [true, false]) {
-			for (const batch of [false, true]) {
-				const text = existing ? `${each.source}${AFTER}` : ''
-				const suffix = existing ? AFTER : '\n'
-				const want =
-					typeof each.saved === 'string'
-						? JSON.stringify(`${each.saved}${suffix}`)
-						: `${JSON.stringify(each.saved.without)} with one ${each.saved.mark} pair`
-				const { app, file } = await openOn(
-					folder,
-					`case-${index}-${existing}-${batch}`,
-					text,
-					each.closed ? null : 0
-				)
-				try {
-					if (!existing) await typeShowing(app, each.setup, [])
-					if (each.caret !== '') await keystrokes(app, each.caret)
-					await pause(200)
-					// what the window paints with the caret placed, before the sequence: a stray character shows here first
-					const placed = await painted(app)
-					const shown = await runSteps(app, each.steps, batch)
-					const [saved, open] = await saveAfterEscape(app, file, text)
-					const closedPaint = await painted(app)
-					const paints = each.paints === undefined || paintsPlain(closedPaint, each.paints)
-					check(
-						`${each.name}, ${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}: ⌘S saves ${want}${each.paints === undefined ? '' : `, the closed Block paints ${JSON.stringify(each.paints)} without marks`} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after each step [${shown.join('; ')}], closed ${JSON.stringify(closedPaint)})`,
-						holds(saved, each.saved, suffix) && paints && !open
+test('inline', async () => {
+	await runInFolder('inline', async (folder) => {
+		for (const [index, testCase] of CASES.entries()) {
+			for (const existing of testCase.closed ? [true] : [true, false]) {
+				for (const batch of [false, true]) {
+					const text = existing ? `${testCase.source}${AFTER}` : ''
+					const suffix = existing ? AFTER : '\n'
+					const want =
+						typeof testCase.saved === 'string'
+							? JSON.stringify(`${testCase.saved}${suffix}`)
+							: `${JSON.stringify(testCase.saved.without)} with one ${testCase.saved.mark} pair`
+					const { app, file } = await openOn(
+						folder,
+						`case-${index}-${existing}-${batch}`,
+						text,
+						testCase.closed ? null : 0
 					)
-				} finally {
-					await app.close().catch(() => {})
+					try {
+						if (!existing) await typeShowing(app, testCase.setup, [])
+						if (testCase.caret !== '') await sendKeystrokes(app, testCase.caret)
+
+						await pause(200)
+						// what the window paints with the caret placed, before the sequence: a stray character shows here first
+						const placed = await loadPaintedText(app)
+						const shown = await runSteps(app, testCase.steps, batch)
+						const [saved, open] = await saveAfterEscape(app, file, text)
+						const closedPaint = await loadPaintedText(app)
+						const paints =
+							testCase.paints === undefined || isPaintedPlain(closedPaint, testCase.paints)
+						check(
+							`${testCase.name}, ${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}: ⌘S saves ${want}${testCase.paints === undefined ? '' : `, the closed Block paints ${JSON.stringify(testCase.paints)} without marks`} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after each step [${shown.join('; ')}], closed ${JSON.stringify(closedPaint)})`,
+							isSavedAsWanted(saved, testCase.saved, suffix) && paints && !open
+						)
+					} finally {
+						await app.close().catch(() => {})
+					}
 				}
 			}
 		}
-	}
+	})
 })
+
+test('every check ran', () => expect(countChecks()).toBe(48))

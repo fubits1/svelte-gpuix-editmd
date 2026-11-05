@@ -3,7 +3,7 @@ import { commands, page } from 'vitest/browser'
 
 declare module 'vitest/browser' {
 	interface BrowserCommands {
-		pictures: () => Promise<{ name: string; url: string }[]>
+		getPictures: () => Promise<{ name: string; url: string }[]>
 	}
 }
 
@@ -15,7 +15,7 @@ const CARET_MASKS: Record<string, { left: number; top: number; width: number; he
 	'window-r-empty-doc': { left: 196, top: 136, width: 20, height: 68 }
 }
 
-const pictures = await commands.pictures()
+const pictures = await commands.getPictures()
 
 test.each(pictures.map((picture) => [picture.name, picture.url]))(
 	'%s looks as before the migration',

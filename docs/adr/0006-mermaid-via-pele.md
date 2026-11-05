@@ -18,6 +18,13 @@ pele 1.10.0 (obsidianmd, MIT, no dependencies) renders Mermaid 12.1 syntax to SV
 - Queue renders serially with a 300ms debounce, as editmd does
 - Pass a concrete `fontFamily` and a `pele-font` palette entry so labels use the app font
 
+## Amendment, 2026-11-05
+
+- pele stays at 1.10.0. On 1.13.0 a parse error at the end of the input names the last line with a context line and a
+  dashed marker (`Parse error on line 2:`, `probe -->`, `-----------^`); editmd's own picture of the same fixture
+  shows `Parse error on line 3:`, a lone `^` and the Expecting line, which 1.10.0's message gives. The other 39 pages,
+  the measurements of every other fixture and 543 of the UI suite's 545 records were unchanged on 1.13.0
+
 ## Consequences
 
 - Theme changes need a re-render, or at least a re-inline, because colours are baked into the SVG

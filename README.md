@@ -20,25 +20,19 @@ Node 26 (`nvm use`), pnpm.
 
 ```bash
 pnpm install
-pnpm dev [file.md]     # opens the window, remounts it on each saved .svelte file; a .ts, .svelte.ts or .js change needs a restart
-pnpm test              # unit tests (Vitest), then the headless gpuix test
-pnpm run test:unit     # Vitest only
-pnpm run typecheck     # tsc, then svelte-check against GPUI's element types
-pnpm run lint          # prettier --check, eslint, knip, svelte-check
-pnpm run format        # prettier --write
-pnpm run build         # dist/editmd-gpuix.app through gpuix-svelte/build, the bundle to open; macOS only, needs Bun
-
-# end to end, editmd's SelfTest scenarios in real windows (each opens and closes windows)
-pnpm exec gpuix-svelte e2e/fileFormats.e2e.ts
-pnpm exec gpuix-svelte e2e/coEditing.e2e.ts
-pnpm exec gpuix-svelte e2e/links.e2e.ts
-pnpm exec gpuix-svelte e2e/remoteImages.e2e.ts
-pnpm exec gpuix-svelte e2e/launch.e2e.ts
-pnpm exec gpuix-svelte e2e/tab.e2e.ts
-pnpm exec gpuix-svelte e2e/typing.e2e.ts
-pnpm exec gpuix-svelte e2e/editing.e2e.ts
-pnpm exec gpuix-svelte e2e/inline.e2e.ts
-pnpm exec gpuix-svelte e2e/differential.e2e.ts   # the same keys as editmd's own editor took (kit fixture)
+pnpm dev [file.md]       # opens the window, remounts it on each saved .svelte file; a .ts, .svelte.ts or .js change needs a restart
+pnpm test                # every Vitest project but visual: unit, the headless UI suite, the end-to-end suites headless
+pnpm test:unit           # the unit tests, watching
+pnpm test:ui             # the headless UI suite (test/ui/) through GPUI's real hit testing
+pnpm test:e2e            # the end-to-end suites (e2e/), each app headless behind gpuix's automation protocol
+pnpm test:e2e:window     # the same suites against real windows: they take the keyboard while they run
+pnpm test:coverage       # the unit tests with coverage and its thresholds
+pnpm test:ci             # test:coverage, then the headless UI suite
+pnpm test:visual         # measurements and pictures against their references, for upgrades and refactors only
+pnpm typecheck           # tsc, then svelte-check against GPUI's element types
+pnpm lint                # prettier --check, eslint, knip, svelte-check
+pnpm format              # prettier --write
+pnpm build               # dist/editmd-gpuix.app through gpuix-svelte/build, the bundle to open; macOS only, needs Bun
 
 # headless modes, as editmd's (Headless.swift)
 pnpm exec gpuix-svelte standalone.ts --roundtrip FILE    # what Save writes for the untouched file
@@ -50,7 +44,7 @@ pnpm exec gpuix-svelte standalone.ts --selftest FILE     # editmd's self-test; i
 [docs/parity.md](docs/parity.md) compares every user-facing feature with editmd and marks each one. The
 screenshots and scripts behind that comparison are kept outside this repository.
 
-The end-to-end runs keep their files, the agent sockets and Open Recent in a `/tmp/eg-*` folder through
+The UI and end-to-end suites keep their files, the agent sockets and Open Recent in a `/tmp/eg-*` folder through
 `EDITMD_GPUIX_SUPPORT`, so they never touch the support folder in `~/Library`. With `EDITMD_GPUIX_DRY_RUN=<file>`
 the app writes every process it would start (`open` for links and printing, new windows) to that file instead.
 
@@ -58,8 +52,14 @@ Open a file with `dist/editmd-gpuix.app/Contents/MacOS/editmd-gpuix <path>`. Fin
 their file yet (gap G6 in [ADR-0009](docs/adr/0009-parity-gaps-native-track.md)).
 
 Every script runs through the `gpuix-svelte` bin, which starts Node (or Bun with `--bun`) with the
-`custom-renderer` condition and the `.svelte` loader. Windows and the headless renderer crash under a sandboxed
-shell, so run them unsandboxed.
+`custom-renderer` condition and the `.svelte` loader; the `ui` and `e2e` Vitest projects pass Node the same flags
+(`vitest.config.ts`). Windows and the headless renderer crash under a sandboxed shell, so run them unsandboxed.
+
+## Building
+
+`pnpm build` makes `dist/editmd-gpuix.app` (macOS arm64, about 109 MB): Bun compiles `standalone.ts` into one
+executable, and `build.ts` then adds the icon, satteri's native addon and the Info.plist keys, and signs the bundle
+ad hoc. What it needs and why each step exists is in [AGENTS.md](AGENTS.md#building).
 
 ## Caveats
 

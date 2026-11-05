@@ -1,27 +1,25 @@
 /**
  * end to end: Return and Backspace in a real window, on an existing file and on an empty one, each sequence typed one
  * key per call (as a person types slowly) and as one batch (one call: the field takes every key before the controller
- * hears any of them, as fast typing delivers them), against editmd's own keymaps run in its editor (kit harness
- * scripts/parity/editmd-keys.test.mjs): ProseMirror's base keymap and Milkdown's list, hard break and code keymaps
- * (@milkdown/core src/internal-plugin/keymap.ts:11-17, 32-41; @milkdown/preset-commonmark src/node/list-item.ts:167-206,
- * src/node/hardbreak.ts). every check asserts the file ⌘S saves exactly, so a stray character fails it, and that
- * Escape leaves no field open on raw markdown
- *
- * run: pnpm exec gpuix-svelte e2e/editing.e2e.ts (unsandboxed: it opens windows and takes the keyboard)
- * the files, the app's support folder and the agents it counts live in a temp folder, so nothing reaches the real ones
+ * hears any of them, as fast typing delivers them), against editmd's own keymaps run in its editor: ProseMirror's base
+ * keymap and Milkdown's list, hard break and code keymaps (@milkdown/core src/internal-plugin/keymap.ts:11-17, 32-41;
+ * @milkdown/preset-commonmark src/node/list-item.ts:167-206, src/node/hardbreak.ts). every check asserts the file ⌘S
+ * saves exactly, so a stray character fails it, and that Escape leaves no field open on raw markdown
  */
 
+import { expect, test } from 'vitest'
 import {
 	check,
+	countChecks,
 	type Editor,
-	keystrokes,
-	keysOf,
+	loadPaintedText,
 	openOn,
-	painted,
 	pause,
 	pressBackspace,
+	runInFolder,
 	saveAfterEscape,
-	suite,
+	sendKeystrokes,
+	toKeys,
 	typeEach
 } from './support.ts'
 
@@ -54,13 +52,13 @@ const CASES: Case[] = [
 	{
 		name: 'paragraph end, Return, `next`',
 		source: 'Hello world',
-		steps: ['enter', ...keysOf('next')],
+		steps: ['enter', ...toKeys('next')],
 		saved: 'Hello world\n\nnext'
 	},
 	{
 		name: 'heading end, Return, `body`',
 		source: '# Title',
-		steps: ['enter', ...keysOf('body')],
+		steps: ['enter', ...toKeys('body')],
 		saved: '# Title\n\nbody'
 	},
 	{
@@ -73,46 +71,46 @@ const CASES: Case[] = [
 	{
 		name: 'Shift-Return, `more` (hard break)',
 		source: 'Hello world',
-		steps: ['shift-enter', ...keysOf('more')],
+		steps: ['shift-enter', ...toKeys('more')],
 		saved: 'Hello world\\\nmore'
 	},
 	{
 		name: 'list item end, Return, `three`',
 		source: '- one\n- two',
-		setup: [...keysOf('- one'), 'enter', ...keysOf('two')],
-		steps: ['enter', ...keysOf('three')],
+		setup: [...toKeys('- one'), 'enter', ...toKeys('two')],
+		steps: ['enter', ...toKeys('three')],
 		saved: '- one\n- two\n- three'
 	},
 	{
 		name: 'list item end, Return, Backspace, `!` (the new bullet goes)',
 		source: '- one\n- two',
-		setup: [...keysOf('- one'), 'enter', ...keysOf('two')],
+		setup: [...toKeys('- one'), 'enter', ...toKeys('two')],
 		steps: ['enter', 'backspace', '!'],
 		saved: '- one\n- two\n\n  !'
 	},
 	{
 		name: 'list item end, Return, Return, `after` (leaves the list)',
 		source: '- one\n- two',
-		setup: [...keysOf('- one'), 'enter', ...keysOf('two')],
-		steps: ['enter', 'enter', ...keysOf('after')],
+		setup: [...toKeys('- one'), 'enter', ...toKeys('two')],
+		steps: ['enter', 'enter', ...toKeys('after')],
 		saved: '- one\n- two\n\nafter'
 	},
 	{
 		name: 'quote end, Return, `more`',
 		source: '> quoted',
-		steps: ['enter', ...keysOf('more')],
+		steps: ['enter', ...toKeys('more')],
 		saved: '> quoted\n>\n> more'
 	},
 	{
 		name: 'quote end, Return, Return, `after` (leaves the quote)',
 		source: '> quoted',
-		steps: ['enter', 'enter', ...keysOf('after')],
+		steps: ['enter', 'enter', ...toKeys('after')],
 		saved: '> quoted\n\nafter'
 	},
 	{
 		name: 'code end, Return, `y` (the newline stays in the code)',
 		source: '```js\nx\n```',
-		setup: [...keysOf('```js'), 'enter', 'x'],
+		setup: [...toKeys('```js'), 'enter', 'x'],
 		caret: 'cmd-down up cmd-right',
 		steps: ['enter', 'y'],
 		saved: '```js\nx\ny\n```'
@@ -120,7 +118,7 @@ const CASES: Case[] = [
 	{
 		name: 'Backspace at a paragraph’s start (joins it onto the one above)',
 		source: 'one\n\ntwo',
-		setup: [...keysOf('one'), 'enter', ...keysOf('two')],
+		setup: [...toKeys('one'), 'enter', ...toKeys('two')],
 		block: 1,
 		caret: 'cmd-up',
 		steps: [{ backspace: 'press' }],
@@ -129,7 +127,7 @@ const CASES: Case[] = [
 	{
 		name: 'Backspace at a paragraph’s start, `X` typed before it goes up (joins, `X` where they meet)',
 		source: 'one\n\ntwo',
-		setup: [...keysOf('one'), 'enter', ...keysOf('two')],
+		setup: [...toKeys('one'), 'enter', ...toKeys('two')],
 		block: 1,
 		caret: 'cmd-up',
 		steps: [{ backspace: 'rolled', then: 'X' }],
@@ -144,12 +142,14 @@ const AFTER = '\n\nSecond\n'
 async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<void> {
 	const keys: string[] = []
 	const flush = async () => {
-		if (keys.length > 0) await (batch ? keystrokes(app, keys.join(' ')) : typeEach(app, keys))
+		if (keys.length > 0) await (batch ? sendKeystrokes(app, keys.join(' ')) : typeEach(app, keys))
+
 		keys.length = 0
 	}
 	for (const step of steps) {
-		if (typeof step === 'string') keys.push(step)
-		else {
+		if (typeof step === 'string') {
+			keys.push(step)
+		} else {
 			await flush()
 			await pressBackspace(app, step.backspace === 'rolled' ? step.then : undefined)
 		}
@@ -157,39 +157,44 @@ async function runSteps(app: Editor, steps: Step[], batch: boolean): Promise<voi
 	await flush()
 }
 
-await suite('editing', 'edit', async (folder) => {
-	for (const [index, each] of CASES.entries()) {
-		const caret = each.caret ?? 'cmd-down'
-		for (const existing of [true, false]) {
-			for (const batch of [false, true]) {
-				const text = existing ? `${each.source}${AFTER}` : ''
-				const want = existing ? `${each.saved}${AFTER}` : `${each.saved}\n`
-				const { app, file } = await openOn(
-					folder,
-					`case-${index}-${existing}-${batch}`,
-					text,
-					each.block ?? 0
-				)
-				try {
-					if (existing) await keystrokes(app, caret)
-					else {
-						await typeEach(app, each.setup ?? keysOf(each.source))
-						if (caret === 'cmd-up' || caret.includes('left')) await keystrokes(app, caret)
-					}
-					await pause(200)
-					// what the window paints with the caret placed, before the sequence: a stray character shows here first
-					const placed = await painted(app)
-					await runSteps(app, each.steps, batch)
-					const typed = await painted(app)
-					const [saved, open] = await saveAfterEscape(app, file, text)
-					check(
-						`${each.name}, ${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}: ⌘S saves ${JSON.stringify(want)} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after the keys ${JSON.stringify(typed)})`,
-						saved === want && !open
+test('editing', async () => {
+	await runInFolder('edit', async (folder) => {
+		for (const [index, testCase] of CASES.entries()) {
+			const caret = testCase.caret ?? 'cmd-down'
+			for (const existing of [true, false]) {
+				for (const batch of [false, true]) {
+					const text = existing ? `${testCase.source}${AFTER}` : ''
+					const want = existing ? `${testCase.saved}${AFTER}` : `${testCase.saved}\n`
+					const { app, file } = await openOn(
+						folder,
+						`case-${index}-${existing}-${batch}`,
+						text,
+						testCase.block ?? 0
 					)
-				} finally {
-					await app.close().catch(() => {})
+					try {
+						if (existing) {
+							await sendKeystrokes(app, caret)
+						} else {
+							await typeEach(app, testCase.setup ?? toKeys(testCase.source))
+							if (caret === 'cmd-up' || caret.includes('left')) await sendKeystrokes(app, caret)
+						}
+						await pause(200)
+						// what the window paints with the caret placed, before the sequence: a stray character shows here first
+						const placed = await loadPaintedText(app)
+						await runSteps(app, testCase.steps, batch)
+						const typed = await loadPaintedText(app)
+						const [saved, open] = await saveAfterEscape(app, file, text)
+						check(
+							`${testCase.name}, ${existing ? 'existing file' : 'empty file'}, ${batch ? 'one batch' : 'one key per call'}: ⌘S saves ${JSON.stringify(want)} and Escape leaves no field open (saved ${JSON.stringify(saved)}, field open ${open}, painted with the caret placed ${JSON.stringify(placed)}, after the keys ${JSON.stringify(typed)})`,
+							saved === want && !open
+						)
+					} finally {
+						await app.close().catch(() => {})
+					}
 				}
 			}
 		}
-	}
+	})
 })
+
+test('every check ran', () => expect(countChecks()).toBe(48))

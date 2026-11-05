@@ -1,6 +1,6 @@
 import { chordOf, type Command } from './shortcuts.ts'
 
-/** editmd's menu items that have no key equivalent, reachable here only through the command palette */
+/** editmd's menu items that have no key equivalent, reached through the in-window menu bar and the command palette */
 const MENU_ONLY = ['openRecent', 'revert', 'table', 'horizontalRule', 'loadRemoteImages'] as const
 
 type MenuOnlyCommand = (typeof MENU_ONLY)[number]
