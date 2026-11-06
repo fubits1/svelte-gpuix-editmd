@@ -56,6 +56,7 @@ import { get_native, window_size } from 'gpuix-svelte'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { sendKeystrokes } from '../../src/app/fieldKeys.ts'
 import { findController } from '../../src/app/find.svelte.ts'
 import { themeController } from '../../src/app/theme.svelte.ts'
 import { TABLE } from '../../src/core/blockCommands.ts'
@@ -1952,6 +1953,38 @@ export async function testCoEditing(): Promise<void> {
 		]
 	)
 	/**
+	 * In a window the field takes the caret keys of an outside write's merge a frame after it shows the merged text, so
+	 * keys the user presses in that frame meet them: here they are handed over a frame late, and the selection made
+	 * right after the write must still be the one ⌘B bolds.
+	 */
+	const lateCaretPath = join(sandboxDirectory, 'co-edit-late-caret.md')
+	writeFileSync(lateCaretPath, '# Doc\n\none two three\n')
+	documentController.open(lateCaretPath, {
+		...sandboxOptions,
+		sendKeys: (keys: string) => void setTimeout(() => sendKeystrokes(keys), 16)
+	})
+	settle()
+	await wait(100)
+	click_test_id('block-1')
+	type('cmd-right z')
+	await waitForFieldIdle()
+	writeFileSync(lateCaretPath, '# Doc\n\none two three\nagent\n')
+	await waitUntil(
+		() => String(getProp('block-editor', 'value')).includes('agent'),
+		'the outside write in the field'
+	)
+	type('cmd-up right right right right shift-right shift-right shift-right')
+	press('cmd-b')
+	await waitForFieldIdle()
+	press('escape')
+	settle()
+	const lateCaretText = documentController.text
+	check(
+		`keys pressed in the frame after an outside write, before its caret keys land, keep their selection: ⌘B bolds it (${JSON.stringify(lateCaretText)})`,
+		lateCaretText,
+		'# Doc\n\none **two** threez\nagent\n'
+	)
+	/**
 	 * the open field shows an agent's change marked, as editmd marks the agent's run live: a <textarea>
 	 * paints no `highlight` of its own (measured headless), so the field takes the Block's agent tint and bar
 	 */
@@ -2162,6 +2195,29 @@ export async function testSourceUndoAndBatchedCommands(): Promise<void> {
 		'Tab and `z` in one batch at the second item’s end, then a click on the next Block at once, sink the item and keep `z` after `b`',
 		documentController.text,
 		'- a\n  - bz\n\nnext\n'
+	)
+	/**
+	 * Escape waits for Tab's indent probe, so ⌘/ pressed right after it must wait too: run first, it would open Source
+	 * mode and the Escape after it would close Source mode's session, and the typing there would go nowhere.
+	 */
+	documentController.load('- a\n- b\n', sandboxOptions)
+	settle()
+	click_test_id('block-0')
+	type('tab')
+	press('escape')
+	press('cmd-/')
+	await waitForFieldIdle()
+	await wait(200)
+	pump()
+	type('Q')
+	await waitForFieldIdle()
+	const sourceAfterRace = [documentController.sourceMode, documentController.text]
+	press('cmd-/')
+	await waitForFieldIdle()
+	check(
+		`Tab, then Escape and ⌘/ at once: Source mode opens after the Escape, and typing there lands in the text (${JSON.stringify(sourceAfterRace)})`,
+		[sourceAfterRace[0], String(sourceAfterRace[1]).includes('Q')],
+		[true, true]
 	)
 
 	/**

@@ -105,5 +105,5 @@ defineSection('scrollbarThumb', view.testScrollbarThumb)
 
 // runs even after an abort, so the count shows how far the suite got
 test('every check ran', () => {
-	expect(countChecks()).toBe(555)
+	expect(countChecks()).toBe(557)
 })

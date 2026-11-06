@@ -136,9 +136,9 @@ function countMostInARow(
 	return most
 }
 
-/** what editmd's link underline paints over the page: the accent at 35% over the background */
+/** what the link underline paints over the page: the accent at 60% (editmd's: 35%) over the background */
 const getLinkUnderlineInk = () =>
-	mixColour(getPalette().accent ?? '', getPalette().background ?? '', 0.35)
+	mixColour(getPalette().accent ?? '', getPalette().background ?? '', 0.6)
 
 export async function testBlocks(): Promise<void> {
 	press('escape')
@@ -1612,7 +1612,7 @@ export async function testPixels(): Promise<void> {
 		: 0
 
 	/**
-	 * a link's underline is the accent at 35% and turns to the link's own colour, the accent, while ⌘ is held, as editmd's
+	 * a link's underline is the accent at 60% (editmd's: 35%) and turns to the link's own colour, the accent, while ⌘ is held, as editmd's
 	 * `body.cmd-down a { text-decoration-color: currentColor }` (style.css:170-181); native <markdown> paints a link in the
 	 * text colour and its underline in the theme's `textMuted`
 	 */
@@ -1633,7 +1633,7 @@ export async function testPixels(): Promise<void> {
 		? getLongestRunColour(captureWindow(), linkText, [getPalette().background ?? ''])
 		: null
 	check(
-		`a ticked task’s strike line paints faint, and a link’s underline turns from the accent at 35% to the accent while ⌘ is held (faint pixels in the strike’s row ${strikeFaint}; underline ${underlineBefore}, ${underlineHeld}, ${underlineAfter})`,
+		`a ticked task’s strike line paints faint, and a link’s underline turns from the accent at 60% to the accent while ⌘ is held (faint pixels in the strike’s row ${strikeFaint}; underline ${underlineBefore}, ${underlineHeld}, ${underlineAfter})`,
 		[
 			strikeFaint >= 20,
 			isNear(underlineBefore ?? '', getLinkUnderlineInk(), 6),
@@ -1646,7 +1646,7 @@ export async function testPixels(): Promise<void> {
 	/**
 	 * editmd's strike line is its text's own colour (style.css has no `del` rule, so `currentColor`); native <markdown>
 	 * draws a strike, as a link's underline, in its theme's `textMuted`, so a Block without links gives `textMuted` its
-	 * text colour (a quote's muted text included), and one with a link strikes in its underline's accent at 35%
+	 * text colour (a quote's muted text included), and one with a link strikes in its underline's accent at 60%
 	 */
 	function measureStrikeLine(source: string, node: () => TreeNode | null | undefined) {
 		documentController.load(source, parityOptions)
@@ -1665,7 +1665,7 @@ export async function testPixels(): Promise<void> {
 		],
 		[
 			[getPalette().text, getPalette().text],
-			[`${getPalette().accent}59`, getPalette().text],
+			[`${getPalette().accent}99`, getPalette().text],
 			[getPalette().text, getPalette().text],
 			[getPalette().muted, getPalette().muted]
 		]
@@ -2703,7 +2703,7 @@ export async function testRemoteImagesAndQuoteLinks(): Promise<void> {
 
 	/**
 	 * r-link-cursor: a link in a quote keeps editmd's accent underline, as `.markdown-body a` sets it wherever the link
-	 * sits: the accent at 35%, the accent while ⌘ is held
+	 * sits: the accent at 60%, the accent while ⌘ is held
 	 */
 	documentController.load('> [a linked phrase](https://example.com/x)\n', sandboxOptions)
 	settle()
@@ -2719,7 +2719,7 @@ export async function testRemoteImagesAndQuoteLinks(): Promise<void> {
 	key_up('cmd')
 	settle()
 	check(
-		`a link’s underline in a quote turns from the accent at 35% to the accent while ⌘ is held, as outside one (${quoteUnderlineBefore}, ${quoteUnderlineHeld})`,
+		`a link’s underline in a quote turns from the accent at 60% to the accent while ⌘ is held, as outside one (${quoteUnderlineBefore}, ${quoteUnderlineHeld})`,
 		[
 			isNear(quoteUnderlineBefore ?? '', getLinkUnderlineInk(), 6),
 			isNear(quoteUnderlineHeld ?? '', getPalette().accent ?? '', 6)
@@ -3163,9 +3163,19 @@ export async function testCodeSpansBaselineUnderline(): Promise<void> {
 		return null
 	}
 
+	/** the logical y of the highest device row inside `box` (logical px) holding a pixel within 96 of `colour`, null for none */
+	function getInkTop(capture: { shot: Pixels; scale: number }, box: Box, colour: string) {
+		const { scale } = capture
+		for (let y = Math.ceil(box.y * scale); y < Math.floor((box.y + box.height) * scale); y++)
+			for (let x = Math.ceil(box.x * scale); x < Math.floor((box.x + box.width) * scale); x++)
+				if (isNear(getDevicePixel(capture, x, y), colour, 96)) return y / scale
+
+		return null
+	}
+
 	/**
-	 * WebKit sets an inline `<img>`'s bottom on its line's baseline (editmd's style.css gives it no `vertical-align`),
-	 * so a README badge beside text sits with its bottom where the text's capitals end
+	 * A README badge beside text sits centred on the capitals beside it, the user's choice over WebKit's baseline, where
+	 * editmd's badge rides high (its bottom on the baseline, `vertical-align` unset in style.css).
 	 */
 	openFixture(parityDirectory, 'baseline.md', '![badge](badge.png) HHHH HHHH\n', {
 		...parityOptions,
@@ -3175,20 +3185,23 @@ export async function testCodeSpansBaselineUnderline(): Promise<void> {
 	settle()
 	const badgeBox = bounds(find_test_id('image-0-0') ?? 0)
 	const capitalsBox = bounds(find_test_id('text-run-0-1') ?? 0)
-	const capitalsBaseline = capitalsBox
-		? getInkBottom(captureWindow(), capitalsBox, getPalette().text ?? '')
-		: null
-	const badgeBottom = badgeBox ? badgeBox.y + badgeBox.height : null
+	const capture = captureWindow()
+	const ink = getPalette().text ?? ''
+	const capitalsTop = capitalsBox ? getInkTop(capture, capitalsBox, ink) : null
+	const capitalsBaseline = capitalsBox ? getInkBottom(capture, capitalsBox, ink) : null
+	const badgeMiddle = badgeBox ? badgeBox.y + badgeBox.height / 2 : null
+	const capitalsMiddle =
+		capitalsTop !== null && capitalsBaseline !== null ? (capitalsTop + capitalsBaseline) / 2 : null
 	check(
-		`a paragraph’s image sits on the text’s baseline: its bottom where the capitals beside it end (image bottom ${badgeBottom}, baseline ${capitalsBaseline}, text top ${capitalsBox?.y})`,
-		badgeBottom !== null &&
-			capitalsBaseline !== null &&
-			Math.abs(badgeBottom - capitalsBaseline) <= 0.5,
+		`a paragraph’s image sits centred on the capitals beside it (image middle ${badgeMiddle}, capitals' middle ${capitalsMiddle}, capitals ${capitalsTop} to ${capitalsBaseline})`,
+		badgeMiddle !== null &&
+			capitalsMiddle !== null &&
+			Math.abs(badgeMiddle - capitalsMiddle) <= 0.75,
 		true
 	)
 
 	/**
-	 * editmd underlines a link in the accent at 35% (`.markdown-body a`, style.css:170-176), and while ⌘ is held the
+	 * editmd underlines a link in the accent at 35% (`.markdown-body a`, style.css:170-176), the port at 60%, and while ⌘ is held the
 	 * pointer turns to a hand over the link alone (`body.cmd-down .markdown-body a { cursor: pointer }`, style.css:178-181)
 	 */
 	documentController.load(
@@ -3217,11 +3230,11 @@ export async function testCodeSpansBaselineUnderline(): Promise<void> {
 	mouse_move({ x: 400, y: 400 })
 	settle()
 	check(
-		`a link’s underline paints in the accent at 35%, and with ⌘ held the pointer is a hand over the link alone (underline ${accentUnderline}; over the link ${handOverLink}, over plain text ${handOverPlain})`,
+		`a link’s underline paints in the accent at 60%, and with ⌘ held the pointer is a hand over the link alone (underline ${accentUnderline}; over the link ${handOverLink}, over plain text ${handOverPlain})`,
 		[
 			isNear(
 				accentUnderline ?? '',
-				mixColour(getPalette().accent ?? '', getPalette().background ?? '', 0.35),
+				mixColour(getPalette().accent ?? '', getPalette().background ?? '', 0.6),
 				6
 			),
 			handOverLink,

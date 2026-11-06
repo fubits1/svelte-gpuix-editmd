@@ -323,7 +323,7 @@ describe('heldLinkThemeFor', () => {
 
 // native <markdown> paints a link's underline in `textMuted` (measured headless: `#rrggbb59` paints the accent at 35%)
 describe('linkThemeFor', () => {
-	test('a link’s underline is the accent at 35%, and the accent while ⌘ is held, in muted text too', () => {
+	test('a link’s underline is the accent at 60%, and the accent while ⌘ is held, in muted text too', () => {
 		const dark = textThemeFor('dark')
 		const muted = mutedThemeFor(textThemeFor('light'))
 		expect([
@@ -331,9 +331,9 @@ describe('linkThemeFor', () => {
 			linkThemeFor(dark, true).textMuted,
 			linkThemeFor(muted, false).textMuted
 		]).toEqual([
-			{ ...dark, textMuted: `${EDITMD.dark.accent}59` },
+			{ ...dark, textMuted: `${EDITMD.dark.accent}99` },
 			EDITMD.dark.accent,
-			`${EDITMD.light.accent}59`
+			`${EDITMD.light.accent}99`
 		])
 	})
 })

@@ -16,7 +16,19 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import fc from 'fast-check'
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, describe, expect, test, vi } from 'vitest'
+
+/** a fixed hex for the save's copy name while a test sets it, so a link can be planted at that very name */
+const copyName = vi.hoisted(() => ({ hex: null as string | null }))
+
+vi.mock('node:crypto', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('node:crypto')>()
+	return {
+		...actual,
+		randomBytes: (size: number) =>
+			copyName.hex === null ? actual.randomBytes(size) : Buffer.from(copyName.hex, 'hex')
+	}
+})
 import {
 	ChangedOnDiskError,
 	createTextFile,
@@ -105,24 +117,32 @@ describe('openTextFile', () => {
 		expect(JSON.parse(out)).toEqual(['refused', 'refused'])
 	})
 
-	// A symlink planted where a copy could go (`.<name>.<id>.editmd-gpuix`) must not make the save overwrite the
-	// file it points to.
-	test('a save never writes through a link someone planted where its copy could go', () => {
+	// A symlink planted at the very name the save's copy takes (`.<name>.<id>.editmd-gpuix`, the id fixed here) must
+	// not make the save write through it: the copy is made exclusively, so the save fails and both files stay.
+	test('a save never writes through a link someone planted where its copy goes', () => {
 		const folder = mkdtempSync(join(directory, 'planted-'))
 		const path = join(folder, 'doc.md')
 		const victim = join(folder, 'victim.txt')
 		writeFileSync(path, 'before\n')
 		writeFileSync(victim, 'victim\n')
-		symlinkSync(victim, join(folder, `.doc.md.${process.pid}.editmd-gpuix`))
+		copyName.hex = 'a1b2c3d4e5f6'
+		symlinkSync(victim, join(folder, '.doc.md.a1b2c3d4e5f6.editmd-gpuix'))
 		const file = openTextFile(path)
 
-		file.save('after\n')
+		let failed = false
+		try {
+			file.save('after\n')
+		} catch {
+			failed = true
+		} finally {
+			copyName.hex = null
+		}
 
-		expect([
-			readFileSync(victim, 'utf8'),
-			readFileSync(path, 'utf8'),
-			lstatSync(path).isSymbolicLink()
-		]).toEqual(['victim\n', 'after\n', false])
+		expect([failed, readFileSync(victim, 'utf8'), readFileSync(path, 'utf8')]).toEqual([
+			true,
+			'victim\n',
+			'before\n'
+		])
 	})
 
 	test('a save replaces the file atomically, as NSDocument does: a folder that refuses new files fails it and leaves the file', () => {

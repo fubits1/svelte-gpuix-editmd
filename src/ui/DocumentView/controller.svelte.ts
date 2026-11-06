@@ -2156,7 +2156,8 @@ export class DocumentController {
 			strikethrough: () => this.#toggleInline('strikethrough'),
 			code: () => this.#toggleInline('code'),
 			link: () => this.#showAddLink(),
-			toggleSource: () => this.#toggleSource(),
+			// after the field work in flight, as a click or Escape waits for it, so neither runs inside Source mode
+			toggleSource: () => this.#afterFieldWork(() => this.#toggleSource()),
 			// AppKit's View > Enter Full Screen, ⌃⌘F
 			toggleFullScreen: () => this.#with.toggleFullScreen(),
 			// View > Zoom scales the window's whole page, so it goes to the window's ThemeController

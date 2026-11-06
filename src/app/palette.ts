@@ -313,13 +313,18 @@ export function heldLinkThemeFor(theme: GpuixTheme): GpuixTheme {
 	return { ...theme, textMuted: theme.text }
 }
 
-/** editmd's `.markdown-body a { text-decoration-color: color-mix(var(--accent) 35%, transparent) }` */
-const LINK_UNDERLINE_ALPHA = alphaHex(0.35)
+/**
+ * the link underline's share of the accent: 60%, stronger than editmd's `color-mix(var(--accent) 35%, transparent)`
+ * (style.css:173), by the user's decision
+ */
+const LINK_UNDERLINE_ALPHA = alphaHex(0.6)
 
 /**
- * the `theme` a Block holding a link paints in: editmd underlines a link in the accent at 35%, and while ⌘ is held in
- * the link's own colour, the accent (style.css:170-181), wherever it sits. native <markdown> draws a link's underline in
- * `textMuted` (and a strike line with it, which editmd draws in the text colour)
+ * the `theme` a Block holding a link paints in: the link underlined in the accent at 60% (editmd's: 35%), and while ⌘
+ * is held in the link's own colour, the accent (style.css:170-181), wherever it sits
+ *
+ * Native <markdown> draws a link's underline in `textMuted`, and a strike line with it, which editmd draws in the text
+ * colour.
  */
 export function linkThemeFor(theme: GpuixTheme, held: boolean): GpuixTheme {
 	// the page's caret is editmd's accent (`sourceThemeFor`)
