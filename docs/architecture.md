@@ -16,19 +16,23 @@ Each document runs in its own process, because gpuix-svelte opens one window per
 flowchart TB
   subgraph Process["one process per document (Node 26 or the Bun binary)"]
     subgraph UI["Svelte 5 components (src/ui)"]
-      App[App.svelte] --> DocView[DocumentView.svelte]
-      DocView --> Menu[MenuBar.svelte]
-      DocView --> Find[FindBar.svelte]
+      DocView[DocumentView.svelte]
+      Menu[MenuBar.svelte]
+      Find[FindBar.svelte]
       DocView --> Content["DocumentView/Content.svelte: one view per Block kind (Views/)"]
       DocView --> Overlays["DocumentView/Overlays: dialogs, palette, alerts"]
       DocView --> Legend[DocumentView/AgentLegend.svelte]
     end
+    App["App.svelte (repo root)"] --> DocView
+    App --> Menu
+    App --> Find
+    App --> Ctl
     subgraph Ctl["controllers (.svelte.ts)"]
       DocCtl["DocumentController (ui/DocumentView/controller.svelte.ts)"]
       FindCtl["FindController (app/find.svelte.ts)"]
       ThemeCtl["ThemeController (app/theme.svelte.ts)"]
     end
-    subgraph Core["pure TypeScript (src/core, src/engine, src/app)"]
+    subgraph Core["TypeScript modules (src/core, src/engine, src/app)"]
       Doc["core/document.ts: text, Blocks, Edit sessions, undo, merges, highlights"]
       Engine["engine/blocks.ts: parseBlocks over Sätteri"]
       Merge["core/merge.ts, core/diff.ts: three-way text merge through Yjs"]
@@ -36,10 +40,11 @@ flowchart TB
     end
     subgraph Host["host adapters (src/host, node:*)"]
       File["documentFile.ts, files.ts, watch.ts, stableRead.ts"]
-      Ipc["agentIpc.ts, attribution.ts, agentProcesses.ts"]
+      Ipc["agentIpc.ts, attribution.ts"]
       Os["appearance, clipboard, openLink, print, recent, windows"]
     end
     UI --> Ctl --> Core
+    UI --> Core
     Ctl --> Host
   end
   Hook["agent hook: editmd-gpuix --report-edit"] -->|unix socket JSON| Ipc
@@ -94,7 +99,7 @@ A programmatic value moves a text field's caret to its end and clears its undo. 
 
 ```text
 editmd-gpuix/
-  app.ts (render_hot)  standalone.ts (render, the binary's entry)  build.ts (gpuix-svelte/build, then the satteri addon, plist keys, ad hoc signature)  test.ts (headless UI suite)
+  app.ts (render_hot)  standalone.ts (render, the binary's entry)  build.ts (the icon, gpuix-svelte/build, then the satteri addon, plist keys, ad hoc signature)  vitest.config.ts (projects unit, ui, e2e, visual-measurements, visual-pictures)
   docs/            architecture.md  parity.md  adr/
   src/core/        document model, merge, diff, text files, autosave machine, agent reports, links, images, Format commands,
                    typing as editmd's editor (Return, input rules, inline marks on a field's selection, code fields, tables)
@@ -103,7 +108,8 @@ editmd-gpuix/
                    untitled window numbers, satteri's addon in the .app (satteriAddon.ts)
   src/app/         launch and CLI modes, menus, shortcuts, palette and theme, find, zoom, snapshot and selftest
   src/ui/          DocumentView.svelte, MenuBar, FindBar; DocumentView/{Content, Views/, Overlays/, AgentLegend, controller}
-  e2e/             real-window suites (gpuix-svelte/automation)
+  e2e/             end-to-end suites (gpuix-svelte/automation), headless through headless-app.ts or in real windows
+  test/ui/         headless UI suite (gpuix-svelte/test): document.test.ts, the area modules, harness.ts, check.ts
   scripts/         make-icon.swift (the app icon, from editmd's)
   test/fixtures/   editmd/: editmd's test corpus and sample.md; parity/: the inputs the parity checks paint
 ```

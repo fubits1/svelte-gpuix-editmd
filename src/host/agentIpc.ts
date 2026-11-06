@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { connect, createServer } from 'node:net'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { AgentEditReport } from '../core/agentEdits.ts'
+import { isRunning } from './untitledNumbers.ts'
 
 /**
  * agent Reports between processes (ADR-0008): every open editor listens on its own unix socket in
@@ -244,20 +245,14 @@ const SEND_DEADLINE_MS = 1000
 const DEAD_SOCKET = new Set(['ECONNREFUSED', 'ENOTSOCK'])
 
 /**
- * the process that made the socket at `path` is still running: macOS refuses a connect to a live window whose backlog
+ * The process that made the socket at `path` is still running: macOS refuses a connect to a live window whose backlog
  * is full with the same ECONNREFUSED as one to a crashed window's socket, and the name holds the process id
- * (`listenForReports`). a name that holds none has no owner to ask
+ * (`listenForReports`). A name that holds none has no owner to ask. An id another user's process holds counts as
+ * running (EPERM, `isRunning`), though that process made no socket here.
  */
 function ownerAlive(path: string): boolean {
 	const owner = SOCKET_NAME.exec(basename(path))?.[1]
-	if (owner === undefined) return false
-	try {
-		process.kill(Number.parseInt(owner, 36), 0)
-		return true
-	} catch (error) {
-		// EPERM: a process of another user's holds the id, which this window's socket was not
-		return (error as NodeJS.ErrnoException).code === 'EPERM'
-	}
+	return owner !== undefined && isRunning(Number.parseInt(owner, 36))
 }
 
 /**

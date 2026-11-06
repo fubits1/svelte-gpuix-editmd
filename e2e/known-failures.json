@@ -1,0 +1,50 @@
+{
+	"differential": {
+		"always": [
+			"case 5, existing file, one key per call: ⌘S saves editmd's \"- [ ] task> teaalpha\\n-\\n\\nSecond\\n\" and Escape leaves no field open (saved \"- [ ] task> teaalpha\\n- [ ] \\n\\nSecond\\n\", field open false)",
+			"case 5, existing file, one batch: ⌘S saves editmd's \"- [ ] task> teaalpha\\n-\\n\\nSecond\\n\" and Escape leaves no field open (saved \"- [ ] task> teaalpha\\n- [ ] \\n\\nSecond\\n\", field open false)",
+			"case 5, empty file, one key per call: ⌘S saves editmd's \"- [ ] task> teaalpha\\n-\\n\" and Escape leaves no field open (saved \"- [ ] task> teaalpha\\n- [ ] \\n\", field open false)",
+			"case 5, empty file, one batch: ⌘S saves editmd's \"- [ ] task> teaalpha\\n-\\n\" and Escape leaves no field open (saved \"- [ ] task> teaalpha\\n- [ ] \\n\", field open false)",
+			"case 7, existing file, one key per call: ⌘S saves editmd's \"```js\\n x\\n```\\n\\nSecond\\n\" and Escape leaves no field open (saved \"```js\\nx \\n```\\n\\nSecond\\n\", field open false)",
+			"case 7, empty file, one key per call: ⌘S saves editmd's \"```js\\n x\\n```\\n\" and Escape leaves no field open (saved \"```js x\\n```\\n\", field open false)",
+			"case 7, empty file, one batch: ⌘S saves editmd's \"```js\\n x\\n```\\n\" and Escape leaves no field open (saved \"```js x\\n```\\n\", field open false)",
+			"case 9, existing file, one key per call: ⌘S saves editmd's \"Hello worldbeta\\n\\n<br />\\n\\n<br />\\n\\n# Second\\n\" and Escape leaves no field open (saved \"Hello worldbeta\\n\\n\\\\\\n\\n##\\n\\n\\nSecond\\n\", field open false)",
+			"case 9, existing file, one batch: ⌘S saves editmd's \"Hello worldbeta\\n\\n<br />\\n\\n<br />\\n\\n# Second\\n\" and Escape leaves no field open (saved \"Hello worldbeta\\n\\n\\n##\\n\\nSecond\\n\", field open false)",
+			"case 9, existing file, one batch: ⌘S saves editmd's \"Hello worldbeta\\n\\n<br />\\n\\n<br />\\n\\n# Second\\n\" and Escape leaves no field open (saved \"Hello worldbeta\\n\\n<br />\\n\\nSecond\\n\", field open false)",
+			"case 9, empty file, one key per call: ⌘S saves editmd's \"Hello worldbeta\\n\\n<br />\\n\\n#\\n\" and Escape leaves no field open (saved \"Hello worldbeta\\n\\n\\\\\\n\\n##\\n\\n\", field open false)",
+			"case 9, empty file, one batch: ⌘S saves editmd's \"Hello worldbeta\\n\\n<br />\\n\\n#\\n\" and Escape leaves no field open (saved \"Hello worldbeta\\n\\n\\n##\\n\", field open false)",
+			"case 9, empty file, one batch: ⌘S saves editmd's \"Hello worldbeta\\n\\n<br />\\n\\n#\\n\" and Escape leaves no field open (saved \"Hello worldbeta\\n\", field open false)",
+			"case 11, existing file, one key per call: ⌘S saves editmd's \"- one\\n- two\\\\~~~go~~\\\\~go\\n\\nSecond\\n\" and Escape leaves no field open (saved \"- one\\n- two~~go~~go\\n\\nSecond\\n\", field open false)",
+			"case 11, existing file, one batch: ⌘S saves editmd's \"- one\\n- two\\\\~~~go~~\\\\~go\\n\\nSecond\\n\" and Escape leaves no field open (saved \"- one\\n- two~~go~~go\\n\\nSecond\\n\", field open false)",
+			"case 11, empty file, one key per call: ⌘S saves editmd's \"- one\\n- two\\\\~~~go~~\\\\~go\\n\" and Escape leaves no field open (saved \"- one\\n- two~~go~~go\\n\", field open false)",
+			"case 11, empty file, one batch: ⌘S saves editmd's \"- one\\n- two\\\\~~~go~~\\\\~go\\n\" and Escape leaves no field open (saved \"- one\\n- two~~go~~go\\n\", field open false)",
+			"case 19, existing file, one key per call: ⌘S saves editmd's \"- one\\n- twox\\n\\n<br />\\n\\n<br />\\n\\nSecond\\n\" and Escape leaves no field open (saved \"- one\\n- twox\\n\\n<br />\\n\\n<br />\\n\\n\\nSecond\\n\", field open false)",
+			"case 19, existing file, one batch: ⌘S saves editmd's \"- one\\n- twox\\n\\n<br />\\n\\n<br />\\n\\nSecond\\n\" and Escape leaves no field open (saved \"- one\\n- twox\\n\\n<br />\\n\\n<br />\\n\\n\\nSecond\\n\", field open false)",
+			"case 19, empty file, one key per call: ⌘S saves editmd's \"- one\\n- twox\\n\\n<br />\\n\\n<br />\\n\" and Escape leaves no field open (saved \"- one\\n- twox\\n\\n<br />\\n\\n\", field open false)",
+			"case 19, empty file, one batch: ⌘S saves editmd's \"- one\\n- twox\\n\\n<br />\\n\\n<br />\\n\" and Escape leaves no field open (saved \"- one\\n- twox\\n\\n<br />\\n\\n\", field open false)",
+			"case 22, empty file, one key per call: ⌘S saves editmd's \"> quotedbeta*beta*\\n\\n<br />\\n\\nteago\\n\\n<br />\\n\" and Escape leaves no field open (saved \"> quotedbeta*beta*\\n\\n<br />\\n\\nteago\\n\", field open false)",
+			"case 22, empty file, one batch: ⌘S saves editmd's \"> quotedbeta*beta*\\n\\n<br />\\n\\nteago\\n\\n<br />\\n\" and Escape leaves no field open (saved \"> quotedbeta*beta*\\n\\n<br />\\n\\nteago\\n\", field open false)",
+			"case 23, empty file, one key per call: ⌘S saves editmd's \"```js\\nx \\n\\n```\\n\" and Escape leaves no field open (saved \"```js\\nx \\n```\\n\", field open false)",
+			"case 23, empty file, one batch: ⌘S saves editmd's \"```js\\nx \\n\\n```\\n\" and Escape leaves no field open (saved \"```js\\nx \\n```\\n\", field open false)"
+		],
+		"headless": []
+	},
+	"inline": {
+		"always": [],
+		"headless": [
+			"⌘B twice on `two` (the second takes the mark off: bold on \"two\" on \"one **two** three\"), existing file, one batch: ⌘S saves \"one two three\\n\\nSecond\\n\" and Escape leaves no field open (saved \"one **two** three\\n\\nSecond\\n\", field open false, painted with the caret placed \"one two three\\nSecond\\n⌘K Commands\", after each step [cmd-b cmd-b: \"one two three\\nSecond\\n⌘K Commands\"], closed \"one two three\\nSecond\\n⌘K Commands\\nSaved\")",
+			"⌘B twice on `two` (the second takes the mark off: bold on \"two\" on \"one **two** three\"), empty file, one batch: ⌘S saves \"one two three\\n\" and Escape leaves no field open (saved \"one **two** three\\n\", field open false, painted with the caret placed \"one two three\\n⌘K Commands\\nSaving…\", after each step [cmd-b cmd-b: \"one two three\\n⌘K Commands\\nSaving…\"], closed \"one two three\\n⌘K Commands\\nSaved\")",
+			"⌘B at the end of `one two`, `x` (bold on \"\", then \"x\" typed on \"one two\"), empty file, one key per call: ⌘S saves \"one two**x**\\n\" and Escape leaves no field open (saved \"one two\\n\", field open false, painted with the caret placed \"one two\\n⌘K Commands\\nSaving…\", after each step [cmd-b: \"one \\n⌘K Commands\\nSaving…\"; x: \"one two****\\n⌘K Commands\\nSaving…\"], closed \"one two\\n⌘K Commands\\nSaved\")",
+			"Format > Bold from the menu bar on `two` (the same as ⌘B), existing file, one key per call: ⌘S saves \"one **two** three\\n\\nSecond\\n\" and Escape leaves no field open (saved \"one two three\\n\\nSecond\\n\", field open false, painted with the caret placed \"one two three\\nSecond\\n⌘K Commands\", after each step [Format > Bold: \"one a three\\nSecond\\n⌘K Commands\"], closed \"one two three\\nSecond\\n⌘K Commands\")",
+			"Format > Bold from the menu bar on `two` (the same as ⌘B), existing file, one batch: ⌘S saves \"one **two** three\\n\\nSecond\\n\" and Escape leaves no field open (saved \"one two three\\n\\nSecond\\n\", field open false, painted with the caret placed \"one two three\\nSecond\\n⌘K Commands\", after each step [Format > Bold: \"one a three\\nSecond\\n⌘K Commands\"], closed \"one two three\\nSecond\\n⌘K Commands\")",
+			"Format > Bold from the menu bar on `two` (the same as ⌘B), empty file, one key per call: ⌘S saves \"one **two** three\\n\" and Escape leaves no field open (saved \"one two three\\n\", field open false, painted with the caret placed \"one two three\\n⌘K Commands\\nSaving…\", after each step [Format > Bold: \"one a three\\n⌘K Commands\\nSaving…\"], closed \"one two three\\n⌘K Commands\\nSaved\")",
+			"Format > Bold from the menu bar on `two` (the same as ⌘B), empty file, one batch: ⌘S saves \"one **two** three\\n\" and Escape leaves no field open (saved \"one two three\\n\", field open false, painted with the caret placed \"one two three\\n⌘K Commands\\nSaving…\", after each step [Format > Bold: \"one a three\\n⌘K Commands\\nSaving…\"], closed \"one two three\\n⌘K Commands\\nSaved\")"
+		]
+	},
+	"tab": {
+		"always": [],
+		"headless": [
+			"Tab and z in one keystrokes call in the second list item each land: Tab sinks it under the first and z follows b (list-item.ts:212-218) (file \"- a\\n- bz\\n\")"
+		]
+	}
+}

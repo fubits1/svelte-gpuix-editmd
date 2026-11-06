@@ -29,7 +29,7 @@ In a real window on 0.3.0, Tab in a Block's field typed nothing, Shift-Tab typed
 
 ## Consequences
 
-- In a list item, keys typed while the probe runs wait until it is done: Escape waits behind the probe as Format > Indent does, so Tab and a key typed in one burst nest the item and keep the key (amended 2026-11-04, `e2e/tab.e2e.ts`). A click on another Block while the probe runs still closes the field at once
+- In a list item, keys typed while the probe runs wait until it is done: Escape waits behind the probe as Format > Indent does, so Tab and a key typed in one burst nest the item and keep the key (amended 2026-11-04, `e2e/tab.e2e.test.ts`). A click on another Block while the probe runs still closes the field at once
 - The 2 spaces are sent as keys behind any keys already waiting, so a key that arrives in the same batch as the Tab lands before them. Keys typed one after another keep their order
 - TODO: write a literal tab once gpuix reports a text field's caret and selection (G1)
 - `@gpuix/native` 0.11.0 adds dashed borders, `outline*`, `onlayout` and `registerFont`. The blocked-image box uses the dashed border, the front matter field's focus ring the outline, and tables, images, mixed paragraphs and diagrams size from `onlayout` instead of 250ms polls (amended 2026-10-30); the deleted-block line keeps its `<svg>` dashes (ADR-0009 G11)
@@ -39,6 +39,6 @@ In a real window on 0.3.0, Tab in a Block's field typed nothing, Shift-Tab typed
 ## Evidence
 
 - gpuix-svelte v0.3.0 release notes (`gh release view v0.3.0 --repo khromov/gpuix-svelte`, read 2026-10-29); the gpuix-svelte Guide: "Tab never types a tab character into an `<input>` or `<textarea>`"
-- 2026-10-29, headless on 0.3.0: `page-scroller` bounds at offsets 0 and -1092. `test.ts`: 6 checks failed before the scroll change (5 scroll checks and a shadow that now reports `inset: false`) and 411 of 411 pass after it
-- 2026-10-29, real window on 0.3.0: Tab, Shift-Tab and the tab-character keys as stated above; `e2e/tab.e2e.ts` 8 of 8 after the Tab change, 5 of its checks failing before it
+- 2026-10-29, headless on 0.3.0: `page-scroller` bounds at offsets 0 and -1092. The headless UI suite: 6 checks failed before the scroll change (5 scroll checks and a shadow that now reports `inset: false`) and 411 of 411 pass after it
+- 2026-10-29, real window on 0.3.0: Tab, Shift-Tab and the tab-character keys as stated above; `e2e/tab.e2e.test.ts` 8 of 8 after the Tab change, 5 of its checks failing before it
 - Every real-window suite after both changes: tab 8, launch 11, co-editing 16, file formats 6, links 4, remote images 7, all ok

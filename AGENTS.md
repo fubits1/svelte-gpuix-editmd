@@ -13,12 +13,16 @@ Fetch <https://khromov.github.io/gpuix-svelte/llms.txt>, then the pages it links
 
 ```bash
 pnpm dev             # opens the window; saving a .svelte file remounts it, a .ts/.svelte.ts/.js change needs a restart
-pnpm test            # unit tests, then the headless test (test.ts) through GPUI's real hit testing
+pnpm test            # Vitest: unit tests, the headless UI suite (test/ui/), the end-to-end suites (e2e/) headless
+pnpm test:ui         # the headless UI suite alone, through GPUI's real hit testing
+pnpm test:e2e:window # the end-to-end suites in real windows: they take the keyboard, so only on the user's go
 pnpm typecheck       # tsc, then svelte-check against GPUI's element types
+pnpm lint            # prettier --check, eslint, knip, svelte-check
 pnpm build           # dist/editmd-gpuix.app through gpuix-svelte/build; macOS only, needs Bun
 ```
 
-After a change, run `pnpm typecheck` and `pnpm test`. To see what the window draws,
+After a change, run `pnpm typecheck`, `pnpm lint` and `pnpm test` (about 10 minutes; `pnpm test:unit` and
+`pnpm test:ui` are the quick part). To see what the window draws,
 run `GPUIX_SCREENSHOT=/tmp/app.png pnpm dev`: it writes a PNG after every mount and hot reload.
 
 ## Building
@@ -110,8 +114,17 @@ every `svelte` import to it. Keep `svelte` itself out of `package.json`.
 
 - `app.ts` — the entry: `render_hot` opens the window and remounts `App.svelte` on save.
 - `App.svelte` — the root component.
-- `test.ts` — the headless test (`gpuix-svelte/test`); a plain script that exits 1 on failure, and also when the
-  count given to `finish()` is not how many `check()`s ran, so keep it in step.
+- `test/ui/` — the headless UI suite (`gpuix-svelte/test` under Vitest's `ui` project, Node native mode with the
+  gpuix bin's flags): `document.test.ts` runs the area modules' sections (`editing.ts`, `rendering.ts`, `files.ts`,
+  `agents.ts`, `menus.ts`, `links.ts`, `view.ts`, `find.ts`) in order, in one process and one window, so a section
+  sees what the ones before it left; its last test checks how many `check()`s ran, so keep that number in step.
+  `harness.ts` holds what several areas share; `check.ts` is gpuix's comparison as a soft assertion.
+- `e2e/` — the end-to-end suites (Vitest's `e2e` project over `gpuix-svelte/automation`), headless through
+  `e2e/headless-app.ts` unless `EDITMD_E2E_ENTRY` names another entry; `e2e/known-failures.json` lists the checks
+  expected to fail (editmd differences, and headless-only ones).
+- `vitest.config.ts` — the projects `unit` (each module's `*.test.ts` beside it in `src/`), `ui` and `e2e`, which
+  `pnpm test` runs, and `visual-measurements` and
+  `visual-pictures`, the visual before/after check (`pnpm test:visual`) run only for upgrades and refactors.
 - `standalone.ts`, `build.ts` — the entry and the build script behind `pnpm build`.
 - `startup.ts` — what both entries run before the window opens: the command line's headless modes and agent hook,
   and the Document the window shows.

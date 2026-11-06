@@ -46,7 +46,7 @@
 	import SaveAsDialog from './DocumentView/Overlays/SaveAsDialog.svelte'
 	import MermaidBlock from './DocumentView/Views/MermaidBlock.svelte'
 	import PointerTip from './PointerTip.svelte'
-	import { boxOf, trackIn } from './nodes.ts'
+	import { boxOf, scrollingAncestorOf, trackIn } from './nodes.ts'
 
 	let {
 		autofocus = true
@@ -270,26 +270,6 @@
 	const FRAME_MS = 16
 	/** the smooth scroll's next step, cleared by the next one and when the view goes */
 	let smoothScroll: ReturnType<typeof setTimeout> | undefined
-
-	/**
-	 * the first ancestor of `node` that reports a scroll offset, with its viewport, the painted box of what it scrolls
-	 * (its child on the way to `node`) and `node`'s painted box
-	 */
-	function scrollingAncestorOf(node: ShadowNode) {
-		const native = get_native()
-		const target = boxOf(node)
-		if (!native || !target) return null
-		let content = target
-		for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
-			if (ancestor.nativeId === null) continue
-			const offset = native.getScrollOffset(ancestor.nativeId)
-			const box = native.getElementBounds(ancestor.nativeId)
-			if (offset && box)
-				return { native, id: ancestor.nativeId, offset, viewport: box, target, content }
-			if (box) content = box
-		}
-		return null
-	}
 
 	/**
 	 * scrolls Block `index` to the top, smoothly, as a followed link does, or to the middle, as an Agent's revealed
@@ -717,7 +697,11 @@
 	 */
 	let runUnderlines = $state.raw<readonly Underline[]>([])
 
-	/** one row of a code span's border: its box in logical px from its Block's box (`codeBorderBox`) */
+	/**
+	 * one row of a code span's border: its box in logical px from its Block's box (`codeBorderBox`), and whether it is the
+	 * span's first and last row, as editmd's inline border is sliced where the span wraps: only the first row has the
+	 * left side and corners, only the last the right ones
+	 */
 	type CodeBorder = {
 		key: string
 		index: number
@@ -725,6 +709,8 @@
 		y: number
 		width: number
 		height: number
+		first: boolean
+		last: boolean
 	}
 
 	/** the code spans' borders as last measured, read back from the paint as the underlines are; transient UI (ADR-0011) */
@@ -749,7 +735,7 @@
 			for (const { text, occurrence, wash } of washedRunsIn(node, washes)) {
 				const colour = marks?.get(runKey(text, occurrence))?.colour
 				const code = unbordered.delete(runKey(text, occurrence))
-				for (const rect of wash.rects) {
+				for (const [row, rect] of wash.rects.entries()) {
 					if (colour !== undefined)
 						lines.push({
 							key: `${index}-${lines.length}`,
@@ -760,7 +746,13 @@
 							colour
 						})
 					if (code)
-						borders.push({ key: `${index}-${borders.length}`, index, ...codeBorderBox(rect, box) })
+						borders.push({
+							key: `${index}-${borders.length}`,
+							index,
+							...codeBorderBox(rect, box),
+							first: row === 0,
+							last: row === wash.rects.length - 1
+						})
 				}
 			}
 		}
@@ -886,7 +878,7 @@
 <!-- a file dropped anywhere on the page, its margins included, lands between the Blocks -->
 <div class="page" onfiledrop={dropFiles} onmousemove={pointerMoved} role="presentation">
 	<div class="document" testid="document" style:padding-bottom={pageBottom}>
-		{#if !documentController.sourceMode && documentController.blocks.length === 0 && documentController.activeIndex === 0}
+		{#if !documentController.sourceMode && paintedBlocks[0] === FIRST_BLOCK}
 			<!--
 			  the field an empty Document opens on load (editmd focuses its editor, main.ts:80-84) keeps the hint until its
 			  first character: painted behind the field, which paints no fill of its own, in the hint's own colour (a
@@ -1063,6 +1055,8 @@
 									{/each}
 									<!-- editmd's inline code border over native's pill, which has none; only a Block with code spans draws one -->
 									{#each codeRuns.has(index) ? codeBorders.filter((border) => border.index === index) : [] as border (border.key)}
+										{@const left = border.first ? theme().scaled(CODE_BORDER_RADIUS) : 0}
+										{@const right = border.last ? theme().scaled(CODE_BORDER_RADIUS) : 0}
 										<div
 											class="code-border"
 											testid={`code-border-${border.key}`}
@@ -1070,7 +1064,9 @@
 											style:top={`${border.y}px`}
 											style:width={`${border.width}px`}
 											style:height={`${border.height}px`}
-											style:border-radius={`${theme().scaled(CODE_BORDER_RADIUS)}px`}
+											style:border-left-width={border.first ? null : '0px'}
+											style:border-right-width={border.last ? null : '0px'}
+											style:border-radius={`${left}px ${right}px ${right}px ${left}px`}
 										></div>
 									{/each}
 								</div>
@@ -1308,9 +1304,9 @@
 	.field-rule-2 {
 		padding-bottom: var(--size-heading-2-rule-padding);
 	}
-	/* editmd's headings are bold, `h1-h6 { font-weight: 600 }`; their size and line height are set inline */
+	/* editmd's headings are bold, `h1-h6 { font-weight: 650 }` (style.css:147); their size and line height are set inline */
 	.heading-field {
-		font-weight: 600;
+		font-weight: 650;
 	}
 	/*
 	 * editmd's `pre` card around an open code or mermaid Block (style.css:193-220): GPUI's <textarea> clips its

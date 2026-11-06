@@ -1,11 +1,13 @@
-// Heading anchors that match GitHub's, so a table of contents written for
-// GitHub (`[What's new](#whats-new)`) scrolls here too.
+// heading anchors that match GitHub's, so a table of contents written for
+// GitHub (`[What's new](#whats-new)`) scrolls here too
 
 /**
  * GitHub's anchor for a heading's text, as github-slugger makes it: lower
  * case, punctuation and symbols dropped (but not `-` or `_`), spaces turned
- * into hyphens. github-slugger lists the characters it drops as of Unicode
- * 13; the property classes here follow the engine's newer Unicode instead.
+ * into hyphens
+ *
+ * github-slugger lists the characters it drops as of Unicode 13; the property classes here follow the engine's newer
+ * Unicode instead.
  */
 export function slug(text: string): string {
 	return text
@@ -15,9 +17,10 @@ export function slug(text: string): string {
 }
 
 /**
- * The anchors for a document's headings, in document order. A repeated slug
- * gets `-1`, `-2`, ... appended, skipping any that another heading already
- * took, as github-slugger does.
+ * the anchors for a document's headings, in document order
+ *
+ * A repeated slug gets `-1`, `-2`, ... appended, skipping any that another heading already took, as github-slugger
+ * does.
  */
 export function headingSlugs(texts: readonly string[]): string[] {
 	const seen = new Map<string, number>()
@@ -35,9 +38,10 @@ export function headingSlugs(texts: readonly string[]): string[] {
 }
 
 /**
- * Which heading a `#fragment` link points at: an index into `texts`, or -1.
- * The fragment is percent-decoded when it can be, and matched as written
- * when it is malformed (`#%`) rather than throwing.
+ * which heading a `#fragment` link points at: an index into `texts`, or -1
+ *
+ * The fragment is percent-decoded when it can be, and matched as written when it is malformed (`#%`) rather than
+ * throwing.
  */
 export function findHeading(fragment: string, texts: readonly string[]): number {
 	return findSlug(fragment, headingSlugs(texts))
@@ -49,7 +53,7 @@ export function findSlug(fragment: string, slugs: readonly string[]): number {
 	try {
 		id = decodeURIComponent(id)
 	} catch {
-		// Not valid percent-encoding: look it up as written.
+		// not valid percent-encoding: look it up as written
 	}
 	const exact = slugs.indexOf(id)
 	return exact >= 0 ? exact : slugs.indexOf(id.toLowerCase())

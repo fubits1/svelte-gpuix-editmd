@@ -1,4 +1,6 @@
 node_modules
+# svelte-check --tsgo writes its translated Svelte files here
+.svelte-check
 dist
 .DS_Store
 .dex

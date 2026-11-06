@@ -29,7 +29,6 @@ import { saveFailure } from '../../app/saveFailure.ts'
 import type { Modifiers } from '../../app/shortcuts.ts'
 import { LEGEND_STORE, RECENT_STORE } from '../../app/supportFolder.ts'
 import { themeController } from '../../app/theme.svelte.ts'
-import type { AgentProcess } from '../../core/agentEdits.ts'
 import { HORIZONTAL_RULE, TABLE, underLastItem } from '../../core/blockCommands.ts'
 import { type ChangedRun, runOffset } from '../../core/changedText.ts'
 import { type FenceParts, fenceParts, withFences } from '../../core/codeField.ts'
@@ -50,6 +49,7 @@ import {
 	type InlineFormat,
 	lineEndsOf,
 	type Range,
+	rewriteKeys,
 	selectionCandidates,
 	selectKeys,
 	settleSelection,
@@ -75,6 +75,7 @@ import {
 } from '../../core/returnKey.ts'
 import { saveAsPath } from '../../core/saveAsPath.ts'
 import { pressTab, type TabEffects, tabAction, tableCellStep } from '../../core/tabKey.ts'
+import { tableCells } from '../../core/tableCells.ts'
 import { type Block, type BlockKind, blockKindOf } from '../../engine/blocks.ts'
 import { SOCKETS_DIRECTORY } from '../../app/reportEdit.ts'
 import {
@@ -84,7 +85,6 @@ import {
 	listenForReports,
 	sendRename
 } from '../../host/agentIpc.ts'
-import { listAgentProcesses } from '../../host/agentProcesses.ts'
 import { Attribution } from '../../host/attribution.ts'
 import { readClipboardUrl, writeClipboard } from '../../host/clipboard.ts'
 import { createClockScheduler } from '../../host/clock.ts'
@@ -205,11 +205,6 @@ export type OpenOptions = LinkOptions &
 	WindowOptions & {
 		/** where agent hooks send their Reports; tests pass their own folder */
 		socketsDirectory?: string
-		/**
-		 * the agent processes a change nobody reported is credited to; `ps` through `listAgentProcesses` by
-		 * default, so tests pass their own and spawn nothing
-		 */
-		listAgentProcesses?: () => AgentProcess[]
 	}
 
 /** a dialog over the Document; at most one is open, a second replacing the first, a notice waiting its turn */
@@ -236,7 +231,7 @@ export type Overlay =
 	/** File > Open Recent's submenu as a list: `paths` newest first, then Clear Menu */
 	| { kind: 'openRecent'; paths: readonly string[] }
 	/**
-	 * the command palette (Cmd-Shift-/): every menu item, searchable, beside the in-window menu bar that stands
+	 * the command palette (⌘K): the File, Edit, Format and View commands (`menuEntries`), searchable, beside the in-window menu bar that stands
 	 * in for the native one gpuix cannot extend (gap G2, src/ui/MenuBar.svelte)
 	 */
 	| { kind: 'commandPalette' }
@@ -296,8 +291,8 @@ type RevealBlock = (index: number, place: RevealPlace, inside?: ChangedRun | num
 export const NEW_WINDOW_ENV = 'EDITMD_GPUIX_NEW'
 
 /**
- * how long a field may take to report what a key did before a probe gives up: about 5ms in a window, on the next
- * frame
+ * how long a probe waits for the field's report of a key; a field in a window reports on the next frame, about
+ * 5ms
  */
 const FIELD_REPLY_MS = 1000
 
@@ -396,7 +391,7 @@ export class DocumentController {
 	 * who the window's Reports credit outside writes to: its file's, or, while untitled, one of its own that Save As
 	 * hands the new file, so a Report heard before keeps its Claim
 	 */
-	#attribution = new Attribution(listAgentProcesses)
+	#attribution = new Attribution()
 	#session: EditSession | null = null
 	/** the Edit session Return opened for a new Block (`openEditAfter`), which `activeIsNew` asks after */
 	#newBlockSession: EditSession | null = null
@@ -457,7 +452,6 @@ export class DocumentController {
 			fetchImage: fetchImageHead,
 			// kept from `load`, so an untitled Document saved later listens where the window was told to
 			socketsDirectory: SOCKETS_DIRECTORY,
-			listAgentProcesses,
 			onExit: onProcessExit,
 			legendPreference: sharedLegendPreference(),
 			timeFormat: {}
@@ -627,16 +621,20 @@ export class DocumentController {
 
 	/** the file at `path` as this window's Document, everything the window was set to kept */
 	#openFile(path: string, options: OpenOptions): void {
-		const attribution = new Attribution(options.listAgentProcesses ?? listAgentProcesses)
+		const attribution = new Attribution()
+		const documentFile = this.#adopt(() => new DocumentFile(path, ...this.#fileHooks(attribution)))
+		this.#bind(documentFile, documentFile.document, options)
+		this.#follow(documentFile, attribution)
+	}
+
+	/** `make`'s DocumentFile, made with `#adopting` set, so `#sync` skips its reports from before the window holds it */
+	#adopt(make: () => DocumentFile): DocumentFile {
 		this.#adopting = true
-		let documentFile: DocumentFile
 		try {
-			documentFile = new DocumentFile(path, ...this.#fileHooks(attribution))
+			return make()
 		} finally {
 			this.#adopting = false
 		}
-		this.#bind(documentFile, documentFile.document, options)
-		this.#follow(documentFile, attribution)
 	}
 
 	/**
@@ -690,6 +688,11 @@ export class DocumentController {
 		return [
 			createClockScheduler(),
 			() => {
+				// An outside write deleted the open Block: its field closes as Escape closes it, with nothing left to write.
+				if (this.#session?.dropped) {
+					this.#emptyPair = null
+					this.closeEdit()
+				}
 				this.#sync()
 				this.#showOutsideChange()
 			},
@@ -790,7 +793,7 @@ export class DocumentController {
 	 */
 	#listen(): void {
 		const directory = this.#with.socketsDirectory
-		// without a socket the editor still works: outside writes fall back to the agent processes
+		// Without a socket the editor still works: every outside write is an Outside edit.
 		const listening = listenForReports(
 			directory,
 			(report) => this.#attribution.report(report),
@@ -956,7 +959,7 @@ export class DocumentController {
 			const block = this.blocks[index]
 			const agent = this.#agentOf(highlight.author.id)
 			if (!block || !agent) continue
-			const source = this.text.slice(block.start, block.end)
+			const source = this.sliceOf(block)
 			const offsetOf = (run: ChangedRun) => {
 				const offset = runOffset(source, run)
 				return offset === null ? null : block.start + offset
@@ -1077,7 +1080,7 @@ export class DocumentController {
 
 	/**
 	 * the Document text from `start` to `end` inside `block` as native <markdown> should paint it (`paintedSlice`):
-	 * each footnote reference in that range as a link run, each link with no text as its own source in code;
+	 * each footnote reference in that range as its raised label (`footnoteMark`), each link with no text as its own source in code;
 	 * apply before `renderSource`, so only the Block's own text is rewritten
 	 */
 	paintedSliceOf(block: Block, start = block.start, end = block.end): string {
@@ -1437,13 +1440,15 @@ export class DocumentController {
 	 * `fieldRevision` the reporting field was mounted at: a field since mounted afresh (a probe that gave up sets the
 	 * field to its text again) is no longer the open one, so what it still reports, a late sentinel included, is dropped,
 	 * but for a key the field took on its way out, after an outside change or typing replaced it (`#typeLate`).
-	 * a newline Return or Shift-Return typed into a Block's field does what editmd's Enter does (`#typeReturn`)
+	 * A newline Return or Shift-Return typed into a Block's field does what editmd's Enter does (`#typeReturn`).
+	 * A field with no Edit session left, closed or dropped by an outside write, reports into nothing.
 	 */
 	typeInActive(field: string, revision?: number): void {
 		if (revision !== undefined && revision !== this.fieldRevision) {
 			this.#typeLate(field, revision)
 			return
 		}
+		if (this.#session === null) return
 		if (this.#probing && this.#probeListener?.(field)) return
 		this.#deleted ||= field.length < this.#field.length
 		const caret = caretAfterTyping(this.#field, field)
@@ -1962,8 +1967,15 @@ export class DocumentController {
 			const state = { text: this.#field, anchor: range.start, focus: range.end }
 			const keys = toggleInlineKeys(state, format)
 			// a selection of whitespace only gets no marks: no keys, and the probe settled so ⇧⌘Z brings no sentinel back
-			if (keys === '') await this.#settleProbe(range)
-			else this.#with.sendKeys(keys)
+			if (keys === '') {
+				await this.#settleProbe(range)
+				return
+			}
+			this.#with.sendKeys(keys)
+			const toggled = applyKeys(state, keys).text
+			// A caret gets an empty pair, or loses the one it sits in, which is no stored mark to take out.
+			if (range.start === range.end && toggled.length > state.text.length)
+				this.#emptyPair = { text: toggled, without: state.text }
 		})
 	}
 
@@ -2026,8 +2038,8 @@ export class DocumentController {
 	}
 
 	/**
-	 * the field's text with the empty pair an inline toggle typed at the load caret, and without it; null for none.
-	 * nothing renders from it
+	 * the field's text with the empty pair an inline toggle typed at the load caret or at the open field's caret, and
+	 * without it; null for none; nothing renders from it
 	 */
 	#emptyPair: { text: string; without: string } | null = null
 
@@ -2081,9 +2093,11 @@ export class DocumentController {
 	/**
 	 * carry out a menu Command, from its shortcut (`commandFor`) or the command palette, which also runs the
 	 * MenuOnlyCommands `commandFor` never returns (menu.ts lists them): the entries with no key in editmd
-	 * (MainMenu.swift), such as Revert to Saved, and Open Recent, a submenu there, which joins them since there
-	 * is no menu bar to hold the submenu (gap G2). `editing` is the key event's own flag, true while a text field
-	 * has focus and gets the same key
+	 * (MainMenu.swift), such as Revert to Saved, and Open Recent, a submenu there and in the in-window menu bar,
+	 * which the palette lists as one entry and opens as a list (OpenRecentDialog.svelte)
+	 *
+	 * `editing` is the key event's own flag, true while a text field
+	 * has focus and gets the same key.
 	 */
 	run(command: MenuCommand, { editing = false }: RunOptions = {}): void {
 		// the Format commands are listed once, in app/commands.ts
@@ -2105,6 +2119,8 @@ export class DocumentController {
 			horizontalRule: () => this.#insertBlock(HORIZONTAL_RULE),
 			loadRemoteImages: () => this.allowRemoteImages(),
 			commandPalette: () => (this.overlay = { kind: 'commandPalette' }),
+			// macOS's ⇧⌘/: the Help menu, the bar's last, drops down with its search field (HelpSearch.svelte) focused
+			helpSearch: () => this.openMenu(this.menus.length - 1),
 			save: () => this.#save(),
 			saveAs: () => this.#showSaveAs(false),
 			open: () => void this.#open(),
@@ -2140,7 +2156,8 @@ export class DocumentController {
 			strikethrough: () => this.#toggleInline('strikethrough'),
 			code: () => this.#toggleInline('code'),
 			link: () => this.#showAddLink(),
-			toggleSource: () => this.#toggleSource(),
+			// after the field work in flight, as a click or Escape waits for it, so neither runs inside Source mode
+			toggleSource: () => this.#afterFieldWork(() => this.#toggleSource()),
 			// AppKit's View > Enter Full Screen, ⌃⌘F
 			toggleFullScreen: () => this.#with.toggleFullScreen(),
 			// View > Zoom scales the window's whole page, so it goes to the window's ThemeController
@@ -2161,7 +2178,7 @@ export class DocumentController {
 		fieldFocused: this.#fieldOpen
 	})
 
-	/** every menu item for the command palette, titled and enabled for this Document as editmd's `validateMenuItem` */
+	/** the File, Edit, Format and View commands for the command palette, titled and enabled for this Document as editmd's `validateMenuItem` */
 	paletteEntries = $derived(menuEntries(this.#menuState))
 
 	/**
@@ -2478,8 +2495,8 @@ export class DocumentController {
 	}
 
 	/**
-	 * File > Revert to Saved asks first, as NSDocument does; editmd enables it only for a file with unsaved
-	 * edits, so it does nothing otherwise
+	 * File > Revert to Saved asks first, as NSDocument does; editmd enables it for any file, edited or not; with no
+	 * unsaved edits it does nothing.
 	 */
 	revert(): void {
 		if (!this.#documentFile || !this.#document.isDirty) return
@@ -2549,19 +2566,9 @@ export class DocumentController {
 			} else {
 				// the untitled window's own, so a Report it heard before Save As still credits the file's first writes
 				const attribution = this.#attribution
-				this.#adopting = true
-				try {
-					this.#documentFile = DocumentFile.create(
-						path,
-						this.#document,
-						...this.#fileHooks(attribution),
-						{
-							replace
-						}
-					)
-				} finally {
-					this.#adopting = false
-				}
+				this.#documentFile = this.#adopt(() =>
+					DocumentFile.create(path, this.#document, ...this.#fileHooks(attribution), { replace })
+				)
 				this.#follow(this.#documentFile, attribution)
 				this.#releaseUntitled()
 			}
@@ -2629,11 +2636,13 @@ export class DocumentController {
 	 * after the Block of the last closed Edit session while it is as that session left it, where editmd's caret stayed
 	 * (`#lastPlaceIndex`, as the other Format commands find it), else before the first Block, where editmd's caret sits
 	 * once a Document loads (measured in editmd's own editor: its table and rule go in above the first paragraph). one
-	 * Undo step; the Edit session closes first, so its typing stays an Undo step of its own. no field opens on the new
-	 * Block: a focused <textarea> takes Cmd-Z as its own native undo before any listener hears it (measured headless),
-	 * and editmd's one Cmd-Z takes the insert back. editmd disables Format in Source mode, so it does nothing there.
-	 * a table at a list goes under the list's last item instead (`underLastItem`), as editmd nests it there (measured
-	 * in editmd's own editor); a rule keeps a Block of its own
+	 * Undo step; the Edit session closes first, so its typing stays an Undo step of its own. A new table's field opens
+	 * with its caret in the first cell, as editmd's insertTableCommand puts it, so typing goes there; a focused
+	 * <textarea> takes Cmd-Z as its own native undo before any listener hears it (measured headless), so one Cmd-Z
+	 * takes the insert back only once that field is closed. No field opens on a rule. editmd disables Format in
+	 * Source mode, so it does nothing there.
+	 * A table at a list goes under the list's last item instead (`underLastItem`), as editmd nests it there (measured
+	 * in editmd's own editor), and no field opens on it; a rule keeps a Block of its own.
 	 */
 	#insertBlock(source: string): void {
 		if (this.sourceMode) return
@@ -2642,12 +2651,16 @@ export class DocumentController {
 		const index = active ?? this.#lastPlaceIndex() ?? -1
 		this.closeEdit()
 		const block = this.#document.blocks[index]
-		if (source === TABLE && block?.kind === 'list') {
+		const nested = source === TABLE && block?.kind === 'list'
+		if (nested) {
 			const list = this.#document.text.slice(block.start, block.end)
 			this.#document.editBlock(index, underLastItem(list, TABLE))
 		} else this.#document.insertBlockAfter(index, source)
 		this.#documentFile?.changed()
+		const opensTable = source === TABLE && !nested
+		if (opensTable) this.openBlock(index + 1)
 		this.#sync()
+		if (opensTable) this.#putCaret(this.#field, tableCells(this.#field)[0]!.from)
 	}
 
 	/**
@@ -2816,11 +2829,13 @@ export class DocumentController {
 	}
 
 	/**
-	 * Format > Link… (⌘K): editmd's Add Link sheet, its field prefilled with the pasteboard's URL
+	 * Format > Link… (⇧⌘K, editmd's ⌘K): editmd's Add Link sheet, its field prefilled with the pasteboard's URL
 	 * (EditorWindowController.swift:115-150), or its Edit Link, prefilled with the link's own, while the caret is in a
 	 * link: with no field open at editmd's caret there (`#linkAtLoadCaret`); an open field's caret is read only on Add
-	 * (gap G1), so it stays Add Link. editmd disables it in Source mode with the rest of Format (`validateMenuItem`), so
-	 * it opens nothing there
+	 * (gap G1), so it stays Add Link
+	 *
+	 * editmd disables it in Source mode with the rest of Format (`validateMenuItem`), so
+	 * it opens nothing there.
 	 */
 	#showAddLink(): void {
 		if (this.sourceMode) return
@@ -2851,7 +2866,8 @@ export class DocumentController {
 	 * the sheet's Add with the typed `url`: the sheet closes. with a Block's field open, the field takes the keys back,
 	 * its selection is read (`readSelection`) and the link goes in there as editmd's `toggleLink` puts it
 	 * (`linkAtSelection`: the selection its text, a caret its own link, Edit Link inside one), an Undo step of its own;
-	 * the field shows it afresh, its caret moved to just after the link. an empty URL takes the link at the caret or
+	 * the field takes it by keys where it shows its source as is (`#rewriteByKeys`), else shows it afresh, its caret
+	 * moved to just after the link. an empty URL takes the link at the caret or
 	 * across the selection off, as editmd's Add with nothing in the field does (EditorWindowController.swift:133-134,
 	 * web/src/editor.ts:380-386). with no Active block it goes in at editmd's load caret (`#openAtLoadCaret`), the URL
 	 * its own link text there, and that Block's field opens on it
@@ -2878,11 +2894,12 @@ export class DocumentController {
 	}
 
 	/**
-	 * Add Link on the open Block field's selection, read when Add is pressed, never on ⌘K (a redo hazard). a
-	 * Block that takes no link anywhere (front matter, a definition, a rule: `linkAtSelection` refuses even a caret)
-	 * changes nothing and reads nothing, and so does an empty URL on a field holding no link to take off. a selection in
+	 * Add Link on the open Block field's selection, read when Add is pressed, never on ⇧⌘K (a redo hazard)
+	 *
+	 * A Block that takes no link anywhere (front matter, a definition, a rule: `linkAtSelection` refuses even a caret)
+	 * changes nothing and reads nothing, and so does an empty URL on a field holding no link to take off. A selection in
 	 * code, which it refuses only once read, and a caret outside any link for an empty URL set the field to its own
-	 * text again (`#settleProbe`), so ⇧⌘Z cannot bring the probe's sentinel back
+	 * text again (`#settleProbe`), so ⇧⌘Z cannot bring the probe's sentinel back.
 	 */
 	#linkAtSelection(url: string): void {
 		const unlinking = url.trim() === ''
@@ -2905,8 +2922,6 @@ export class DocumentController {
 				await this.#settleProbe(range)
 				return
 			}
-			this.#replaceField(source)
-			if (!(await this.#fieldReady())) return
 			/**
 			 * a link taken off keeps the caret in the same text, the syntax around it gone; a link put in ends where the
 			 * text after the selection, which stays as it was, now starts
@@ -2914,8 +2929,31 @@ export class DocumentController {
 			const caret = unlinking
 				? caretThrough(textEdits(before, source), end)
 				: source.length - (before.length - end)
+			if (await this.#rewriteByKeys(before, source, caret)) return
+			this.#replaceField(source)
+			if (!(await this.#fieldReady())) return
 			this.#with.sendKeys(caretKeys(this.#field, this.#fieldCaret(caret)))
 		})
+	}
+
+	/**
+	 * The open field, showing the Block source `before` as it is, takes the keys that make it `after` with its caret at
+	 * `caret` (`rewriteKeys`), so Add Link's change stays in the field's own undo. The field work waits for the field to
+	 * report `after`, so its reports are the command's keys, not typing (`#typeField`); its `value` then follows its
+	 * text, which leaves its undo as it is (measured headlessly). GPUI's undo splits typing at a space and keeps deletes
+	 * apart from typing, so ⌘Z can take the change back in more than one step. false, with nothing sent, for a field
+	 * showing other text than its source (code without its fences, an empty paragraph) and for a change that takes a
+	 * newline or a tab
+	 */
+	async #rewriteByKeys(before: string, after: string, caret: number): Promise<boolean> {
+		if (before !== this.#field || isEmptyParagraph(after)) return false
+		const keys = rewriteKeys(before, after, caret)
+		if (keys === null) return false
+		this.#with.sendKeys(keys)
+		for (let attempt = 0; attempt < FIELD_POLL_TRIES && this.#field !== after; attempt++)
+			await delay(FIELD_POLL_MS)
+		this.activeSource = this.#field
+		return true
 	}
 
 	/**
@@ -3095,7 +3133,7 @@ export class DocumentController {
 		this.#pressedAt = null
 		this.selectedText = null
 		// a file's own takes over in `#follow`
-		this.#attribution = new Attribution(this.#with.listAgentProcesses)
+		this.#attribution = new Attribution()
 		this.#listen()
 		this.#clickedLink = null
 		// the notices were about the file this window has let go of

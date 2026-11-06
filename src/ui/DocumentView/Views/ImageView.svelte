@@ -34,8 +34,8 @@
 		 */
 		columnWidth: number | null
 		/**
-		 * the image sits in a line of text whose row aligns its items' bottoms (MixedParagraphBlock): its bottom then
-		 * stands on the line's baseline, as WebKit sets an inline `<img>`, the line's room below the baseline beneath it
+		 * the image sits in a line of text whose row aligns its items' bottoms (MixedParagraphBlock): it is lifted so its
+		 * middle meets the middle of the capitals beside it (`liftOffBottom`)
 		 */
 		inline?: boolean
 	} = $props()
@@ -44,14 +44,34 @@
 
 	/**
 	 * the room below the baseline of a 16px/1.65 body line, in CSS px at actual size: GPUI sets that 26.4px line's
-	 * baseline 19.5px below its top (test.ts, the image-on-the-baseline check)
+	 * baseline 19.5px below its top (`testCodeSpansBaselineUnderline` in test/ui/rendering.ts, the inline image check)
 	 */
 	const BELOW_BASELINE = 6.9
 
+	/** the capitals' height of 16px body text in CSS px, from their ink in the same check */
+	const CAP_HEIGHT = 11.5
+
+	/**
+	 * how far an inline image stands off its line's bottom: its middle on the capitals' middle, the user's choice over
+	 * WebKit's baseline, where editmd's badge rides high; never below the line's bottom
+	 */
+	const liftOffBottom = $derived.by(() => {
+		const room = theme().scaled(BELOW_BASELINE)
+		if (!naturalSize) return room
+		const zoomed = {
+			width: theme().scaled(naturalSize.width),
+			height: theme().scaled(naturalSize.height)
+		}
+		const height = columnWidth === null ? zoomed.height : fitToWidth(zoomed, columnWidth).height
+		return Math.max(0, room - (height - theme().scaled(CAP_HEIGHT)) / 2)
+	})
+
 	const source = $derived(resolveImageSource(image.src, documentController.folder))
+	/** a local image, or a remote one once View > Load Remote Images allows it */
+	const loads = $derived(source.kind === 'local' || documentController.remoteImagesAllowed)
 	/** a loaded remote image's size and bytes once they came; null while unknown, and for any other image */
 	const remote = $derived(
-		source.kind === 'remote' && source.path === undefined && documentController.remoteImagesAllowed
+		loads && source.kind === 'remote' && source.path === undefined
 			? documentController.remoteImageOf(source.url)
 			: null
 	)
@@ -61,7 +81,7 @@
 	 */
 	const naturalSize = $derived.by(() => {
 		if (source.kind === 'local') return documentController.imageSizeOf(source.path)
-		if (!documentController.remoteImagesAllowed) return null
+		if (!loads) return null
 		return source.path === undefined
 			? (remote?.size ?? null)
 			: documentController.imageSizeOf(source.path)
@@ -86,9 +106,7 @@
 	const fileMissing = $derived(
 		source.kind === 'local'
 			? documentController.isImageMissing(source.path)
-			: documentController.remoteImagesAllowed &&
-					source.path === undefined &&
-					documentController.isRemoteImageFailed(source.url)
+			: loads && source.path === undefined && documentController.isRemoteImageFailed(source.url)
 	)
 
 	/**
@@ -134,16 +152,7 @@
 <PointerTip text={image.title ?? null} testid={`image-tooltip-${testIdSuffix}`}>
 	{#snippet children(pointer)}
 		<!-- an image of unknown size keeps the fixed box across the column, in a row of images too -->
-		<div
-			class={[
-				'frame',
-				naturalSize === null &&
-					!fileMissing &&
-					(source.kind === 'local' || documentController.remoteImagesAllowed) &&
-					'fill'
-			]}
-			{...pointer}
-		>
+		<div class={['frame', naturalSize === null && !fileMissing && loads && 'fill']} {...pointer}>
 			{#if fileMissing}
 				<!--
 				  WebKit's broken image: a box the alt text's size in a 1px light grey border, the alt text itself unpainted,
@@ -160,7 +169,7 @@
 						/>
 					</div>
 				</div>
-			{:else if source.kind === 'local' || documentController.remoteImagesAllowed}
+			{:else if loads}
 				{@const bytes = remote?.bytes}
 				<img
 					class={['image', naturalSize === null && 'fixed']}
@@ -169,7 +178,7 @@
 					{@attach bytes && ((node: ShadowNode) => set_image(node, bytes))}
 					alt={image.alt}
 					style={naturalSize && styleOf(naturalSize)}
-					style:margin-bottom={inline ? `${theme().scaled(BELOW_BASELINE)}px` : null}
+					style:margin-bottom={inline ? `${liftOffBottom}px` : null}
 					objectfit="contain"
 					onclick={href === undefined ? null : () => documentController.linkClicked(href)}
 					onfiledrop={href === undefined ? null : dropFiles}

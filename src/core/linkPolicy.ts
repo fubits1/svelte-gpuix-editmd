@@ -1,26 +1,26 @@
 /**
- * What a link does when it is opened from a document. Markdown files come
- * from anywhere (a cloned repository has no quarantine flag, so Gatekeeper
- * never asks), so following a link must never launch anything: local files
- * either open in the editor as text or are shown in Finder.
+ * what a link does when it is opened from a document
+ *
+ * Markdown files come from anywhere (a cloned repository has no quarantine flag, so Gatekeeper never asks), so
+ * following a link must never launch anything: local files either open in the editor as text or are shown in Finder.
  */
 
 import { realpathSync, statSync } from 'node:fs'
 import { isTextPath } from './fileTypes.ts'
 
 export type LinkAction =
-	/** A web page or mail address, for the default browser or mail app. */
+	/** a web page or mail address, for the default browser or mail app */
 	| { kind: 'openExternally'; url: string }
-	/** A local text file, opened as a document in the editor. */
+	/** a local text file, opened as a document in the editor */
 	| { kind: 'openInEditor'; path: string }
-	/** Any other local file, folder, package or bundle, selected in Finder. */
+	/** any other local file, folder, package or bundle, selected in Finder */
 	| { kind: 'reveal'; path: string }
-	/** Another scheme, which could start any app: ask before opening it. */
+	/** another scheme, which could start any app: ask before opening it */
 	| { kind: 'confirm'; url: string }
-	/** Nothing to open, such as a relative link in a document with no folder. */
+	/** nothing to open, such as a relative link in a document with no folder */
 	| { kind: 'ignore' }
 
-/** What is known about a local file a link points at. */
+/** what is known about a local file a link points at */
 export type LinkTarget = { isDirectory: boolean; isText: boolean }
 
 /**
@@ -37,9 +37,9 @@ export function describeOnDisk(path: string): LinkTarget | null {
 	}
 }
 
-/** Schemes opened without asking. */
+/** schemes opened without asking */
 const EXTERNAL = new Set(['http:', 'https:', 'mailto:'])
-/** Schemes that only mean something inside the app, never worth opening; `editmd:` is editmd's own page (LinkPolicy.swift:50-53) */
+/** schemes that only mean something inside the app, never worth opening; `editmd:` is editmd's own page (LinkPolicy.swift:50-53) */
 const PAGE_ONLY = new Set(['editmd:', 'about:', 'data:', 'blob:', 'javascript:'])
 
 /**
@@ -54,11 +54,11 @@ function pathOf(pathname: string): string {
 }
 
 /**
- * The action for `href`, an absolute URL (relative links are resolved against
- * the document's folder before this). File URLs are described by `describe`,
- * which returns null for a file that does not exist; such a file is judged by
- * its name with `isTextName` (the app passes macOS's type for its extension,
- * host/fileKinds.ts).
+ * the action for `href`, an absolute URL (relative links are resolved against
+ * the document's folder before this)
+ *
+ * File URLs are described by `describe`, which returns null for a file that does not exist; such a file is judged by
+ * its name with `isTextName` (the app passes macOS's type for its extension, host/fileKinds.ts).
  */
 export function linkAction(
 	href: string,
@@ -73,11 +73,11 @@ export function linkAction(
 	}
 
 	// editmd's page scheme names a file as `editmd://file/<path>`, which editmd turns back into a file URL
-	// before deciding (EditorBridge.swift `AssetSchemeHandler.fileURL`)
+	// before deciding (EditorBridge.swift `AssetSchemeHandler.fileURL`).
 	const pageFile = url.protocol === 'editmd:' && url.host === 'file'
 	if (url.protocol === 'file:' || pageFile) {
 		// Foundation's `URL.path` leaves out a file URL's host and keeps a broken percent-escape as written; editmd's
-		// page scheme names no file with a broken one
+		// page scheme names no file with a broken one.
 		let path: string
 		try {
 			path = pathOf(url.pathname)

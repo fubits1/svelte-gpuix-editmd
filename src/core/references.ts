@@ -46,7 +46,7 @@ function referencesIn(text: string): { targets: Map<string, Target>; references:
 const sameTarget = (a: Target | undefined, b: Target | undefined) =>
 	a !== undefined && b !== undefined && a.url === b.url && (a.title || null) === (b.title || null)
 
-/** a destination as mdast-util-to-markdown writes it: in angle brackets when empty or holding whitespace */
+/** a destination as mdast-util-to-markdown writes it: in angle brackets when empty or holding whitespace or a control character */
 const destination = (url: string) =>
 	url === '' || /\s/.test(url) || [...url].some((char) => char <= '\u001f' || char === '\u007f')
 		? `<${url}>`

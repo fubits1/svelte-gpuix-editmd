@@ -5,6 +5,7 @@
  */
 
 import { type BlockKind, blockKindOf } from '../engine/blocks.ts'
+import { commonEnds } from './diff.ts'
 
 /** a field's text and selection: `anchor` stays put while shift moves `focus`; equal for a caret */
 export type FieldState = { text: string; anchor: number; focus: number }
@@ -102,7 +103,7 @@ const previousWordStart = (text: string, at: number) =>
 	wordSegments(text).findLast(({ start }) => start < at)?.start ?? 0
 
 /**
- * text a word jump may cross: Latin script, spaces and punctuation, where JavaScript's segmenter and GPUI's agree;
+ * text a word jump may cross: Latin script and the ASCII and Latin-1 spaces and punctuation, where JavaScript's segmenter and GPUI's agree;
  * ICU tailors other scripts (CJK by dictionary), so a caret there moves by arrows only
  */
 const JUMPABLE = /^[\0-ɏ]*$/
@@ -290,6 +291,24 @@ function editKeys(text: string, edits: Edit[], start: number, end: number): stri
 		current = current.slice(0, at) + insert + current.slice(at + remove)
 	}
 	keys.push(selectKeys(current, { start: moved(start, true), end: moved(end, false) }))
+	return keys.join(' ')
+}
+
+/**
+ * the keys that turn a field holding `before` into `after`, then put its caret at `caret` (an offset in `after`): the
+ * one stretch where the texts differ, deleted and typed, so the change stays in the field's own undo. null when that
+ * stretch holds a newline, which Return would take, or a tab
+ */
+export function rewriteKeys(before: string, after: string, caret: number): string | null {
+	const { start, aEnd, bEnd } = commonEnds(before, after)
+	const insert = after.slice(start, bEnd)
+	if (/[\n\t]/.test(insert)) return null
+	const keys = [
+		caretKeys(before, start),
+		...repeat('delete', steps(before, start, aEnd)),
+		...[...insert].map(keyOf)
+	]
+	if (caret !== bEnd) keys.push(caretKeys(after, caret))
 	return keys.join(' ')
 }
 

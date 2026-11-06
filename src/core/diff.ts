@@ -1,4 +1,4 @@
-// Sequence diffing, used to turn "the document is now X" into small edits.
+// sequence diffing, used to turn "the document is now X" into small edits
 
 /** `a[aStart, aEnd)` was replaced by `b[bStart, bEnd)`. */
 export type Hunk = {
@@ -12,8 +12,9 @@ export type Hunk = {
 const MAX_TABLE = 4_000_000
 
 /**
- * The hunks that turn `a` into `b`, in order and non-overlapping. Unchanged
- * runs are the longest common subsequence under `same`.
+ * the hunks that turn `a` into `b`, in order and non-overlapping
+ *
+ * Unchanged runs are the longest common subsequence under `same`.
  */
 export function diff<T>(
 	a: readonly T[],
@@ -74,7 +75,7 @@ export function diff<T>(
 	return hunks
 }
 
-/** The common start and end of `a` and `b`: they differ only in `a[start, aEnd)` and `b[start, bEnd)`. */
+/** the common start and end of `a` and `b`: they differ only in `a[start, aEnd)` and `b[start, bEnd)` */
 export function commonEnds<T>(
 	a: ArrayLike<T>,
 	b: ArrayLike<T>
@@ -90,7 +91,7 @@ export function commonEnds<T>(
 	return { start, aEnd, bEnd }
 }
 
-/** Split text into lines, each keeping its line break, so joining restores it. */
+/** split text into lines, each keeping its line break, so joining restores it */
 export function lines(text: string): string[] {
 	return text.match(/[^\n]*\n|[^\n]+$/g) ?? []
 }

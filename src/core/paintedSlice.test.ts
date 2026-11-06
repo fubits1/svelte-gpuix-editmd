@@ -33,7 +33,7 @@ describe('struckThrough', () => {
 		expect(struckThrough('  ')).toBe('')
 	})
 
-	// `~~gone~~ kept` opened a tilde code fence and its text vanished; `pay 5~` showed raw tildes
+	// Unescaped, `~~gone~~ kept` would open a tilde code fence and lose its text, and `pay 5~` would show raw tildes.
 	test('tildes of its own text neither open a fence nor show as marks; code keeps them', () => {
 		expect([
 			struckThrough('~~gone~~ kept'),

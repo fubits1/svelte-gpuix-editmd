@@ -60,6 +60,15 @@ describe('parseBlocks', () => {
 		])
 	})
 
+	// CommonMark, as editmd's Milkdown parses it: a numbered list may start above 1 right after indented code
+	test('a list numbered from 3 after indented code is a list', () => {
+		const text = '    code\n\n3. step\n4. step\n'
+		expect(parseBlocks(text).map(({ kind, start, end }) => ({ kind, start, end }))).toEqual([
+			{ kind: 'code', start: 0, end: 8 },
+			{ kind: 'list', start: 10, end: 25 }
+		])
+	})
+
 	test("headings carry their level and GitHub's anchor, repeats numbered", () => {
 		const text = "# What's new\n\n## Setup\n\n## Setup *again*\n\n## Setup\n"
 

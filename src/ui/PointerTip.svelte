@@ -2,7 +2,8 @@
   @component
   A native tip, as AppKit shows a view's `toolTip` and WebKit an element's `title`: once the pointer has rested on the
   trigger past the delay, the text shows below-right of where the pointer was, kept inside the window and wrapped at
-  its width, and goes when the pointer leaves or a button goes down. `text` may depend on where on
+  its width, and goes when the pointer leaves or a button goes down, a button keeping it away until the pointer leaves
+  and comes back. `text` may depend on where on
   the trigger the pointer is (a changed run's or a titled link's painted boxes), a tip with other words showing afresh
   after the delay. The trigger, the `children` snippet's element, spreads the handlers it is passed, none while `text`
   is null. Of nested triggers only the one the pointer entered last shows its tip, as a browser shows the innermost
@@ -69,9 +70,14 @@
 	let shownAt = $state<{ x: number; y: number } | null>(null)
 	let timer: ReturnType<typeof setTimeout> | undefined
 
+	/** A button went down since the pointer entered the trigger, which keeps its tip away until the pointer leaves. */
+	let pressed = false
+
 	/** what this trigger's tip says where the pointer rests: on it, innermost, and where `text` gives words; else null */
 	function wanted(): string | null {
-		return pointer !== null && hovered.at(-1) === self ? textAt(pointer.x, pointer.y) : null
+		return !pressed && pointer !== null && hovered.at(-1) === self
+			? textAt(pointer.x, pointer.y)
+			: null
 	}
 
 	/**
@@ -99,13 +105,13 @@
 	}
 
 	/**
-	 * the shown tip goes, as AppKit hides a tooltip on mouse down; it shows again once the pointer moves on and rests
-	 * past the delay
+	 * The shown tip goes, as AppKit hides a tooltip on mouse down, and a pending one never shows, as AppKit's and
+	 * WebKit's `title` tip shows after no click; it shows again once the pointer leaves, comes back and rests past the
+	 * delay.
 	 */
-	function hide(): void {
-		clearTimeout(timer)
-		timer = undefined
-		shownAt = null
+	function press(): void {
+		pressed = true
+		sync()
 	}
 
 	const handlers: PointerHandlers = {
@@ -113,6 +119,7 @@
 		onmousemove: track,
 		onmouseleave: () => {
 			pointer = null
+			pressed = false
 			unhover(self)
 			sync()
 		}
@@ -131,28 +138,33 @@
 </script>
 
 {@render children(text === null ? NO_HANDLERS : handlers)}
-<!-- a nested trigger entered since hides this tip at once, before the pointer's next move tells this one -->
-{#if shownAt !== null && hovered.at(-1) === self}
-	<!-- a 0×0 box out of the trigger's flow: the tip hangs from the window point, wherever the box sits -->
-	<div class="tip-layer">
-		<anchored
-			position={shownAt}
-			anchor="topLeft"
-			offset={OFFSET}
-			fit="snap"
-			snapMargin={EDGE_MARGIN}
-			occlude={false}
-		>
-			<!-- a tip wider than the window wraps at its edges, as no source gives AppKit's own wrap width -->
-			<div
-				class="tip"
-				testid={`${testid}-tip`}
-				onmousedownoutside={hide}
-				style:max-width={`${window_size.width - 2 * EDGE_MARGIN}px`}
+{#if hovered.includes(self)}
+	<!--
+	  a 0×0 box out of the trigger's flow: the tip hangs from the window point, wherever the box sits
+
+		  It covers no point, so any button that goes down while the pointer is on the trigger goes down outside it.
+	-->
+	<div class="tip-layer" onmousedownoutside={press}>
+		<!-- A nested trigger entered since hides this tip at once, before the pointer's next move tells this one. -->
+		{#if shownAt !== null && hovered.at(-1) === self}
+			<anchored
+				position={shownAt}
+				anchor="topLeft"
+				offset={OFFSET}
+				fit="snap"
+				snapMargin={EDGE_MARGIN}
+				occlude={false}
 			>
-				{textAt(shownAt.x, shownAt.y)}
-			</div>
-		</anchored>
+				<!-- A tip wider than the window wraps at its edges, as no source gives AppKit's own wrap width. -->
+				<div
+					class="tip"
+					testid={`${testid}-tip`}
+					style:max-width={`${window_size.width - 2 * EDGE_MARGIN}px`}
+				>
+					{textAt(shownAt.x, shownAt.y)}
+				</div>
+			</anchored>
+		{/if}
 	</div>
 {/if}
 

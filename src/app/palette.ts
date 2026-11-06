@@ -50,11 +50,15 @@ const BASE: Record<Appearance, BaseColours> = {
 
 /**
  * AppKit's colours editmd paints its window chrome in, read in Swift on this macOS as sRGB: systemRed for Find's
- * no-match count and Not Saved (EditorWindowController.swift:301, 358), secondaryLabelColor for Saving… and Saved.
+ * no-match count and Not Saved (EditorWindowController.swift:301, 358), secondaryLabelColor for Saving… and Saved
+ *
  * `focus-ring` is keyboardFocusIndicatorColor, which follows the Mac's accent colour, so the theme asks AppKit for it
- * at launch (host/focusRing.ts); these are this Mac's, with its purple accent, for when that fails. the alert's
+ * at launch (host/focusRing.ts); these are this Mac's, with its purple accent, for when that fails. The alert's
  * colours are read as raw bytes from editmd's NSAlert pictures in light and dark (f-save-now): the page under it is
- * black at 20% over it in both (white paints #cccccc, #1e1f22 paints #17191a), the box and its push buttons solid greys
+ * black at 20% over it in both (white paints #cccccc, #1e1f22 paints #17191a), the box and its push buttons solid
+ * greys. The find bar's small bezels, its chevrons and Done, are read as raw bytes from editmd's dark picture at 2x
+ * (find-bar-source.png): a solid grey, a 0.5pt highlight along the top, a 0.5pt shadow round the rest and the
+ * chevrons' divider. editmd has no light picture of the bar, so in light they take the page's background and border.
  */
 const APPKIT: Record<
 	Appearance,
@@ -64,7 +68,11 @@ const APPKIT: Record<
 		| 'focus-ring'
 		| 'alert-dim'
 		| 'alert-surface'
-		| 'alert-button',
+		| 'alert-button'
+		| 'find-button'
+		| 'find-button-highlight'
+		| 'find-button-shadow'
+		| 'find-button-divider',
 		string
 	>
 > = {
@@ -74,7 +82,11 @@ const APPKIT: Record<
 		'focus-ring': '#8426857f',
 		'alert-dim': '#00000033',
 		'alert-surface': '#ededed',
-		'alert-button': '#dbdbdb'
+		'alert-button': '#dbdbdb',
+		'find-button': BASE.light.background,
+		'find-button-highlight': BASE.light.background,
+		'find-button-shadow': BASE.light.border,
+		'find-button-divider': BASE.light.border
 	},
 	dark: {
 		'system-red': '#ff4245',
@@ -82,7 +94,11 @@ const APPKIT: Record<
 		'focus-ring': '#dc78de7f',
 		'alert-dim': '#00000033',
 		'alert-surface': '#313334',
-		'alert-button': '#414344'
+		'alert-button': '#414344',
+		'find-button': '#545556',
+		'find-button-highlight': '#767777',
+		'find-button-shadow': '#181819',
+		'find-button-divider': '#474848'
 	}
 }
 
@@ -297,13 +313,18 @@ export function heldLinkThemeFor(theme: GpuixTheme): GpuixTheme {
 	return { ...theme, textMuted: theme.text }
 }
 
-/** editmd's `.markdown-body a { text-decoration-color: color-mix(var(--accent) 35%, transparent) }` */
-const LINK_UNDERLINE_ALPHA = alphaHex(0.35)
+/**
+ * the link underline's share of the accent: 60%, stronger than editmd's `color-mix(var(--accent) 35%, transparent)`
+ * (style.css:173), by the user's decision
+ */
+const LINK_UNDERLINE_ALPHA = alphaHex(0.6)
 
 /**
- * the `theme` a Block holding a link paints in: editmd underlines a link in the accent at 35%, and while ⌘ is held in
- * the link's own colour, the accent (style.css:170-181), wherever it sits. native <markdown> draws a link's underline in
- * `textMuted` (and a strike line with it, which editmd draws in the text colour)
+ * the `theme` a Block holding a link paints in: the link underlined in the accent at 60% (editmd's: 35%), and while ⌘
+ * is held in the link's own colour, the accent (style.css:170-181), wherever it sits
+ *
+ * Native <markdown> draws a link's underline in `textMuted`, and a strike line with it, which editmd draws in the text
+ * colour.
  */
 export function linkThemeFor(theme: GpuixTheme, held: boolean): GpuixTheme {
 	// the page's caret is editmd's accent (`sourceThemeFor`)
@@ -564,8 +585,8 @@ const SIZES: Record<string, number> = {
 
 /**
  * the window chrome's lengths in px, which never zoom: editmd's find bar is an AppKit view stacked above the
- * WKWebView, so pageZoom leaves it alone. NSStackView spacing 8 and edge insets 6/10, a separator line, and
- * small controls (NSControl.ControlSize.small: 11pt text, about 20px tall)
+ * WKWebView, so pageZoom leaves it alone: NSStackView spacing 8 and edge insets 6/10, a separator line, and
+ * small controls (NSControl.ControlSize.small: 11pt text, about 20px tall, the chevrons' and Done's bezels 16px)
  */
 const CHROME_SIZES: Record<string, number> = {
 	'find-gap': 8,
@@ -573,9 +594,16 @@ const CHROME_SIZES: Record<string, number> = {
 	'find-padding-x': 10,
 	'find-separator': 1,
 	'find-text': 11,
-	'find-control-height': 20,
+	/**
+	 * the chevrons' and Done's bezels in editmd's picture at 2x (find-bar-source.png): 32 device rows tall, corners
+	 * fitting an 8 to 8.5 device-px arc, the edge 1 device-px, the divider 20 device rows centred in the bezel
+	 */
+	'find-control-height': 16,
 	'find-control-padding-x': 8,
 	'find-control-radius': 5,
+	'find-button-radius': 4,
+	'find-button-edge': 0.5,
+	'find-divider-height': 10,
 	'find-chevron': 12,
 	// a small NSSearchField's magnifier and clear glyphs, and the space around them inside its bezel
 	'find-glyph': 12,

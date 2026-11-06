@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 
 /** whether process `pid` runs: signal 0 checks without sending, EPERM means it runs as another user */
-function isRunning(pid: number): boolean {
+export function isRunning(pid: number): boolean {
 	try {
 		process.kill(pid, 0)
 		return true

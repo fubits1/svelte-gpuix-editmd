@@ -19,8 +19,8 @@ type Action =
 	| { type: 'wake' }
 
 /**
- * Runs `Persistence` against a simulated editor, file and clock, the way
- * `Document` drives it, and records what happened.
+ * runs `Persistence` against a simulated editor, file and clock, the way
+ * `DocumentFile` drives it, and records what happened
  */
 class Simulation {
 	readonly policy = DEFAULT_POLICY
@@ -119,7 +119,7 @@ class Simulation {
 				} else {
 					this.saved = action.version
 					this.send({ type: 'saveFinished', error: null })
-					// The page then reports whether edits arrived during the save.
+					// The editor then reports whether edits arrived during the save.
 					this.send({ type: 'changed', dirty: this.dirty })
 				}
 				break

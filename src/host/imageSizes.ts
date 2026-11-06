@@ -6,7 +6,7 @@ type Read = { size: Size | null; missing: boolean }
 
 /**
  * local image files' natural sizes, read from their headers once per path, since a View asks on every
- * paint; null for a file that is missing, unreadable or not a PNG, GIF, JPEG or WebP
+ * paint; null for a file that is missing, unreadable or in no format `imageSize` reads
  */
 export class ImageSizes {
 	#reads = new Map<string, Read>()

@@ -9,8 +9,8 @@ const HOLDS_NO_LINK = new Set<BlockKind>(['frontmatter', 'definition', 'thematic
 const AUTOLINKABLE = /^[a-z][a-z+.-]+:[^\0- <>\u007F]*$/i
 
 /**
- * a link's destination as editmd's serializer writes it: in angle brackets when it holds a space or `<`/`>`, else
- * with its parentheses escaped, so none of them ends the link early (measured in editmd's own editor)
+ * a link's destination as editmd's serializer writes it: in angle brackets with its `<`/`>` escaped when it holds
+ * whitespace, else with its parentheses escaped, so none of them ends the link early (measured in editmd's own editor)
  */
 const destinationOf = (url: string) =>
 	/\s/.test(url)

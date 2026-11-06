@@ -12,12 +12,14 @@ describe('commandFor', () => {
 		['o', cmd, 'open'],
 		['n', cmd, 'new'],
 		['w', cmd, 'close'],
-		// Quit, from gpuix's App menu: taken first so unsaved edits are saved or asked about (GPUI's own quit ends
-		// the process without Node's `exit` event, measured in a real window)
+		// Quit, from gpuix's App menu: the port's own, which saves or asks about unsaved edits, is reached headless, and
+		// in a real window GPUI's Quit takes ⌘Q first (gap G17, see `quit` in controller.svelte.ts)
 		['q', cmd, 'quit'],
 		['p', cmd, 'print'],
 		['p', shift, 'pageSetup'],
-		['/', shift, 'commandPalette'],
+		// macOS's ⇧⌘/ searches the Help menu; the palette sits on ⌘K (see COMMANDS' 'shift-k' in shortcuts.ts).
+		['/', shift, 'helpSearch'],
+		['k', cmd, 'commandPalette'],
 		['z', cmd, 'undo'],
 		['z', shift, 'redo'],
 		// editmd's editor keymap also redoes on Mod-y (web/src/editor.ts:509)
@@ -29,7 +31,8 @@ describe('commandFor', () => {
 		['i', cmd, 'italic'],
 		['x', shift, 'strikethrough'],
 		['e', cmd, 'code'],
-		['k', cmd, 'link'],
+		// editmd's Link… is ⌘K; the port moves it to ⇧⌘K for the palette (COMMANDS' 'shift-k' in shortcuts.ts).
+		['k', shift, 'link'],
 		['0', alt, 'body'],
 		['1', alt, 'heading1'],
 		['2', alt, 'heading2'],

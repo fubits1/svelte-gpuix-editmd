@@ -58,7 +58,7 @@ describe('diff', () => {
 	})
 
 	test('identical sequences have no hunks', () => {
-		// block body: vitest's toEqual returns a value fast-check reads as a failed property, bun:test's returned undefined
+		// block body: vitest's toEqual returns a value fast-check reads as a failed property
 		fc.assert(
 			fc.property(small, (a) => {
 				expect(diff(a, [...a])).toEqual([])

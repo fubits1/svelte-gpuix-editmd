@@ -3,19 +3,21 @@ import { commands, page } from 'vitest/browser'
 
 declare module 'vitest/browser' {
 	interface BrowserCommands {
-		pictures: () => Promise<{ name: string; url: string }[]>
+		getPictures: () => Promise<{ name: string; url: string }[]>
 	}
 }
 
 /**
  * the open field's blinking caret on the empty document's window picture: 2×26pt at the column's left edge, which a
- * capture catches lit or dark at random. A box around it is painted over in both pictures before they are compared.
+ * capture catches lit or dark at random
+ *
+ * A box around it is painted over in both pictures before they are compared.
  */
 const CARET_MASKS: Record<string, { left: number; top: number; width: number; height: number }> = {
 	'window-r-empty-doc': { left: 196, top: 136, width: 20, height: 68 }
 }
 
-const pictures = await commands.pictures()
+const pictures = await commands.getPictures()
 
 test.each(pictures.map((picture) => [picture.name, picture.url]))(
 	'%s looks as before the migration',

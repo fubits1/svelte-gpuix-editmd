@@ -120,7 +120,7 @@ function icoSize(data: Uint8Array): Size | null {
 	return largest
 }
 
-/** px per CSS absolute unit, 96 px to the inch, as WebKit sizes an SVG */
+/** px per CSS absolute unit, 96px to the inch, as WebKit sizes an SVG */
 const PX_PER_UNIT: Record<string, number> = {
 	'': 1,
 	px: 1,

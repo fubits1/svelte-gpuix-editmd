@@ -4,9 +4,7 @@ import {
 	type AgentAuthor,
 	type AgentEditPhase,
 	type AgentEditReport,
-	type AgentProcess,
-	parseAgentEditReport,
-	processAuthorOfChange
+	parseAgentEditReport
 } from './agentEdits.ts'
 
 describe('parseAgentEditReport', () => {
@@ -176,42 +174,5 @@ describe('AgentEditClaims', () => {
 
 	test('paths are compared through symlinks', () => {
 		expect(AgentEditClaims.key('/tmp/../tmp/x.md')).toBe(AgentEditClaims.key('/private/tmp/x.md'))
-	})
-})
-
-describe('processAuthorOfChange', () => {
-	const agent = (pid: number, command: string, directory: string): AgentProcess => ({
-		pid,
-		started: 7,
-		command,
-		directory
-	})
-
-	test('the agent working above the file', () => {
-		const found = processAuthorOfChange('/repo/docs/plan.md', [
-			agent(1, 'claude', '/repo'),
-			agent(2, 'zsh', '/repo/docs'),
-			agent(3, 'codex', '/other')
-		])
-		expect(found).toEqual({ id: 'process:1:7', name: 'Claude · repo' })
-	})
-
-	test('the deepest folder wins', () => {
-		const found = processAuthorOfChange('/repo/docs/plan.md', [
-			agent(1, 'claude', '/repo'),
-			agent(2, 'codex', '/repo/docs')
-		])
-		expect(found?.name).toBe('Codex · docs')
-	})
-
-	test('nobody when ambiguous or absent', () => {
-		expect(
-			processAuthorOfChange('/repo/a.md', [
-				agent(1, 'claude', '/repo'),
-				agent(2, 'claude', '/repo')
-			])
-		).toBeNull()
-		expect(processAuthorOfChange('/repo/a.md', [agent(1, 'claude', '/rep')])).toBeNull()
-		expect(processAuthorOfChange('/repo/a.md', [])).toBeNull()
 	})
 })

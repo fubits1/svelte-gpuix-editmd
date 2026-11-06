@@ -29,9 +29,7 @@ export function diagramOf(source: string, palette: Palette): Diagram {
 	if (!source.trim()) return { kind: 'empty', message: 'Empty diagram' }
 	const result = renderMermaid(source, palette)
 	if (result.kind === 'diagram') return result
-	// at the end of the input pele's `^` marker sits under an empty context line, pointing at nothing
-	const message = result.message.replace(/\n[ \t]*\n[ \t]*\^[ \t]*(?=\n|$)/, '\n')
-	return { kind: 'error', message: errorText(message) }
+	return { kind: 'error', message: errorText(result.message) }
 }
 
 /** editmd's `errorText`: the first four non-blank lines of a render error */

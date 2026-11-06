@@ -1,6 +1,21 @@
 import { describe, expect, test } from 'vitest'
-import { filterEntries, menuBar, menuEntries, searchMenuBar, type MenuBarItem } from './menu.ts'
+import {
+	filterEntries,
+	keysOf,
+	menuBar,
+	menuEntries,
+	searchMenuBar,
+	type MenuBarItem
+} from './menu.ts'
 import { commandFor } from './shortcuts.ts'
+
+test('keysOf spells a command’s chord in macOS glyphs, empty for a command with none', () => {
+	expect([keysOf('commandPalette'), keysOf('link'), keysOf('pasteAndMatchStyle')]).toEqual([
+		'⌘K',
+		'⇧⌘K',
+		'⌥⇧⌘V'
+	])
+})
 
 const STATE = {
 	sourceMode: false,
@@ -145,7 +160,8 @@ describe('menuBar', () => {
 			'Italic ⌘I',
 			'Strikethrough ⇧⌘X',
 			'Inline Code ⌘E',
-			'Link… ⌘K',
+			// editmd's ⌘K is the port's command palette (COMMANDS' 'shift-k' in shortcuts.ts).
+			'Link… ⇧⌘K',
 			'-',
 			'Body Text ⌥⌘0',
 			'Heading 1 ⌥⌘1',

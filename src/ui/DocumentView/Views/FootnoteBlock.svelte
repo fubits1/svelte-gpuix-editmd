@@ -54,8 +54,8 @@
 	})
 
 	/**
-	 * the content after `[^label]:` with its references as link runs, dedented so continuation lines are markdown of
-	 * their own; parseBlocks gives every footnote definition a `footnote`, so the Block start is only a fallback
+	 * the content after `[^label]:` with its references as their raised labels (`footnoteMark`), dedented so
+	 * continuation lines are markdown of their own; parseBlocks gives every footnote definition a `footnote`, so the Block start is only a fallback
 	 */
 	const source = $derived(
 		documentController.renderSource(

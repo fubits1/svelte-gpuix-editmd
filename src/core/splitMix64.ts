@@ -24,7 +24,7 @@ export class SplitMix64 {
 		return Number(this.next() >> 11n) / 2 ** 53
 	}
 
-	/** uniform in [low, high] */
+	/** uniform in [low, high) */
 	double(low: number, high: number): number {
 		return low + this.unit() * (high - low)
 	}

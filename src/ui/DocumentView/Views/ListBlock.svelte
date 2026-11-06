@@ -32,7 +32,7 @@
 	const commandHeld = useCommandHeld()
 	const quoteColour = useQuoteColour()
 
-	/** test.ts finds a list holding tasks by `task-list-…`, `task-row-…` and `task-text-…`, one without by `list-…` */
+	/** The headless UI suite finds a list holding tasks by `task-list-…`, `task-row-…` and `task-text-…`, one without by `list-…`. */
 	const listId = $derived(block.tasks ? 'task-list' : 'list')
 	const itemId = $derived(block.tasks ? 'task' : 'list')
 

@@ -1,7 +1,7 @@
 /**
- * expected values are editmd 9e889e6's: Add Link with nothing selected (editor.ts:387-396) run by its own
+ * insertLink's expected values are editmd 9e889e6's: Add Link with nothing selected (editor.ts:387-396) run by its own
  * `MarkdownEditor` with the caret at the end of the Block, then serialized; its sheet's URL comes from the pasteboard
- * (EditorWindowController.swift:144-150)
+ * (EditorWindowController.swift:144-150).
  */
 
 import { describe, expect, test } from 'vitest'
@@ -46,8 +46,6 @@ describe('insertLink: the URL goes in at the end of the Block as its own link te
 	})
 })
 
-// editmd's Add Link at the field's selection (editor.ts:374-399), learnt through the sentinel probe in core/fieldSelection.ts;
-// measured in editmd's own editor
 // editmd titles the sheet Edit Link, prefills the link's URL and offers Remove Link when its caret is in a link
 // (EditorWindowController.swift:117-128, editor.ts:362-372 `linkAtSelection` reads the link mark's href)
 describe('linkAt', () => {
@@ -74,6 +72,8 @@ describe('linkAt', () => {
 	})
 })
 
+// editmd's Add Link at the field's selection (editor.ts:374-399), learnt through the sentinel probe in core/fieldSelection.ts;
+// measured in editmd's own editor
 describe('linkAtSelection', () => {
 	const at = (source: string, selected: string, from = 0) => {
 		const start = source.indexOf(selected, from)

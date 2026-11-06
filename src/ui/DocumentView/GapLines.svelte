@@ -15,11 +15,35 @@
 	const key = $derived('index' in place ? `end-${place.index}` : `${place.start}`)
 </script>
 
-{#each gaps as gap, n (n)}
-	<DeletedLine
-		colour={gap.colour}
-		tooltip={gap.tooltip}
-		testid={`gap-${key}-${n}`}
-		tooltipTestid={`gap-tooltip-${key}-${n}`}
-	/>
-{/each}
+{#snippet lines()}
+	{#each gaps as gap, n (n)}
+		<DeletedLine
+			colour={gap.colour}
+			tooltip={gap.tooltip}
+			testid={`gap-${key}-${n}`}
+			tooltipTestid={`gap-tooltip-${key}-${n}`}
+		/>
+	{/each}
+{/snippet}
+
+{#if 'index' in place && gaps.length > 0}
+	<div class="after-last">
+		{@render lines()}
+	</div>
+{:else}
+	{@render lines()}
+{/if}
+
+<style>
+	/*
+	 * the lines' `margin: 0.2rem 0` (style.css:494-498), collapsed between adjacent ones: 0.2rem after the last row and
+	 * between the lines; between rows the list's own gap spaces them
+	 */
+	.after-last {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		gap: var(--size-list-gap);
+		padding-top: var(--size-list-gap);
+	}
+</style>

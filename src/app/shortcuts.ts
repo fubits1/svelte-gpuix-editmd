@@ -44,6 +44,7 @@ export type Command =
 	| 'zoomOut'
 	| 'actualSize'
 	| 'commandPalette'
+	| 'helpSearch'
 	| 'toggleFullScreen'
 	| 'quit'
 
@@ -54,10 +55,8 @@ const COMMANDS: Record<string, Command> = {
 	o: 'open',
 	n: 'new',
 	w: 'close',
-	// App > Quit (MainMenu.swift:30): the port's quit saves or asks, then ends the process. in a real window GPUI's
-	// own Quit binding takes ⌘Q before any listener and ends the process without Node's `exit` event, so this only
-	// runs where GPUI's dispatch reaches the port (headless); the last second of typing is lost (gap G17, measured in
-	// a real window)
+	// App > Quit (MainMenu.swift:30), which in a real window GPUI's own Quit takes first (gap G17; see `quit` in the
+	// `#commands` of ui/DocumentView/controller.svelte.ts)
 	q: 'quit',
 	p: 'print',
 	'shift-p': 'pageSetup',
@@ -69,7 +68,7 @@ const COMMANDS: Record<string, Command> = {
 	c: 'copy',
 	// Edit > Paste: a focused field pastes on its own; with none, editmd's page pastes at its caret
 	v: 'paste',
-	// Edit > Paste and Match Style, ⌥⇧⌘V (MainMenu.swift): a focused field takes it; with none it is greyed, as Paste
+	// Edit > Paste and Match Style, ⌥⇧⌘V (MainMenu.swift): a focused field takes it; with none it is greyed, unlike Paste
 	'shift-alt-v': 'pasteAndMatchStyle',
 	f: 'find',
 	g: 'findNext',
@@ -78,7 +77,8 @@ const COMMANDS: Record<string, Command> = {
 	i: 'italic',
 	'shift-x': 'strikethrough',
 	e: 'code',
-	k: 'link',
+	// editmd's Link… is ⌘K (MainMenu.swift); the port gives ⌘K to its palette, as Notion and Linear do.
+	'shift-k': 'link',
 	'alt-0': 'body',
 	'alt-1': 'heading1',
 	'alt-2': 'heading2',
@@ -96,14 +96,17 @@ const COMMANDS: Record<string, Command> = {
 	'=': 'zoomIn',
 	'-': 'zoomOut',
 	'0': 'actualSize',
-	// not editmd's: the menu bar it would search is gap G2, and macOS's Help menu search sits on ⇧⌘/
-	'shift-/': 'commandPalette',
+	// not editmd's: the palette of the File, Edit, Format and View commands (`menuEntries`), beside the in-window Help
+	// menu's search (HelpSearch.svelte), which stands in for the native one (gap G2)
+	k: 'commandPalette',
+	// macOS's Help menu search, here the in-window Help menu's
+	'shift-/': 'helpSearch',
 	// AppKit's View > Enter Full Screen, which it adds to editmd's View menu
 	'ctrl-f': 'toggleFullScreen'
 }
 
 /** the chord behind cmd that runs `command`, spelled as in COMMANDS ('shift-s'), or null when it has no key */
-export function chordOf(command: Command): string | null {
+export function chordOf(command: string): string | null {
 	return Object.entries(COMMANDS).find(([, each]) => each === command)?.[0] ?? null
 }
 

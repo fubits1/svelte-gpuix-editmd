@@ -112,7 +112,7 @@
 			</div>
 		{/if}
 	</div>
-	<div class="find-arrows">
+	<div class="find-bezel find-arrows" testid="find-arrows">
 		<div
 			class="find-arrow"
 			testid="find-previous"
@@ -123,7 +123,7 @@
 		>
 			<svg class="find-chevron" source={chevron('left', theme().palette.text)}></svg>
 		</div>
-		<div class="find-divider"></div>
+		<div class="find-divider" testid="find-divider"></div>
 		<div
 			class="find-arrow"
 			testid="find-next"
@@ -136,7 +136,7 @@
 		</div>
 	</div>
 	<div
-		class="find-done"
+		class="find-bezel find-done"
 		testid="find-done"
 		role="button"
 		hitbox="self"
@@ -208,14 +208,22 @@
 		height: var(--size-find-glyph);
 		color: var(--faint);
 	}
+	/*
+	 * a small AppKit bezel, the chevrons' NSSegmentedControl and Done's push button: filled, a highlight along its top,
+	 * and its shadow round it as an outline outside the box, which takes no room
+	 */
+	.find-bezel {
+		height: var(--size-find-control-height);
+		border-width: var(--size-find-button-edge) 0 0;
+		border-color: var(--find-button-highlight);
+		border-radius: var(--size-find-button-radius);
+		outline-width: var(--size-find-button-edge);
+		outline-color: var(--find-button-shadow);
+		background-color: var(--find-button);
+	}
 	.find-arrows {
 		display: flex;
 		flex-direction: row;
-		height: var(--size-find-control-height);
-		border-width: var(--size-find-separator);
-		border-color: var(--border);
-		border-radius: var(--size-find-control-radius);
-		background-color: var(--background);
 	}
 	.find-arrow {
 		display: flex;
@@ -225,8 +233,10 @@
 		cursor: default;
 	}
 	.find-divider {
+		align-self: center;
 		width: var(--size-find-separator);
-		background-color: var(--border);
+		height: var(--size-find-divider-height);
+		background-color: var(--find-button-divider);
 	}
 	.find-chevron {
 		width: var(--size-find-chevron);
@@ -235,12 +245,7 @@
 	.find-done {
 		display: flex;
 		align-items: center;
-		height: var(--size-find-control-height);
 		padding: 0 var(--size-find-control-padding-x);
-		border-width: var(--size-find-separator);
-		border-color: var(--border);
-		border-radius: var(--size-find-control-radius);
-		background-color: var(--background);
 		cursor: default;
 	}
 </style>

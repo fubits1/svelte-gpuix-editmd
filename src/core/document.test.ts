@@ -427,44 +427,42 @@ describe('Document', () => {
 	})
 
 	/**
-	 * an outside write that deletes the Block being edited: editmd's rich editor drops the typing with the Block
-	 * (measured on its MarkdownEditor), its Source mode glues the typing onto the next Block; the port keeps
-	 * the field's text as its own Block where the deleted one was, since losing typing is what the user reported
+	 * An outside write that deletes the Block being edited, or turns it into another kind, drops the typing with the
+	 * Block, as editmd's MarkdownEditor does (measured, the kit's f-merge-open cases): a deleted Block's session ends,
+	 * and a retyped one's field shows the Block as the write left it.
 	 */
-	test('an open Block deleted from outside keeps the field’s text as its own Block, and later typing lands in order', () => {
+	test('an open Block an outside write deletes or turns into another kind drops the typing, as editmd', () => {
 		const run = (start: string, index: number, typed: string, theirs: string) => {
 			const document = new Document(start)
 			const session = document.openEdit(index)
 			session.update(typed)
 			document.mergeFromDisk(theirs)
-			const afterMerge = [
-				document.text,
-				session.hasDeferredMerge,
-				document.text.slice(session.start, session.end)
-			]
-			session.update(`${typed}z`)
+			const shown = session.takeOutsideChange()?.text ?? null
+			const dropped = session.dropped
 			session.close()
-			return [afterMerge, document.text]
+			return [dropped, shown, document.text, document.undo() && document.text]
 		}
 
 		expect([
-			run(
-				'# Title\n\nFirst paragraph.\n\nSecond paragraph.\n',
-				1,
-				'First paragraph.xy',
-				'# Title\n\nSecond paragraph.\n'
-			),
-			run('# Title\n\nLast paragraph.\n', 1, 'Last paragraph.xy', '# Title\n')
+			run('A one.\n\nB two.\n\nC three.\n', 1, 'B two. typed', 'A one.\n\nC three.\n'),
+			run('# Title\n\nLast paragraph.\n', 1, 'Last paragraph. typed', '# Title\n'),
+			run('Title line\n', 0, 'Title line typed', '## Title line\n')
 		]).toEqual([
-			[
-				['# Title\n\nFirst paragraph.xy\n\nSecond paragraph.\n', false, 'First paragraph.xy'],
-				'# Title\n\nFirst paragraph.xyz\n\nSecond paragraph.\n'
-			],
-			[
-				['# Title\n\nLast paragraph.xy\n', false, 'Last paragraph.xy'],
-				'# Title\n\nLast paragraph.xyz\n'
-			]
+			[true, null, 'A one.\n\nC three.\n', false],
+			[true, null, '# Title\n', false],
+			[false, '## Title line', '## Title line\n', false]
 		])
+	})
+
+	// The typing is dropped when the line it sits at the end of goes, as editmd's editor drops it (measured).
+	test('typing at the end of a line an outside write deletes is dropped, as editmd', () => {
+		const document = new Document('line one\nline two\nline three\n')
+		const session = document.openEdit(0)
+		session.update('line one\nline two typed\nline three')
+		document.mergeFromDisk('line one\nline three\n')
+		session.close()
+
+		expect(document.text).toBe('line one\nline three\n')
 	})
 
 	// the view finds the open field's Block by the session's range, which a Disk merge moves
@@ -504,8 +502,8 @@ describe('Document', () => {
 		])
 	})
 
-	// a definition an agent changed or removed while the user typed elsewhere had its references
-	// written inline with the old URL once the field closed; editmd leaves them, as only the user's own change counts
+	// References to a definition an agent changes or removes while the user types elsewhere stay as written: editmd
+	// writes them inline only for the user's own change.
 	test('a definition changed or removed from outside during typing leaves its references as they are', () => {
 		const source = 'see [docs][d]\n\ntyping here\n\n[d]: https://x.example/v1\n'
 		const typedAround = (theirs: string) => {
@@ -703,7 +701,8 @@ describe('Document', () => {
 		])
 	})
 
-	// editmd's serializer ends a document it writes with a newline; a new document typed in the port had none
+	// editmd's serializer ends a document it writes with a newline, so a new document gets one; an existing file keeps
+	// its ending.
 	test('a new document gets its final newline when a field closes, and an existing file without one is left as it is', () => {
 		// an empty Document's first field, as the window's "Start writing…" opens it
 		const fresh = new Document('')
@@ -717,8 +716,8 @@ describe('Document', () => {
 		expect([fresh.text, existing.text]).toEqual(['Hello there\n', 'No newline, edited'])
 	})
 
-	// a file with no final newline (as a new document saves), the user typing in its last Block, an
-	// agent appending a section: the section joined the user's open field as raw markdown
+	// an agent appending a section right after the open Block, in a file with no final newline, the user typing in its
+	// last Block: the section is new Blocks, not the field's
 	test('a section appended right after the open Block stays outside its field, as new Blocks', () => {
 		const document = new Document('Hello there')
 		const session = document.openEdit(0)
@@ -763,8 +762,8 @@ describe('Document', () => {
 		]).toEqual([3, 6, 9])
 	})
 
-	// a fence typed into a Block and left open made every later Block code, painted and saved so;
-	// editmd's input rule makes a code block of that Block alone
+	// A fence left open would make every later Block code, painted and saved so; editmd's input rule makes a code
+	// block of that Block alone.
 	test('a Block left with an open code fence gets it closed when its field closes, in the same undo step', () => {
 		const document = new Document('Para one.\n\nPara two.\n')
 		const session = document.openEdit(0)

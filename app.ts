@@ -7,7 +7,7 @@ import { startDocument } from './startup.ts'
 
 await startDocument()
 
-// editmd caps its window to the screen; gpuix cannot read the screen, so AppKit is asked first
+// capped to the screen as editmd's window is: `windowSizeFor` in src/app/window.ts, `readVisibleScreen` asks AppKit
 render_hot(new URL('./App.svelte', import.meta.url), {
 	...WINDOW,
 	...windowSizeFor(readVisibleScreen()),

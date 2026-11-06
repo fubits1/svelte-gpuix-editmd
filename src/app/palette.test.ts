@@ -323,7 +323,7 @@ describe('heldLinkThemeFor', () => {
 
 // native <markdown> paints a link's underline in `textMuted` (measured headless: `#rrggbb59` paints the accent at 35%)
 describe('linkThemeFor', () => {
-	test('a link’s underline is the accent at 35%, and the accent while ⌘ is held, in muted text too', () => {
+	test('a link’s underline is the accent at 60%, and the accent while ⌘ is held, in muted text too', () => {
 		const dark = textThemeFor('dark')
 		const muted = mutedThemeFor(textThemeFor('light'))
 		expect([
@@ -331,9 +331,9 @@ describe('linkThemeFor', () => {
 			linkThemeFor(dark, true).textMuted,
 			linkThemeFor(muted, false).textMuted
 		]).toEqual([
-			{ ...dark, textMuted: `${EDITMD.dark.accent}59` },
+			{ ...dark, textMuted: `${EDITMD.dark.accent}99` },
 			EDITMD.dark.accent,
-			`${EDITMD.light.accent}59`
+			`${EDITMD.light.accent}99`
 		])
 	})
 })
@@ -354,6 +354,24 @@ describe('alert tokens', () => {
 		).toEqual([
 			['#00000033', '#ededed', '#dbdbdb', '#8426857f'],
 			['#00000033', '#313334', '#414344', '#dc78de7f']
+		])
+	})
+})
+
+// read as raw bytes from editmd's dark find bar picture (find-bar-source.png, 2x); editmd has no light picture of it
+describe('find bar bezel tokens', () => {
+	test('editmd’s chevrons and Done: fill, top highlight, shadow ring and divider, in dark as measured', () => {
+		const [light, dark] = [paletteFor('light'), paletteFor('dark')]
+		expect(
+			[light, dark].map((palette) => [
+				palette['find-button'],
+				palette['find-button-highlight'],
+				palette['find-button-shadow'],
+				palette['find-button-divider']
+			])
+		).toEqual([
+			['#ffffff', '#ffffff', '#d8dee4', '#d8dee4'],
+			['#545556', '#767777', '#181819', '#474848']
 		])
 	})
 })
@@ -554,9 +572,12 @@ describe('sizeTokensFor', () => {
 			'size-find-padding-x': '10px',
 			'size-find-separator': '1px',
 			'size-find-text': '11px',
-			'size-find-control-height': '20px',
+			'size-find-control-height': '16px',
 			'size-find-control-padding-x': '8px',
 			'size-find-control-radius': '5px',
+			'size-find-button-radius': '4px',
+			'size-find-button-edge': '0.5px',
+			'size-find-divider-height': '10px',
 			'size-find-chevron': '12px',
 			'size-find-glyph': '12px',
 			'size-find-glyph-gap': '5px',
@@ -580,7 +601,7 @@ describe('sizeTokensFor', () => {
 		)
 
 		// with the search field's magnifier and clear glyphs and the space around them
-		expect(chrome).toHaveLength(11)
+		expect(chrome).toHaveLength(14)
 		for (const zoom of [0.5, 1.1, 3]) {
 			const zoomed = sizeTokensFor(zoom)
 			for (const [name, value] of chrome) expect(zoomed[name]).toBe(value)

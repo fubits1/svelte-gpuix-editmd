@@ -12,6 +12,8 @@ export type EditSession = {
 	readonly source: string
 	/** a change from outside the field reached the Active block; the field does not show it, the Document does */
 	readonly hasDeferredMerge: boolean
+	/** An outside write deleted the Active block: the session ended and its typing went with the Block, as in editmd. */
+	readonly dropped: boolean
 	/** where the session's text sits in the Document now; a Disk merge moves it, Blocks above it may come and go */
 	readonly start: number
 	readonly end: number
@@ -49,6 +51,8 @@ type SessionRange = {
 	fresh: boolean
 	/** the text before a new Block's blank line went in (`openEditAfter`), null for an existing Block's session */
 	opened: string | null
+	/** An outside write deleted the session's Block (`EditSession.dropped`). */
+	dropped: boolean
 }
 
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/
@@ -75,17 +79,20 @@ function openFence(text: string): string | null {
 	return open
 }
 
-/** one user change, as the whole text before and after it */
-/** `started` and `typed` are a session keystroke run's first and last time, the Undo step grouping's clock */
+/**
+ * one user change, as the whole text before and after it; `started` and `typed` are a session keystroke run's first
+ * and last time, the Undo step grouping's clock
+ */
 type TextChange = { before: string; after: string; started?: number; typed?: number }
 
 /** keystrokes closer than this are one Undo step, as Yjs's UndoManager `captureTimeout` default (UndoManager.js:166) */
 const CAPTURE_MS = 500
 
 /**
- * what one undo takes back: the user's changes in order. a step is a list, not one before/after pair,
- * so a Disk merge that landed between an Edit session's keystrokes is not undone with them; keystrokes
- * with nothing in between share one change, so the list grows only at such merges
+ * what one undo takes back: the user's changes in order
+ *
+ * A step is a list, not one before/after pair, so a Disk merge that landed between an Edit session's keystrokes is not
+ * undone with them; keystrokes with nothing in between share one change, so the list grows only at such merges.
  */
 type UndoStep = TextChange[]
 
@@ -98,7 +105,9 @@ export type Highlight = {
 	at: number
 	/**
 	 * for a Block that kept its kind: the runs of its painted text that changed, which editmd marks inline instead of
-	 * the whole Block (web/src/changes.ts:48-74); none for a new or retyped Block, or once the user edits it
+	 * the whole Block (web/src/changes.ts:48-74); none for a new or retyped Block
+	 *
+	 * An edit inside the Block moves them with its text, and one across the Block's ends drops them.
 	 */
 	runs?: ChangedRun[]
 	/** how many changes editmd reports in the Block, a list's items apart (changes.ts:28-56); one when not set */
@@ -365,7 +374,8 @@ export class Document {
 			changes: [],
 			whole,
 			fresh: this.#text.trim() === '',
-			opened: null
+			opened: null,
+			dropped: false
 		}
 		this.#session = range
 
@@ -373,6 +383,9 @@ export class Document {
 			source: this.#text.slice(start, end),
 			get hasDeferredMerge() {
 				return range.deferred !== null
+			},
+			get dropped() {
+				return range.dropped
 			},
 			get start() {
 				return range.start
@@ -486,11 +499,11 @@ export class Document {
 			...this.#highlights.flatMap(({ start, end }) => [start, end]),
 			...this.#deletions.map(({ offset }) => offset)
 		]
-		const removed = session ? this.#deletedFromOutside(session, theirs) : null
+		const replaced = session ? this.#replacedFromOutside(session, theirs) : null
 		let mine = this.#text
-		if (session && removed) {
-			// the deleted Block's own text in place of the typing, so the outside deletion applies cleanly
-			const original = this.#baseline.slice(removed.start, removed.end)
+		if (session && replaced) {
+			// the Block's own text in place of the typing, which goes with the Block, as in editmd
+			const original = this.#baseline.slice(replaced.start, replaced.end)
 			const delta = original.length - (session.end - session.start)
 			mine = this.#text.slice(0, session.start) + original + this.#text.slice(session.end)
 			cursors = cursors.map((cursor) =>
@@ -522,8 +535,11 @@ export class Document {
 			...deletion,
 			offset: mapped[deletionsFrom + index]!
 		}))
-		if (session && removed) this.#keepAsOwnBlock(session, merged.cursors[0]!, shown)
-		else if (session) {
+		if (session && replaced?.deleted) {
+			session.dropped = true
+			this.#session = null
+		} else if (session) {
+			if (replaced) session.changes = []
 			session.start = merged.cursors[0]!
 			session.end = merged.cursors[1]!
 			this.#deferIfChanged(session, shown)
@@ -635,41 +651,29 @@ export class Document {
 	}
 
 	/**
-	 * the session's Block as it is in the Baseline, when `theirs` deletes it; null when it is kept, changed, or
-	 * not in the Baseline at all (typed since the last save)
+	 * the session's Block as it is in the Baseline, when `theirs` deletes it (`deleted`) or makes it another kind, as
+	 * a paragraph turned heading: editmd's editor replaces the node and the typing goes with it (measured); null when
+	 * it is kept or changed in kind's bounds, or not in the Baseline at all (typed since the last save)
+	 *
+	 * Source mode's whole-text session is never replaced.
 	 */
-	#deletedFromOutside(
+	#replacedFromOutside(
 		session: SessionRange,
 		theirs: string
-	): { start: number; end: number } | null {
+	): { start: number; end: number; deleted: boolean } | null {
+		if (session.whole) return null
 		const toBaseline = textEdits(this.#text, this.#baseline)
 		const start = mappedThrough(toBaseline, session.start, 'start')
 		const end = mappedThrough(toBaseline, session.end, 'end')
 		if (end <= start) return null
 		const toTheirs = textEdits(this.#baseline, theirs)
-		return mappedThrough(toTheirs, end, 'end') <= mappedThrough(toTheirs, start, 'start')
-			? { start, end }
-			: null
-	}
-
-	/**
-	 * an outside write deleted the Block being edited: the field's text goes back in as its own Block where that
-	 * Block was, and the session goes on over it. editmd's rich editor drops the typing with the Block and its
-	 * Source mode glues it onto the next Block; losing typing is what the port must not do
-	 */
-	#keepAsOwnBlock(session: SessionRange, at: number, shown: string): void {
-		const before = this.#text.slice(0, at)
-		const after = this.#text.slice(at)
-		const prefix =
-			before === '' || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
-		const suffix =
-			after === '' ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n'
-		const insert = `${prefix}${shown}${suffix}`
-		this.#shiftHighlights(this.#text, at, at, insert)
-		this.#setText(before + insert + after)
-		session.start = at + prefix.length
-		session.end = session.start + shown.length
-		session.deferred = null
+		const theirStart = mappedThrough(toTheirs, start, 'start')
+		if (mappedThrough(toTheirs, end, 'end') <= theirStart) return { start, end, deleted: true }
+		const kindAt = (text: string, offset: number) =>
+			parseBlocks(text).find((block) => block.start <= offset && offset < block.end)?.kind
+		return kindAt(this.#baseline, start) === kindAt(theirs, theirStart)
+			? null
+			: { start, end, deleted: false }
 	}
 
 	/** what the open field shows: the Slice, or what the field held when a Deferred merge began */
